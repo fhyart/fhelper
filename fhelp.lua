@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.10.0'
+local VER = '1.11.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(15)
+script_version_number(16)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -146,6 +146,7 @@ local cfg = {
   toast_bar = 1,
   upd_on = 1,
   upd_skip = 0,
+  shop_on = 1,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -161,7 +162,7 @@ local CFG_NUM = {
   {'toast_x', 0, 100}, {'toast_y', 0, 100}, {'toast_scale', 0.6, 2}, {'toast_w', 220, 520},
   {'toast_alpha', 0.3, 1}, {'toast_time', 2, 30}, {'toast_max', 1, 10}, {'toast_menu', 0, 1},
   {'toast_merge', 0, 1}, {'toast_sound', 0, 1}, {'toast_bar', 0, 1},
-  {'upd_on', 0, 1}, {'upd_skip', 0, 1e9},
+  {'upd_on', 0, 1}, {'upd_skip', 0, 1e9}, {'shop_on', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -250,6 +251,7 @@ if imgui_ok then
   ui.car_q = imgui.new.char[80]()
   ui.car_alias = imgui.new.char[60]()
   ui.item_q = imgui.new.char[80]()
+  ui.shop_q = imgui.new.char[80]()
   ui.rng_h = imgui.new.float(0)
   ui.rng_m = imgui.new.float(0)
   ui.toast_x = imgui.new.float(98)
@@ -308,7 +310,7 @@ end
 F.PROJ_FILES = {
   ['fhelp_income.txt'] = true, ['fhelp_ledger.txt'] = true,
   ['fhelp_ints.txt'] = true, ['fhelp_craft.txt'] = true,
-  ['fhelp_cars.txt'] = true, ['fhelp_items.txt'] = true,
+  ['fhelp_cars.txt'] = true, ['fhelp_items.txt'] = true, ['fhelp_shops.txt'] = true,
 }
 
 function F.log_path()
@@ -5359,6 +5361,327 @@ function F.draw_cars()
   F.car_page(car)
 end
 
+-- Stalls: what a stall shows when it is opened. The server sends nothing about stalls nobody opened.
+-- Block 13 is what the stall sells, block 28 is what it buys; the price is the slot text with '$'.
+
+F.SHOP_KIND = {[13] = 'sell', [28] = 'buy'}
+F.SHOP_MAX = 400
+F.SHOP_DAYS = 3
+F.shops = {}
+F.shop_rev = 0
+
+function F.shop_dump(body)
+  F._shop_dumps = (F._shop_dumps or 0) + 1
+  if F._shop_dumps > 20 then return end
+  pcall(function()
+    F.mkdir(F.cfg_dir())
+    local f = io.open(F.cfg_dir() .. '\\fhelp_shops_debug.txt', F._shop_dumps == 1 and 'w' or 'a')
+    if not f then return end
+    f:write(body:sub(1, 3000), '\n')
+    f:close()
+  end)
+end
+
+function F.shop_price(text)
+  text = tostring(text or '')
+  if not text:find('$', 1, true) then return nil end
+  local digits = text:gsub('%D', '')
+  if digits == '' or #digits > 15 then return nil end
+  return tonumber(digits)
+end
+
+function F.shop_packet(text)
+  if cfg.shop_on ~= 1 or not text:find('playerInventory', 1, true) then return end
+  for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
+    if body:find('"type"%s*:%s*13%D') or body:find('"type"%s*:%s*28%D') then
+      local v = F.json_value(body, 1)
+      if type(v) == 'table' and v.action == nil then v = v[1] end
+      if type(v) == 'string' then v = F.json_value(v, 1) end
+      if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table' then
+        local kind = F.SHOP_KIND[tonumber(v.data.type)]
+        if kind and type(v.data.items) == 'table' then
+          F.shop_dump(body)
+          F.shop_merge(kind, v.action, v.data.items)
+        end
+      end
+    end
+  end
+end
+
+-- The stall itself is the nearest label with the word "лавка", else any label right next to the player.
+function F.shop_pos()
+  local ok, x, y, z = pcall(getCharCoordinates, PLAYER_PED)
+  if not ok or not x then return nil end
+  local p = {x = x, y = y, z = z}
+  local best, bd, near, nd
+  pcall(function()
+    for id = 0, 2047 do
+      if sampIs3dTextDefined(id) then
+        local text, _, tx, ty, tz, _, _, pl, veh = sampGet3dTextInfoById(id)
+        if text and tx and (pl == nil or pl == -1 or pl == 65535) and (veh == nil or veh == -1 or veh == 65535) then
+          local d = math.sqrt((tx - x) ^ 2 + (ty - y) ^ 2 + (tz - z) ^ 2)
+          if d < 12 then
+            local t = F.trim((F.game_text(text):gsub('[\r\n]+', '  ·  ')))
+            if t ~= '' then
+              if F.lower_fast(t):find('лавк', 1, true) then
+                if not bd or d < bd then best, bd = {t, tx, ty, tz}, d end
+              elseif d < 5 and (not nd or d < nd) then
+                near, nd = {t, tx, ty, tz}, d
+              end
+            end
+          end
+        end
+      end
+    end
+  end)
+  local hit = best or near
+  if hit then p.label, p.lx, p.ly, p.lz = hit[1], hit[2], hit[3], hit[4] end
+  return p
+end
+
+function F.shop_merge(kind, act, rows)
+  local now = os.clock()
+  local cur = F.shop_cur
+  -- Both blocks of one stall come right after each other; a later list is another opening.
+  if act == 0 and (not cur or now - cur.at > 2) then
+    cur = {blocks = {}, at = now, pos = F.shop_pos()}
+    F.shop_cur = cur
+  elseif not cur then
+    return
+  end
+  local b = cur.blocks[kind]
+  if act == 0 and (not b or now - b.at > 1) then
+    b = {slots = {}, at = now}
+    cur.blocks[kind] = b
+  elseif not b then
+    return
+  end
+  for _, row in pairs(rows) do
+    local slot = type(row) == 'table' and tonumber(row.slot)
+    if slot then
+      local id = tonumber(row.item)
+      if id and id > 0 then
+        b.slots[slot] = {id = id, amount = math.max(1, math.floor(tonumber(row.amount) or 1)), price = F.shop_price(row.text)}
+      else
+        b.slots[slot] = nil
+      end
+    end
+  end
+  b.at, cur.at, cur.dirty = now, now, true
+end
+
+function F.shop_tick()
+  local cur = F.shop_cur
+  if cur and cur.dirty and os.clock() - cur.at > 0.8 then
+    cur.dirty = false
+    F.shop_commit(cur)
+  end
+end
+
+function F.shop_commit(cur)
+  local p = cur.pos or {}
+  local key
+  if p.lx then key = string.format('%.0f_%.0f', p.lx, p.ly)
+  else key = string.format('p%d_%d', math.floor((p.x or 0) / 4), math.floor((p.y or 0) / 4)) end
+  local items = {}
+  for _, kind in ipairs({'sell', 'buy'}) do
+    local b = cur.blocks[kind]
+    if b then
+      local slots = {}
+      for s in pairs(b.slots) do slots[#slots + 1] = s end
+      table.sort(slots)
+      for _, s in ipairs(slots) do
+        local r = b.slots[s]
+        items[#items + 1] = {k = kind, id = r.id, amount = r.amount, price = r.price}
+      end
+    end
+  end
+  local title = p.label and F.utf_cut(p.label, 90) or 'Лавка без подписи'
+  local shop = {key = key, t = os.date('%Y-%m-%d %H:%M:%S'), x = p.lx or p.x, y = p.ly or p.y, z = p.lz or p.z, title = title, items = items}
+  for i = #F.shops, 1, -1 do
+    if F.shops[i].key == key then table.remove(F.shops, i) end
+  end
+  table.insert(F.shops, 1, shop)
+  while #F.shops > F.SHOP_MAX do table.remove(F.shops) end
+  F.shop_rev = F.shop_rev + 1
+  pcall(F.shop_save)
+  F.toast('shop', {key = 'shop' .. key, icon = 'ICON_FA_STORE', title = 'Лавка записана', text = title .. '  ·  товаров: ' .. #items, quiet = true})
+end
+
+function F.shop_save()
+  local out = {}
+  for _, s in ipairs(F.shops) do
+    out[#out + 1] = table.concat({'S', s.key, s.t, string.format('%.1f', s.x or 0), string.format('%.1f', s.y or 0),
+      string.format('%.1f', s.z or 0), (tostring(s.title):gsub('|', '/'))}, '|')
+    for _, r in ipairs(s.items) do
+      out[#out + 1] = 'I|' .. r.k .. '|' .. r.id .. '|' .. r.amount .. '|' .. (r.price and string.format('%.0f', r.price) or '')
+    end
+  end
+  F.write_lines('fhelp_shops.txt', out)
+end
+
+function F.shop_load()
+  F.shops = {}
+  local cut = os.date('%Y-%m-%d %H:%M:%S', os.time() - F.SHOP_DAYS * 86400)
+  local cur
+  for _, line in ipairs(F.read_lines('fhelp_shops.txt')) do
+    local key, t, x, y, z, title = line:match('^S|(.-)|(.-)|(.-)|(.-)|(.-)|(.*)$')
+    if key then
+      cur = nil
+      if t >= cut and #F.shops < F.SHOP_MAX then
+        cur = {key = key, t = t, x = tonumber(x), y = tonumber(y), z = tonumber(z), title = title, items = {}}
+        F.shops[#F.shops + 1] = cur
+      end
+    elseif cur then
+      local k, id, am, pr = line:match('^I|(%a+)|(%d+)|(%d+)|(%d*)$')
+      if k then cur.items[#cur.items + 1] = {k = k, id = tonumber(id), amount = tonumber(am) or 1, price = tonumber(pr)} end
+    end
+  end
+  F.shop_rev = F.shop_rev + 1
+end
+
+function F.shop_clear()
+  F.shops, F.shop_sel = {}, nil
+  F.shop_rev = F.shop_rev + 1
+  pcall(F.shop_save)
+  F.notify('Записанные лавки удалены', true)
+end
+
+function F.ago(t)
+  local at = F.stamp_time(t)
+  if not at then return tostring(t or '') end
+  local d = math.max(0, os.time() - at)
+  if d < 60 then return 'только что' end
+  if d < 3600 then return math.floor(d / 60) .. ' мин назад' end
+  if d < 86400 then return math.floor(d / 3600) .. ' ч назад' end
+  local n = math.floor(d / 86400)
+  return n .. ' ' .. F.ru_count(n, 'день', 'дня', 'дней') .. ' назад'
+end
+
+function F.shop_dist(s)
+  local ok, x, y, z = pcall(getCharCoordinates, PLAYER_PED)
+  if not ok or not x or not s.x then return '' end
+  local d = math.sqrt((s.x - x) ^ 2 + (s.y - y) ^ 2 + ((s.z or z) - z) ^ 2)
+  if d < 1000 then return string.format('%.0f м', d) end
+  return string.format('%.1f км', d / 1000)
+end
+
+function F.shop_mark(s)
+  if not s.x then return end
+  local ok = pcall(placeWaypoint, s.x, s.y, s.z or 0)
+  F.notify(ok and ('Метка на карте: ' .. s.title) or 'Не получилось поставить метку', true)
+end
+
+function F.shop_view(q, kind)
+  local key = q .. '|' .. kind .. '|' .. F.shop_rev
+  if F._shop_vk == key then return F._shop_v end
+  local low = F.lower_fast(q)
+  local qid = tonumber(q)
+  local rows = {}
+  for _, s in ipairs(F.shops) do
+    for _, r in ipairs(s.items) do
+      if r.k == kind then
+        local name = F.item_label(r.id)
+        if r.id == qid or F.lower_fast(name):find(low, 1, true) then rows[#rows + 1] = {shop = s, r = r, name = name} end
+      end
+    end
+  end
+  table.sort(rows, function(a, b)
+    local pa, pb = a.r.price, b.r.price
+    if pa and pb and pa ~= pb then
+      if kind == 'sell' then return pa < pb end
+      return pa > pb
+    end
+    if (pa == nil) ~= (pb == nil) then return pa ~= nil end
+    return a.shop.t > b.shop.t
+  end)
+  F._shop_vk, F._shop_v = key, rows
+  return rows
+end
+
+function F.shop_price_text(r)
+  if not r.price then return 'цена ?' end
+  return '$' .. (F.fmt_money(r.price) or tostring(r.price))
+end
+
+function F.shop_items(s, kind, base)
+  local n = 0
+  for _, r in ipairs(s.items) do
+    if r.k == kind then
+      n = n + 1
+      F.item_row(F.item_label(r.id), r.id, '×' .. r.amount, F.shop_price_text(r), base + n)
+    end
+  end
+  return n
+end
+
+function F.draw_shops()
+  F.card_begin('Лавки', 'Запоминает товары и цены лавок, которые ты открыл', 'ICON_FA_STORE')
+  if F.switch('shopon', 'Записывать лавки', cfg.shop_on == 1) then
+    cfg.shop_on = cfg.shop_on == 1 and 0 or 1
+    dirty = true
+  end
+  F.hint('Открывай лавки на рынке как обычно, fHelper сам запишет товары и цены. Сервер присылает только лавки, которые ты открыл.')
+  F.hint('Записи старше ' .. F.SHOP_DAYS .. ' дней удаляются. Нажми на найденный товар, чтобы поставить метку на карте.')
+  if #F.shops > 0 then
+    imgui.Spacing()
+    if F.button('Очистить записи##shopclr', 200, 0, 'danger') then
+      F.ask('Удалить все записанные лавки?', 'Удалить', 'fn', {fn = F.shop_clear})
+    end
+  end
+  F.card_end()
+  if #F.shops == 0 then
+    F.empty('ICON_FA_STORE', 'Лавок пока нет', 'Открой любую лавку, и она появится здесь')
+    return
+  end
+  F.field('##shopq', 'Поиск товара по всем лавкам: название или ID', ui.shop_q, 80, F.inner_w(), 'shop_q')
+  imgui.Spacing()
+  F.shop_kind = F.segment('shopkind', {{'sell', 'Продают'}, {'buy', 'Скупают'}}, F.shop_kind or 'sell') or F.shop_kind or 'sell'
+  imgui.Spacing()
+  local q = F.trim(F.buf_get(ui.shop_q))
+  if q ~= '' then
+    local rows = F.shop_view(q, F.shop_kind)
+    if #rows == 0 then
+      F.empty('ICON_FA_SEARCH', 'Ничего не нашлось', 'Поиск идёт только по лавкам, которые ты открывал')
+      return
+    end
+    F.card_begin('Найдено', F.shop_kind == 'sell' and 'Сначала самые дешёвые' or 'Сначала те, кто платит больше', 'ICON_FA_SEARCH')
+    for i = 1, math.min(#rows, 80) do
+      local h = rows[i]
+      local s = h.shop
+      local dist = F.shop_dist(s)
+      local sub = '×' .. h.r.amount .. '  ·  ' .. s.title .. '  ·  ' .. F.ago(s.t) .. (dist ~= '' and ('  ·  ' .. dist) or '')
+      F.item_row(h.name, h.r.id, sub, F.shop_price_text(h.r), i, 'Нажми, чтобы поставить метку на эту лавку', function() F.shop_mark(s) end)
+    end
+    if #rows > 80 then F.hint('И ещё: ' .. (#rows - 80)) end
+    F.card_end()
+    return
+  end
+  local sel
+  for _, s in ipairs(F.shops) do
+    if s.key == F.shop_sel then sel = s end
+  end
+  F.card_begin('Записанные лавки', 'Всего: ' .. #F.shops .. '. Нажми, чтобы открыть товары', 'ICON_FA_STORE')
+  for i = 1, math.min(#F.shops, 60) do
+    local s = F.shops[i]
+    local n = 0
+    for _, r in ipairs(s.items) do
+      if r.k == F.shop_kind then n = n + 1 end
+    end
+    local dist = F.shop_dist(s)
+    F.item_row(s.title, 0, F.ago(s.t) .. (dist ~= '' and ('  ·  ' .. dist) or ''), tostring(n), 2000 + i,
+      'Нажми, чтобы показать товары этой лавки', function() F.shop_sel = s.key end)
+  end
+  F.card_end()
+  if sel then
+    F.card_begin(sel.title, (F.shop_kind == 'sell' and 'Продаёт' or 'Скупает') .. '  ·  ' .. F.ago(sel.t), 'ICON_FA_BOXES')
+    if F.shop_items(sel, F.shop_kind, 3000) == 0 then F.hint('В этом разделе у лавки ничего нет.') end
+    imgui.Spacing()
+    if F.button('Метка на карте##shopmark', 200, 0) then F.shop_mark(sel) end
+    F.card_end()
+  end
+end
+
 -- Experimental mode
 
 -- The restart reloads every list, so nothing of the old project stays in memory.
@@ -5393,9 +5716,11 @@ end
 
 function F.draw_exp()
   F.page_head('Экспериментальный режим', 'Функции, которые ещё обкатываются')
-  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}}, F.exp_tab or 'proj') or F.exp_tab or 'proj'
+  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'shops', 'Лавки'}}, F.exp_tab or 'proj') or F.exp_tab or 'proj'
   imgui.Spacing()
-  if F.exp_tab == 'cars' then F.draw_cars() else F.draw_exp_proj() end
+  if F.exp_tab == 'cars' then F.draw_cars()
+  elseif F.exp_tab == 'shops' then F.draw_shops()
+  else F.draw_exp_proj() end
 end
 
 function F.draw_hud()
@@ -5573,6 +5898,11 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.11.0', '08.11.2026', {
+    {'add', 'Раздел «Эксперимент» → «Лавки»: fHelper запоминает товары и цены каждой лавки, которую ты открыл'},
+    {'add', 'Поиск товара по всем записанным лавкам: самые дешёвые сверху, у скупки сверху те, кто платит больше'},
+    {'add', 'Нажатие на найденный товар ставит метку на карте у этой лавки'},
+  }},
   {'1.10.0', '07.11.2026', {
     {'add', 'Обновления с GitHub: при входе fHelper подсказывает, что вышла новая версия'},
     {'add', 'Установка по кнопке в настройках или командой /fupdate, файл проверяется перед заменой'},
@@ -5734,6 +6064,8 @@ function F.cef_packet(bs)
   if not ok or type(text) ~= 'string' then return end
   local fine, err = pcall(F.car_packet, text)
   if not fine then F.feed_err('машины', err) end
+  fine, err = pcall(F.shop_packet, text)
+  if not fine then F.feed_err('лавки', err) end
   local at = text:find('updateMoney', 1, true)
   if not at then return end
   local n = tonumber(text:match('(%d+)', at))
@@ -7082,7 +7414,7 @@ function F.item_pic_of(id)
   return {cat = 'etc', pic_n = 0}
 end
 
-function F.item_row(name, id, sub, right, i)
+function F.item_row(name, id, sub, right, i, tip, fn)
   local p = imgui.GetCursorScreenPos()
   local w = F.inner_w()
   local h = F.s(48)
@@ -7097,8 +7429,10 @@ function F.item_row(name, id, sub, right, i)
   F.text_at(font_main, 16, tx, p.y + F.s(4), F.col('text', 230), F.fit_text(font_main, name, tw))
   F.text_at(font_main, 16, tx, p.y + F.s(24), F.col('text', 120), F.fit_text(font_main, sub, tw))
   F.text_at(font_bold, 18, p.x + w - rw - 4, p.y + (h - 4 - F.s(18)) / 2 - 1, F.col('accent_hi'), right)
-  if hovered then F.tip(id > 0 and 'Нажми, чтобы скопировать код предмета для чата' or 'Нажми, чтобы скопировать название') end
-  if clicked then F.note_copy(id > 0 and (':item' .. id .. ':') or name) end
+  if hovered then F.tip(tip or (id > 0 and 'Нажми, чтобы скопировать код предмета для чата' or 'Нажми, чтобы скопировать название')) end
+  if clicked then
+    if fn then fn() else F.note_copy(id > 0 and (':item' .. id .. ':') or name) end
+  end
   F.advance(p, w, h)
 end
 
@@ -7138,7 +7472,7 @@ end
 
 F.toasts = {}
 F.toast_log = {}
-F.TOAST_TONE = {pay = 'accent', inc = 'accent', exp = 'bad', item = 'accent_hi', car = 'accent', sys = 'text'}
+F.TOAST_TONE = {pay = 'accent', inc = 'accent', exp = 'bad', item = 'accent_hi', car = 'accent', sys = 'text', shop = 'accent'}
 F.TOAST_PLACES = {{0, 'Справа'}, {1, 'Справа внизу'}, {2, 'Сверху'}, {3, 'Снизу'}, {4, 'Своё место'}}
 F.TOAST_MIN = {{0, 'Любая'}, {10000, 'от 10к'}, {100000, 'от 100к'}, {1000000, 'от 1кк'}}
 
@@ -10171,7 +10505,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 15
+F.BUILD = 16
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -10476,7 +10810,7 @@ function main()
   F.load_notes()
   F.pay_load()
   -- A broken data file must not stop the whole menu from starting.
-  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load}) do
+  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load, F.shop_load}) do
     local ok, err = pcall(fn)
     if not ok then F.log_line('Загрузка данных: ' .. tostring(err)) end
   end
@@ -10560,6 +10894,7 @@ function main()
     F.car_tick()
     pcall(F.mem_tick, now)
     pcall(F.upd_tick, now)
+    pcall(F.shop_tick)
     F.watch_self()
     if frame then
       frame.LockPlayer = (show or anim > 0.45) and not hidden and cfg.lock == 1
