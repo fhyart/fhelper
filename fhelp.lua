@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.14.0'
+local VER = '1.15.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(21)
+script_version_number(22)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -158,6 +158,7 @@ local cfg = {
   ui_text = 0xF6F1E6,
   ui_font = 0,
   win_w = 1080,
+  mem_auto = 0,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -177,6 +178,7 @@ local CFG_NUM = {
   {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},
   {'toast_chest', 0, 1},
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
+  {'mem_auto', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -5965,10 +5967,11 @@ end
 
 function F.draw_exp()
   F.page_head('Экспериментальный режим', 'Функции, которые ещё обкатываются')
-  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'shops', 'Лавки'}}, F.exp_tab or 'proj') or F.exp_tab or 'proj'
+  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'shops', 'Лавки'}, {'mem', 'Память'}}, F.exp_tab or 'proj') or F.exp_tab or 'proj'
   imgui.Spacing()
   if F.exp_tab == 'cars' then F.draw_cars()
   elseif F.exp_tab == 'shops' then F.draw_shops()
+  elseif F.exp_tab == 'mem' then F.draw_exp_mem()
   else F.draw_exp_proj() end
 end
 
@@ -6245,7 +6248,12 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
-  {'1.14.0', '08.11.2026', {
+  {'1.15.0', '08.11.2026', {
+    {'add', 'Эксперимент → «Память»: разгрузить память игры без перезахода'},
+    {'add', 'Видно, сколько памяти свободно у игры, сколько занимает мир вокруг и сам fHelper'},
+    {'add', 'Можно разгружать самому, когда памяти остаётся мало, до предупреждения'},
+    {'add', 'Команда /fmem'},
+  }},  {'1.14.0', '08.11.2026', {
     {'add', 'Настройки → «Цвет и шрифт»: шесть тем, свой цвет фона, акцента и текста'},
     {'add', 'Выбор шрифта: Segoe UI, Tahoma, Arial, Verdana, Calibri, Trebuchet'},
     {'add', 'Ширина окна от 860 до 1600 и непрозрачность от 50%'},
@@ -9103,14 +9111,118 @@ function F.mem_tick(now)
   end
   if st.free < F.MEM_WARN and (not F._mem_warned or now - F._mem_warned > 600) then
     F._mem_warned = now
-    -- The pictures are the only big thing fHelper can give back right away.
-    F.lib_free()
-    collectgarbage('collect')
-    local msg = string.format('Игре осталось %.0f МБ памяти. Скоро будут фризы и квадраты вместо текста, перезапусти игру', st.free)
+    if cfg.mem_auto == 1 then
+      local r = F.mem_clean(true)
+      -- Enough came back: the toast of the clean-up says it, no warning.
+      if r and r.free2 and r.free2 >= F.MEM_WARN then return end
+      st = F.mem_read() or st
+    else
+      -- The pictures are the only big thing fHelper can give back right away.
+      F.lib_free()
+      collectgarbage('collect')
+    end
+    local msg = string.format('Игре осталось %.0f МБ памяти. Скоро будут фризы и квадраты вместо текста', st.free)
+    msg = msg .. (cfg.mem_auto == 1 and ', перезапусти игру' or '. Попробуй /fmem или перезапусти игру')
     F.log_line(msg)
     F.chat_brand(msg)
     pcall(F.toast, 'sys', {force = true, key = 'mem', icon = 'ICON_FA_EXCLAMATION_TRIANGLE', title = 'Мало памяти', text = msg})
   end
+end
+
+-- Streaming memory of the game: models and textures of the world around, used and allowed, in MB.
+function F.mem_game()
+  if type(readMemory) ~= 'function' then return nil end
+  local ok, used, limit = pcall(function()
+    return tonumber(readMemory(0x8E4CB4, 4, false)), tonumber(readMemory(0x8A5A80, 4, false))
+  end)
+  if not ok or not used then return nil end
+  return used / 1048576, limit / 1048576
+end
+
+-- What fHelper can do without a relog: give back its pictures and Lua memory, let the game
+-- drop unused models (the same tidy-up it does itself), then load the scene around back.
+function F.mem_clean(auto)
+  local now = os.clock()
+  if F._mem_clean_at and now - F._mem_clean_at < 20 then
+    if not auto then F.notify('Только что разгружал, подожди немного') end
+    return nil
+  end
+  local ok, spawned = pcall(sampIsLocalPlayerSpawned)
+  if not ok or not spawned then
+    if not auto then F.notify('Сначала зайди в игру') end
+    return nil
+  end
+  F._mem_clean_at = now
+  local before = F.mem_read() or {}
+  local s1 = F.mem_game()
+  local lua1 = collectgarbage('count') / 1024
+  local pics = F.lib_free()
+  collectgarbage('collect')
+  collectgarbage('collect')
+  local game_ok = pcall(function()
+    callFunction(0x53C500, 2, 2, 1, 1) -- CGame::TidyUpMemory(true, true)
+    callFunction(0x40CF80, 0, 0) -- CStreaming::RemoveAllUnusedModels
+  end)
+  pcall(function()
+    local x, y, z = getCharCoordinates(PLAYER_PED)
+    requestCollision(x, y)
+    loadScene(x, y, z)
+  end)
+  local after = F.mem_read() or {}
+  local s2 = F.mem_game()
+  local r = {
+    at = os.time(), auto = auto, pics = pics, game = game_ok,
+    lua = math.max(0, lua1 - collectgarbage('count') / 1024),
+    free1 = before.free, free2 = after.free, s1 = s1, s2 = s2,
+  }
+  F.mem_last = r
+  F._mem_at = nil
+  local text = F.mem_result(r)
+  F.log_line('Разгрузка памяти' .. (auto and ' (сама)' or '') .. ': ' .. text)
+  pcall(F.toast, 'sys', {force = true, key = 'memclean', icon = 'ICON_FA_BROOM', title = 'Память разгружена', text = text})
+  if not auto then F.chat_brand('Память разгружена: ' .. text) end
+  return r
+end
+
+function F.mem_result(r)
+  local parts = {}
+  if r.free1 and r.free2 then
+    local d = r.free2 - r.free1
+    parts[#parts + 1] = string.format('свободно %.0f МБ (%s%.0f)', r.free2, d >= 0 and '+' or '', d)
+  end
+  if r.s1 and r.s2 then parts[#parts + 1] = string.format('мир %.0f → %.0f МБ', r.s1, r.s2) end
+  if (r.pics or 0) > 0 then parts[#parts + 1] = 'картинок ' .. r.pics end
+  if not r.game then parts[#parts + 1] = 'игра не ответила' end
+  return table.concat(parts, ', ')
+end
+
+function F.mem_cmd()
+  lua_thread.create(function() F.mem_clean(false) end)
+end
+
+function F.draw_exp_mem()
+  F.card_begin('Память игры', 'Разгрузить память без перезахода', 'ICON_FA_MEMORY')
+  local m = F.mem_st or {}
+  local used, limit = F.mem_game()
+  local low = m.free and m.free < F.MEM_WARN
+  F.tile_grid('mem', {
+    {'ICON_FA_MEMORY', 'Свободно у игры', m.free and string.format('%.0f МБ', m.free) or '—'},
+    {'ICON_FA_GLOBE', 'Мир вокруг', used and string.format('%.0f / %.0f МБ', used, limit) or '—'},
+    {'ICON_FA_CUBE', 'fHelper', string.format('%.0f МБ', m.lua or collectgarbage('count') / 1024)},
+  }, 200)
+  if low then F.hint_bad('Памяти мало: скоро будут фризы и квадраты вместо текста.') end
+  imgui.Spacing()
+  if F.button('Разгрузить сейчас##memgo', 220, 0, 'primary') then F.mem_cmd() end
+  if F.mem_last then
+    F.hint('Последний раз в ' .. os.date('%H:%M', F.mem_last.at) .. (F.mem_last.auto and ' (сам)' or '') .. ': ' .. F.mem_result(F.mem_last))
+  end
+  imgui.Spacing()
+  F.chest_flag('memauto', 'Разгружать самому', 'mem_auto', 'Когда игре остаётся меньше ' .. F.MEM_WARN .. ' МБ, разгрузить до предупреждения')
+  F.divider()
+  F.hint('Что делается: fHelper отдаёт свои картинки и память, игра выгружает модели и текстуры, которые сейчас не видны, мир вокруг подгружается заново. На секунду может подвиснуть и мелькнуть текстуры.')
+  F.hint('Это помогает отложить перезаход, но не заменяет его: большую часть памяти держат окна Arizona и другие скрипты, их отсюда не освободить.')
+  F.hint('Команда /fmem делает то же самое.')
+  F.card_end()
 end
 
 function F.mem_text()
@@ -11293,7 +11405,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 21
+F.BUILD = 22
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -11698,6 +11810,7 @@ function main()
   sampRegisterChatCommand('fcar', F.car_scan)
   sampRegisterChatCommand('fupdate', F.upd_cmd)
   sampRegisterChatCommand('fchest', F.chest_cmd)
+  sampRegisterChatCommand('fmem', F.mem_cmd)
   local int_mark = 0
   local frames = 0
   local fps_mark = os.clock()
