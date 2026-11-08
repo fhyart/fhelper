@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.16.0'
+local VER = '1.17.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(24)
+script_version_number(25)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -159,6 +159,11 @@ local cfg = {
   ui_font = 0,
   win_w = 1080,
   mem_auto = 0,
+  want_pin = 1,
+  want_sound = 1,
+  want_x = -1,
+  want_y = -1,
+  bak_auto = 1,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -179,6 +184,7 @@ local CFG_NUM = {
   {'toast_chest', 0, 1},
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
   {'mem_auto', 0, 1},
+  {'want_pin', 0, 1}, {'want_sound', 0, 1}, {'want_x', -1, 10000}, {'want_y', -1, 10000}, {'bak_auto', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -268,6 +274,8 @@ if imgui_ok then
   ui.car_alias = imgui.new.char[60]()
   ui.item_q = imgui.new.char[80]()
   ui.shop_q = imgui.new.char[80]()
+  ui.want_q = imgui.new.char[80]()
+  ui.want_price = imgui.new.char[32]()
   ui.rng_h = imgui.new.float(0)
   ui.rng_m = imgui.new.float(0)
   ui.toast_x = imgui.new.float(98)
@@ -328,7 +336,7 @@ F.PROJ_FILES = {
   ['fhelp_income.txt'] = true, ['fhelp_ledger.txt'] = true,
   ['fhelp_ints.txt'] = true, ['fhelp_craft.txt'] = true,
   ['fhelp_cars.txt'] = true, ['fhelp_items.txt'] = true, ['fhelp_shops.txt'] = true,
-  ['fhelp_chests.txt'] = true,
+  ['fhelp_chests.txt'] = true, ['fhelp_wants.txt'] = true,
 }
 
 function F.log_path()
@@ -681,6 +689,7 @@ function F.load_cfg()
 end
 
 function F.save_cfg()
+  if F._restoring then return end
   F.mkdir(F.cfg_dir())
   local f = io.open(F.cfg_path(), 'w')
   if not f then return end
@@ -1994,6 +2003,8 @@ function F.read_lines(name)
 end
 
 function F.write_lines(name, list)
+  -- After an import the files on disk are the new ones until the restart reads them.
+  if F._restoring then return end
   F.mkdir(F.cfg_dir())
   local f = io.open(F.lines_path(name), 'w')
   if not f then return end
@@ -2143,7 +2154,7 @@ function F.load_notes()
 end
 
 function F.save_notes()
-  if not F.note_types or not F.note_items then return end
+  if F._restoring or not F.note_types or not F.note_items then return end
   F.mkdir(F.cfg_dir())
   local f = io.open(F.lines_path('fhelp_notes.txt'), 'w')
   if not f then
@@ -2456,7 +2467,8 @@ function F.utf_cut(text, cap)
 end
 
 function F.buf_set(buf, text, cap)
-  if not ffi_ok or not buf then return end
+  -- Without the size the buffer could overflow: such a call writes nothing.
+  if not ffi_ok or not buf or not cap then return end
   text = F.utf_cut(text or '', cap - 1)
   ffi.fill(buf, cap, 0)
   ffi.copy(buf, text)
@@ -5826,13 +5838,16 @@ function F.shop_commit(cur)
   local title = p.label and F.utf_cut(p.label, 90) or 'Лавка без подписи'
   local shop = {key = key, num = num, t = os.date('%Y-%m-%d %H:%M:%S'), x = p.lx or p.x, y = p.ly or p.y, z = p.lz or p.z,
     title = title, items = F.shop_group(list)}
+  local old
   for i = #F.shops, 1, -1 do
-    if F.shops[i].key == key then table.remove(F.shops, i) end
+    if F.shops[i].key == key then old = table.remove(F.shops, i) end
   end
   table.insert(F.shops, 1, shop)
   while #F.shops > F.SHOP_MAX do table.remove(F.shops) end
   F.shop_rev = F.shop_rev + 1
   pcall(F.shop_save)
+  local ok, err = pcall(F.want_check, shop, old)
+  if not ok then F.log_line('Хочу найти: ' .. tostring(err)) end
   local st = F.shop_stats(shop)
   F.toast('shop', {key = 'shop' .. key, icon = 'ICON_FA_STORE', title = 'Лавка записана',
     text = (num and ('Лавка №' .. num) or title) .. '  ·  продаёт ' .. st.sell .. ', скупает ' .. st.buy, quiet = true})
@@ -5948,7 +5963,7 @@ end
 
 function F.shop_price_text(r)
   if not r.price then return 'цена ?' end
-  return '$' .. (F.fmt_money(r.price) or tostring(r.price))
+  return F.fmt_money(r.price) or tostring(r.price)
 end
 
 function F.shop_qty_text(r)
@@ -6068,6 +6083,7 @@ function F.draw_shops()
     F.shop_page(sel)
     return
   end
+  F.draw_wants()
   F.card_begin('Лавки', 'Запоминает товары и цены лавок, которые ты открыл', 'ICON_FA_STORE')
   if F.switch('shopon', 'Записывать лавки', cfg.shop_on == 1) then
     cfg.shop_on = cfg.shop_on == 1 and 0 or 1
@@ -6095,6 +6111,495 @@ function F.draw_shops()
     return
   end
   F.shop_cards()
+end
+
+-- Wanted items. A wish is an item and a price: to buy it not dearer, or to sell it not cheaper.
+-- Every stall that is opened is checked against the list; a stall that answers a wish is a find.
+-- Finds are not kept apart: they are read from the recorded stalls, so a stall opened again
+-- without the item takes its find away by itself.
+
+F.wants = {}
+F.want_rev = 0
+F.WANT_OLD = 3 * 3600
+F.WANT_MAX = 60
+-- To buy, a stall has to sell; to sell, it has to buy.
+F.WANT_SIDE = {buy = 'sell', sell = 'buy'}
+
+function F.want_load()
+  F.wants, F.want_seq = {}, 0
+  for _, line in ipairs(F.read_lines('fhelp_wants.txt')) do
+    local id, item, mode, price, on, name = line:match('^W|(%d+)|(%d+)|(%a+)|(%d+)|([01])|(.*)$')
+    if id and F.WANT_SIDE[mode] and #F.wants < F.WANT_MAX then
+      id = tonumber(id)
+      F.want_seq = math.max(F.want_seq, id)
+      F.wants[#F.wants + 1] = {id = id, item = tonumber(item), mode = mode, price = tonumber(price), on = on == '1',
+        name = F.note_unesc(name)}
+    end
+  end
+  F.want_rev = F.want_rev + 1
+end
+
+function F.want_save()
+  local out = {}
+  for _, w in ipairs(F.wants) do
+    out[#out + 1] = table.concat({'W', w.id, w.item, w.mode, string.format('%.0f', w.price), w.on and 1 or 0, F.note_esc(w.name or '')}, '|')
+  end
+  F.write_lines('fhelp_wants.txt', out)
+  F.want_rev = F.want_rev + 1
+end
+
+function F.want_name(w)
+  local it = F.lib_db().by_id[w.item]
+  return it and it.name or (w.name ~= '' and w.name) or F.item_label(w.item)
+end
+
+function F.want_ok(w, r)
+  if r.id ~= w.item or r.k ~= F.WANT_SIDE[w.mode] or not r.price then return false end
+  if w.mode == 'buy' then return r.price <= w.price end
+  return r.price >= w.price
+end
+
+function F.want_better(w, a, b)
+  if w.mode == 'buy' then return a < b end
+  return a > b
+end
+
+-- The best price for the wish in one stall, or nil.
+function F.want_in(w, s)
+  local best
+  for _, r in ipairs(s.items) do
+    if F.want_ok(w, r) and (not best or F.want_better(w, r.price, best)) then best = r.price end
+  end
+  return best
+end
+
+-- "Убрать" hides a find until the same stall shows a better price.
+function F.want_hidden(w, s, p)
+  local h = F.want_hide and F.want_hide[w.id .. '|' .. s.key]
+  return h ~= nil and not F.want_better(w, p, h)
+end
+
+function F.want_hits(w)
+  local out = {}
+  for _, s in ipairs(F.shops) do
+    local p = F.want_in(w, s)
+    if p and not F.want_hidden(w, s, p) then out[#out + 1] = {shop = s, price = p, w = w} end
+  end
+  table.sort(out, function(a, b)
+    if a.price ~= b.price then return F.want_better(w, a.price, b.price) end
+    return a.shop.t > b.shop.t
+  end)
+  return out
+end
+
+-- Every switched-on wish with its finds, the freshest find first.
+function F.want_view()
+  local key = F.shop_rev .. '|' .. F.want_rev
+  if F._want_vk == key then return F._want_v end
+  local out = {}
+  for _, w in ipairs(F.wants) do
+    if w.on then
+      local hits = F.want_hits(w)
+      if #hits > 0 then out[#out + 1] = {w = w, hits = hits} end
+    end
+  end
+  table.sort(out, function(a, b) return a.hits[1].shop.t > b.hits[1].shop.t end)
+  F._want_vk, F._want_v = key, out
+  return out
+end
+
+function F.want_old(s)
+  local at = F.stamp_time(s.t)
+  return at ~= nil and os.time() - at > F.WANT_OLD
+end
+
+function F.want_diff_text(w, p)
+  local d = math.abs(w.price - p)
+  if d < 1 then return 'ровно по лимиту' end
+  return (w.mode == 'buy' and 'дешевле лимита на ' or 'дороже лимита на ') .. F.fmt_money(d)
+end
+
+function F.want_sound()
+  if cfg.want_sound ~= 1 then return end
+  pcall(function()
+    local x, y, z = getCharCoordinates(PLAYER_PED)
+    addOneOffSound(x, y, z, 1058)
+  end)
+end
+
+function F.want_alert(w, s, p)
+  local name = F.want_name(w)
+  local where = F.shop_name(s)
+  F.toast('want', {
+    force = true, key = 'want' .. w.id .. s.key, item = w.item, icon = 'ICON_FA_BULLSEYE', life = 15, quiet = true,
+    title = (w.mode == 'buy' and 'Нашёл: ' or 'Скупают: ') .. name,
+    text = F.fmt_money(p) .. '  ·  ' .. where .. '  ·  ' .. F.want_diff_text(w, p),
+  })
+  F.chat_brand((w.mode == 'buy' and 'Нашёл ' or 'Скупают ') .. '{E08A55}' .. name .. '{FFFFFF} за ' .. F.fmt_money(p)
+    .. ' в ' .. where .. (s.num and ('. Маршрут: /fwant route') or ''))
+  F.want_sound()
+  F.want_last = {id = w.id, key = s.key}
+end
+
+-- Called for each stall the moment it is recorded, with what the same stall had before.
+function F.want_check(s, old)
+  for _, w in ipairs(F.wants) do
+    if w.on then
+      local p = F.want_in(w, s)
+      local was = old and F.want_in(w, old)
+      if p and (not was or F.want_better(w, p, was)) then
+        if F.want_hide then F.want_hide[w.id .. '|' .. s.key] = nil end
+        F.want_alert(w, s, p)
+      elseif was and not p then
+        F.toast('want', {force = true, quiet = true, key = 'wantgone' .. w.id .. s.key, item = w.item, icon = 'ICON_FA_TIMES',
+          title = 'Больше нет: ' .. F.want_name(w), text = F.shop_name(s) .. ': продано или цена изменилась'})
+      end
+    end
+  end
+  F.want_rev = F.want_rev + 1
+end
+
+function F.want_find(item, mode)
+  for i, w in ipairs(F.wants) do
+    if w.item == item and w.mode == mode then return w, i end
+  end
+  return nil
+end
+
+-- A new wish, or a new price for the same item and side. Says at once what the stalls already showed.
+function F.want_add(item, mode, price)
+  item, price = tonumber(item), tonumber(price)
+  if not item or item <= 0 or not F.WANT_SIDE[mode] or not price or price <= 0 then return nil, 'нужны предмет и цена' end
+  local w = F.want_find(item, mode)
+  if not w then
+    if #F.wants >= F.WANT_MAX then return nil, 'в списке уже ' .. F.WANT_MAX .. ' предметов' end
+    F.want_seq = (F.want_seq or 0) + 1
+    w = {id = F.want_seq, item = item, mode = mode}
+    F.wants[#F.wants + 1] = w
+  end
+  w.price, w.on = math.floor(price + 0.5), true
+  w.name = F.want_name(w)
+  F.want_save()
+  local hits = F.want_hits(w)
+  local h = hits[1]
+  if h then
+    local more = #hits > 1 and (' и ещё в ' .. (#hits - 1) .. ' ' .. F.ru_count(#hits - 1, 'лавке', 'лавках', 'лавках')) or ''
+    F.notify('Уже видел: ' .. w.name .. ' за ' .. F.fmt_money(h.price) .. ' в ' .. F.shop_name(h.shop) .. ', ' .. F.ago(h.shop.t) .. more)
+  end
+  return w
+end
+
+function F.want_del(id)
+  for i, w in ipairs(F.wants) do
+    if w.id == id then
+      table.remove(F.wants, i)
+      F.want_save()
+      return true
+    end
+  end
+  return false
+end
+
+function F.want_hide_hit(h)
+  F.want_hide = F.want_hide or {}
+  F.want_hide[h.w.id .. '|' .. h.shop.key] = h.price
+  F.want_rev = F.want_rev + 1
+end
+
+-- An item by name: the exact name first, else the shortest name that contains the words.
+function F.want_lookup(q)
+  q = F.lower_fast(F.trim(q or ''))
+  if q == '' then return nil end
+  local id = tonumber(q)
+  local db = F.lib_db()
+  if id and db.by_id[id] then return db.by_id[id] end
+  local best
+  for _, it in ipairs(db.list) do
+    if it.low == q then return it end
+    if it.low and it.low:find(q, 1, true) and (not best or #it.low < #best.low) then best = it end
+  end
+  return best
+end
+
+function F.want_matches(q, n)
+  q = F.lower_fast(F.trim(q or ''))
+  local out = {}
+  if #q < 2 then return out end
+  local db = F.lib_db()
+  local id = tonumber(q)
+  if id and db.by_id[id] then out[1] = db.by_id[id] end
+  for _, it in ipairs(db.list) do
+    if #out >= n then break end
+    if it.low and it.low:find(q, 1, true) and it.id ~= id then out[#out + 1] = it end
+  end
+  return out
+end
+
+-- /fwant [продать] <name> <price>  ·  /fwant route  ·  /fwant list
+function F.want_cmd(arg)
+  arg = F.trim(F.game_text(arg or ''))
+  local low = F.lower_fast(arg)
+  if low == '' or low == 'list' or low == 'список' then
+    local on = 0
+    for _, w in ipairs(F.wants) do if w.on then on = on + 1 end end
+    F.chat_brand('Хочу найти: ' .. on .. ' в списке, находок ' .. #F.want_view() .. '. Добавить: /fwant <предмет> <цена>, продать: /fwant продать <предмет> <цена>, маршрут: /fwant route')
+    return
+  end
+  if low == 'route' or low == 'маршрут' then
+    local v = F.want_view()
+    local h
+    local last = F.want_last
+    for _, e in ipairs(v) do
+      for _, x in ipairs(e.hits) do
+        if last and e.w.id == last.id and x.shop.key == last.key then h = x end
+      end
+    end
+    h = h or (v[1] and v[1].hits[1])
+    if not h then F.chat_brand('Находок пока нет') return end
+    F.shop_route(h.shop)
+    return
+  end
+  local mode = 'buy'
+  local rest = arg
+  local first, tail = arg:match('^(%S+)%s+(.+)$')
+  if first then
+    local f = F.lower_fast(first)
+    if f == 'продать' or f == 'sell' then mode, rest = 'sell', tail
+    elseif f == 'купить' or f == 'buy' then rest = tail end
+  end
+  local name, price_s = rest:match('^(.-)%s+(%S+)$')
+  local price = price_s and F.calc_eval(price_s)
+  if not name or name == '' or not price or price <= 0 then
+    F.chat_brand('Формат: /fwant <предмет> <цена>, например /fwant Ларец Олигарха 1.5кк')
+    return
+  end
+  local it = F.want_lookup(name)
+  if not it then
+    F.chat_brand('Не нашёл предмет «' .. name .. '». Попробуй точнее или выбери в меню: Эксперимент → Лавки')
+    return
+  end
+  local w, err = F.want_add(it.id, mode, price)
+  if not w then F.chat_brand('Не добавил: ' .. err) return end
+  F.chat_brand((mode == 'buy' and 'Ищу: ' or 'Продаю: ') .. '{E08A55}' .. w.name .. '{FFFFFF} ' .. (mode == 'buy' and 'не дороже ' or 'не дешевле ') .. F.fmt_money(w.price))
+end
+
+-- One find: picture, name, where and when, price; the route and hide icons on the right.
+function F.want_hit_row(h, i, main)
+  local p = imgui.GetCursorScreenPos()
+  local w = F.inner_w()
+  local hh = F.s(main and 52 or 40)
+  local ib = F.s(30)
+  local hide_x = p.x + w - ib
+  local route_x = hide_x - 4 - ib
+  local right = F.fmt_money(h.price)
+  local font = main and font_bold or font_main
+  local rw = F.text_w(font, right)
+  local rx = route_x - rw - F.s(12)
+  local old = F.want_old(h.shop)
+  local a = old and 120 or 230
+  if i % 2 == 0 then F.round_rect(p.x - 6, p.y, w + 12, hh - 4, F.col('side', 90), nil, 8) end
+  local sz = F.s(main and 38 or 28)
+  F.lib_pic(F.item_pic_of(h.w.item), p.x + (main and 0 or F.s(10)), p.y + (hh - 4 - sz) / 2, sz)
+  local tx = p.x + sz + F.s(main and 12 or 22)
+  local tw = rx - tx - F.s(8)
+  local dist = F.shop_dist(h.shop)
+  local sub = F.shop_name(h.shop) .. '  ·  ' .. F.ago(h.shop.t) .. (dist ~= '' and ('  ·  ' .. dist) or '')
+  if old then sub = sub .. '  ·  могли уже купить' end
+  if main then
+    F.text_at(font_main, 16, tx, p.y + F.s(5), F.col('text', a), F.fit_text(font_main, F.want_name(h.w), tw))
+    F.text_at(font_main, 16, tx, p.y + F.s(26), F.col('text', old and 90 or 130), F.fit_text(font_main, sub .. '  ·  ' .. F.want_diff_text(h.w, h.price), tw))
+  else
+    F.text_at(font_main, 16, tx, p.y + (hh - 4 - F.s(16)) / 2 - 1, F.col('text', old and 90 or 150), F.fit_text(font_main, sub, tw))
+  end
+  F.text_at(font, main and 18 or 16, rx, p.y + (hh - 4 - F.s(main and 18 or 16)) / 2 - 1, old and F.col('text', 120) or F.col('accent_hi'), right)
+  local iy = p.y + (hh - 4 - ib) / 2
+  if F.ghost_icon('##wroute' .. i, route_x, iy, 'ICON_FA_ROUTE', h.shop.num and ('Маршрут: /findilavka ' .. h.shop.num) or 'У этой лавки нет номера') then
+    F.shop_route(h.shop)
+  end
+  if F.ghost_icon('##whide' .. i, hide_x, iy, 'ICON_FA_TIMES', 'Убрать находку. Вернётся, если цена станет лучше') then
+    F.want_hide_hit(h)
+  end
+  F.advance(p, w, hh)
+end
+
+function F.want_row(wi, i)
+  local p = imgui.GetCursorScreenPos()
+  local w = F.inner_w()
+  local h = F.s(48)
+  local ib = F.s(30)
+  local del_x = p.x + w - ib
+  local sw_x = del_x - F.s(12) - F.s(40)
+  if i % 2 == 0 then F.round_rect(p.x - 6, p.y, w + 12, h - 4, F.col('side', 90), nil, 8) end
+  local sz = F.s(36)
+  F.lib_pic(F.item_pic_of(wi.item), p.x, p.y + (h - 4 - sz) / 2, sz)
+  local tx = p.x + sz + F.s(12)
+  local tw = sw_x - tx - F.s(12)
+  local hits = wi.on and F.want_hits(wi) or {}
+  local sub = (wi.mode == 'buy' and 'Купить не дороже ' or 'Продать не дешевле ') .. F.fmt_money(wi.price)
+  if not wi.on then sub = sub .. '  ·  выключено'
+  elseif #hits > 0 then sub = sub .. '  ·  находок: ' .. #hits
+  else sub = sub .. '  ·  пока не видел' end
+  F.text_at(font_main, 16, tx, p.y + F.s(4), F.col('text', wi.on and 230 or 120), F.fit_text(font_main, F.want_name(wi), tw))
+  F.text_at(font_main, 16, tx, p.y + F.s(24), F.col('text', 120), F.fit_text(font_main, sub, tw))
+  local ky = p.y + (h - 4 - F.s(22)) / 2
+  local hit, hov = F.hotspot('##wsw' .. wi.id, sw_x, ky, F.s(40), F.s(22))
+  F.knob('want' .. wi.id, sw_x, ky, wi.on, hov)
+  if hov then F.tip(wi.on and 'Выключить, не удаляя' or 'Включить') end
+  if hit then
+    wi.on = not wi.on
+    F.want_save()
+  end
+  local act
+  if F.ghost_icon('##wdel' .. wi.id, del_x, p.y + (h - 4 - ib) / 2, 'ICON_FA_TRASH', 'Удалить из списка', true) then act = 'del' end
+  F.advance(p, w, h)
+  return act
+end
+
+function F.want_form()
+  F.want_mode = F.segment('wantmode', {{'buy', 'Купить'}, {'sell', 'Продать'}}, F.want_mode or 'buy', math.min(F.s(300), F.inner_w())) or F.want_mode or 'buy'
+  imgui.Spacing()
+  local w = F.inner_w()
+  local pw = math.min(F.s(170), w * 0.3)
+  local bw = F.s(130)
+  local qw = math.max(F.s(140), w - pw - bw - 16)
+  local pick = F.want_pick
+  local hint = pick and pick.name or 'Предмет: начни писать название'
+  F.field('##wantq', hint, ui.want_q, 80, qw, 'want_q')
+  imgui.SameLine(0, 8)
+  F.field('##wantp', F.want_mode == 'buy' and 'Не дороже, 1.5кк' or 'Не дешевле, 2кк', ui.want_price, 32, pw, 'want_price')
+  imgui.SameLine(0, 8)
+  if F.button('Добавить##wantadd', 130, 0, 'primary') then
+    local q = F.trim(F.buf_get(ui.want_q))
+    local it = pick
+    if q ~= '' and (not pick or F.lower_fast(q) ~= pick.low) then it = F.want_lookup(q) end
+    local price = F.calc_eval(F.buf_get(ui.want_price))
+    if not it then F.notify('Выбери предмет из списка', true)
+    elseif not price or price <= 0 then F.notify('Укажи цену, например 1.5кк', true)
+    else
+      local ok, err = F.want_add(it.id, F.want_mode, price)
+      if ok then
+        F.want_pick = nil
+        F.buf_set(ui.want_q, '', 80)
+        F.buf_set(ui.want_price, '', 32)
+      else F.notify('Не добавил: ' .. err, true) end
+    end
+  end
+  local q = F.trim(F.buf_get(ui.want_q))
+  if q ~= '' and not (pick and F.lower_fast(q) == pick.low) then
+    local list = F.want_matches(q, 6)
+    for i, it in ipairs(list) do
+      F.item_row(it.name, it.id, 'ID ' .. it.id .. '  ·  нажми, чтобы выбрать', '', 5000 + i, 'Выбрать этот предмет', function()
+        F.want_pick = it
+        F.buf_set(ui.want_q, it.name, 80)
+      end)
+    end
+    if #list == 0 and #q >= 2 then F.hint('Такого предмета нет в библиотеке') end
+  end
+end
+
+function F.draw_wants()
+  local view = F.want_view()
+  if #view > 0 then
+    F.card_begin('Находки', 'Самая выгодная лавка сверху. Нажми маршрут, и сервер проложит путь', 'ICON_FA_BULLSEYE')
+    local n = 0
+    for _, e in ipairs(view) do
+      for j = 1, math.min(#e.hits, 3) do
+        n = n + 1
+        F.want_hit_row(e.hits[j], n, j == 1)
+      end
+      if #e.hits > 3 then F.hint('   и ещё в ' .. (#e.hits - 3) .. ' ' .. F.ru_count(#e.hits - 3, 'лавке', 'лавках', 'лавках')) end
+    end
+    F.card_end()
+  end
+  F.card_begin('Хочу найти', 'Укажи предмет и цену. Открывай лавки как обычно: когда найдётся, fHelper скажет', 'ICON_FA_SEARCH_DOLLAR')
+  F.want_form()
+  if #F.wants > 0 then
+    F.divider()
+    local del
+    for i, w in ipairs(F.wants) do
+      if F.want_row(w, i) == 'del' then del = w.id end
+    end
+    if del then F.want_del(del) end
+  end
+  imgui.Spacing()
+  F.chest_flag('wantpin', 'Находки на экране', 'want_pin', 'Плашка с находками, пока меню закрыто. Двигается, когда меню открыто на этой вкладке')
+  F.chest_flag('wantsnd', 'Звук находки', 'want_sound', 'Отдельный звук, даже если у уведомлений звук выключен')
+  F.hint('Команды: /fwant <предмет> <цена>, /fwant продать <предмет> <цена>, /fwant route — маршрут к последней находке.')
+  F.card_end()
+end
+
+-- Finds on the screen while the menu is closed. With the menu open on the stalls tab it can be moved.
+function F.want_bar_on()
+  if hidden or cfg.want_pin ~= 1 or #F.wants == 0 then return false end
+  local ok, pause = pcall(isPauseMenuActive)
+  if ok and pause then return false end
+  if show and not (page == 'exp' and F.exp_tab == 'shops') then return false end
+  return #F.want_view() > 0
+end
+
+function F.draw_want_bar()
+  local view = F.want_view()
+  if #view == 0 then return end
+  F.style_push(cfg.opacity)
+  F.use_font(font_main)
+  local io = imgui.GetIO()
+  local sw, sh = io.DisplaySize.x, io.DisplaySize.y
+  local ww = math.floor(F.s(340))
+  local head = F.s(30)
+  local row = F.s(44)
+  local n = math.min(#view, 4)
+  local wh = head + n * row + F.s(10)
+  local x, y = cfg.want_x, cfg.want_y
+  if x < 0 then x = sw - ww - 24 end
+  if y < 0 then y = sh * 0.45 end
+  x = math.max(0, math.min(sw - ww, x))
+  y = math.max(0, math.min(sh - wh, y))
+  local WF = imgui.WindowFlags
+  local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse
+    + WF.NoCollapse + WF.NoSavedSettings + WF.NoMove + WF.NoFocusOnAppearing
+  if not show then flags = flags + WF.NoMouseInputs end
+  imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.Always)
+  imgui.SetNextWindowSize(imgui.ImVec2(ww, wh), imgui.Cond.Always)
+  imgui.Begin('fhelp-wants', nil, flags)
+  if imgui.SetWindowFontScale then imgui.SetWindowFontScale(cfg.scale or 1) end
+  local wp = imgui.GetWindowPos()
+  F.round_rect(wp.x, wp.y, ww, wh, F.col('bg', 225), F.col('accent', 90), 14)
+  if show then
+    imgui.SetCursorPos(imgui.ImVec2(0, 0))
+    imgui.InvisibleButton('##wantdrag', imgui.ImVec2(ww, head))
+    local active = imgui.IsItemActive()
+    if active and imgui.IsMouseDragging(0) then
+      cfg.want_x = math.max(0, math.min(sw - ww, x + io.MouseDelta.x))
+      cfg.want_y = math.max(0, math.min(sh - wh, y + io.MouseDelta.y))
+      F._want_moved = true
+    elseif F._want_moved and not active then
+      F._want_moved = nil
+      dirty = true
+    end
+  end
+  local pad = F.s(12)
+  F.text_at(font_main, 16, wp.x + pad, wp.y + (head - F.s(16)) / 2, F.col('accent'), F.faico('ICON_FA_BULLSEYE'))
+  F.text_at(font_main, 16, wp.x + pad + F.s(22), wp.y + (head - F.s(16)) / 2, F.col('text', 170),
+    'Находки' .. (show and '  ·  перетащи за шапку' or '  ·  /fwant route'))
+  for i = 1, n do
+    local h = view[i].hits[1]
+    local ry = wp.y + head + (i - 1) * row
+    local sz = F.s(32)
+    F.lib_pic(F.item_pic_of(h.w.item), wp.x + pad, ry + (row - sz) / 2, sz)
+    local tx = wp.x + pad + sz + F.s(10)
+    local price = F.fmt_money(h.price)
+    local pw = F.text_w(font_bold, price)
+    local tw = ww - (tx - wp.x) - pw - pad - F.s(10)
+    local old = F.want_old(h.shop)
+    F.text_at(font_main, 16, tx, ry + F.s(4), F.col('text', old and 120 or 230), F.fit_text(font_main, F.want_name(h.w), tw))
+    local dist = F.shop_dist(h.shop)
+    F.text_at(font_main, 16, tx, ry + F.s(22), F.col('text', old and 90 or 130),
+      F.fit_text(font_main, F.shop_name(h.shop) .. (dist ~= '' and ('  ·  ' .. dist) or '') .. '  ·  ' .. F.ago(h.shop.t), tw))
+    F.text_at(font_bold, 18, wp.x + ww - pad - pw, ry + (row - F.s(18)) / 2, old and F.col('text', 120) or F.col('accent_hi'), price)
+  end
+  imgui.End()
+  F.done_font(font_main)
+  F.style_pop()
 end
 
 -- Experimental mode
@@ -6349,6 +6854,613 @@ function F.look_card()
   F.card_end()
 end
 
+-- Transfer and backup. A profile is plain text: a header line, then every data file as
+-- "F|section|file|count" and its lines. A file is the whole profile, for oneself; a code
+-- carries only what is safe to share and goes through base64 with a checksum.
+-- Nothing in a profile is ever run: it is read as lines, and only known files are written.
+
+F.BAK_VER = 1
+F.BAK = {
+  {id = 'cfg', name = 'Настройки', sub = 'всё из меню настроек, клавиши, плашки', files = {'fhelp.ini'}},
+  {id = 'theme', name = 'Тема и вид', sub = 'цвета, шрифт, ширина, масштаб, прозрачность', share = true},
+  {id = 'binds', name = 'Бинды', files = {'fhelp_binds.txt'}, share = true, merge = true},
+  {id = 'favs', name = 'Избранное чата', files = {'fhelp_favs.txt'}, share = true, merge = true},
+  {id = 'notes', name = 'Заметки', sub = 'с папками и закреплёнными', files = {'fhelp_notes.txt', 'fhelp_pins.txt'}, share = true, merge = true},
+  {id = 'wants', name = 'Хочу найти', files = {'fhelp_wants.txt'}, share = true, merge = true},
+  {id = 'craft', name = 'Рецепты крафта', files = {'fhelp_craft.txt'}, share = true},
+  {id = 'data', name = 'История', sub = 'доходы, сделки, предметы, лавки, машины, сундуки, калькулятор',
+    files = {'fhelp_income.txt', 'fhelp_ledger.txt', 'fhelp_ints.txt', 'fhelp_items.txt', 'fhelp_shops.txt',
+      'fhelp_cars.txt', 'fhelp_chests.txt', 'fhelp_calc.txt'}},
+}
+F.THEME_KEYS = {'ui_bg', 'ui_acc', 'ui_text', 'ui_font', 'opacity', 'scale', 'win_w'}
+-- A friend's pins carry the places of his screen, they stay home.
+F.BAK_NOSHARE = {['fhelp_pins.txt'] = true}
+F.BAK_KEEP = 7
+
+function F.bak_dir() return F.cfg_dir() .. '\\fhelp_saves' end
+
+function F.bak_sect(id)
+  for _, s in ipairs(F.BAK) do
+    if s.id == id then return s end
+  end
+  return nil
+end
+
+-- The files on disk for one name: both projects for the per-project ones.
+function F.bak_real(name)
+  if F.PROJ_FILES[name] then return {name, (name:gsub('^fhelp_', 'fhelp_rodina_'))} end
+  return {name}
+end
+
+-- Which file names a section may write: nothing else ever reaches the disk.
+function F.bak_allowed(sid, name)
+  local s = F.bak_sect(sid)
+  if not s then return false end
+  if sid == 'theme' then return name == 'theme' end
+  for _, f in ipairs(s.files or {}) do
+    for _, real in ipairs(F.bak_real(f)) do
+      if real == name then return true end
+    end
+  end
+  return false
+end
+
+function F.bak_read(path)
+  local f = io.open(path, 'rb')
+  if not f then return nil end
+  local data = f:read('*a') or ''
+  f:close()
+  local out = {}
+  for line in data:gsub('\r', ''):gmatch('[^\n]+') do out[#out + 1] = line end
+  return out
+end
+
+function F.bak_write(path, lines)
+  local f = io.open(path, 'wb')
+  if not f then return false end
+  for i = 1, #lines do f:write((tostring(lines[i]):gsub('[\r\n]', ' ')), '\n') end
+  f:close()
+  return true
+end
+
+function F.bak_num(v)
+  local s = string.format('%.3f', tonumber(v) or 0):gsub('0+$', ''):gsub('%.$', '')
+  return s
+end
+
+function F.bak_path(kind, name)
+  if name == 'fhelp.ini' then return F.cfg_path() end
+  if kind == 'code' then return F.lines_path(name) end
+  return F.cfg_dir() .. '\\' .. name
+end
+
+function F.bak_pack(sel, kind)
+  local out = {table.concat({'FHP', F.BAK_VER, VER, os.date('%Y-%m-%d %H:%M'), kind}, '|')}
+  for _, s in ipairs(F.BAK) do
+    if sel[s.id] and (kind == 'file' or s.share) then
+      if s.id == 'theme' then
+        out[#out + 1] = 'F|theme|theme|' .. #F.THEME_KEYS
+        for _, k in ipairs(F.THEME_KEYS) do out[#out + 1] = k .. '=' .. F.bak_num(cfg[k]) end
+      else
+        for _, name in ipairs(s.files) do
+          if not (kind == 'code' and F.BAK_NOSHARE[name]) then
+            for _, real in ipairs(kind == 'code' and {name} or F.bak_real(name)) do
+              local lines = F.bak_read(F.bak_path(kind, real))
+              if lines then
+                out[#out + 1] = 'F|' .. s.id .. '|' .. real .. '|' .. #lines
+                for i = 1, #lines do out[#out + 1] = lines[i] end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return table.concat(out, '\n') .. '\n'
+end
+
+function F.bak_parse(text)
+  text = tostring(text or ''):gsub('\r', '')
+  local lines = {}
+  for line in (text .. '\n'):gmatch('([^\n]*)\n') do lines[#lines + 1] = line end
+  local ver, app, date, kind = (lines[1] or ''):match('^FHP|(%d+)|([^|]*)|([^|]*)|(%a+)$')
+  if not ver then return nil, 'это не профиль fHelper' end
+  if tonumber(ver) > F.BAK_VER then return nil, 'профиль сделан в более новой версии fHelper (' .. app .. '), сначала обнови fHelper' end
+  local pack = {ver = tonumber(ver), app = app, date = date, kind = kind == 'code' and 'code' or 'file', sect = {}, order = {}}
+  local i = 2
+  while i <= #lines do
+    local sid, name, cnt = lines[i]:match('^F|(%a+)|([%w_%.]+)|(%d+)$')
+    if sid then
+      cnt = tonumber(cnt)
+      if i + cnt > #lines then return nil, 'профиль обрезан или повреждён' end
+      if F.bak_allowed(sid, name) and not (pack.kind == 'code' and not F.bak_sect(sid).share) then
+        local sec = pack.sect[sid]
+        if not sec then
+          sec = {files = {}, names = {}}
+          pack.sect[sid] = sec
+          pack.order[#pack.order + 1] = sid
+        end
+        local body = {}
+        for j = 1, cnt do body[j] = lines[i + j] end
+        if not sec.files[name] then sec.names[#sec.names + 1] = name end
+        sec.files[name] = body
+      end
+      i = i + cnt + 1
+    elseif lines[i] == '' then
+      i = i + 1
+    else
+      return nil, 'профиль повреждён (строка ' .. i .. ')'
+    end
+  end
+  if #pack.order == 0 then return nil, 'в профиле нет данных, которые можно перенести' end
+  return pack
+end
+
+-- base64 and a plain checksum, by hand: a code must survive a messenger as it is.
+F.B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+function F.b64(s)
+  local out, abc = {}, F.B64
+  for i = 1, #s, 3 do
+    local a, b, c = s:byte(i, i + 2)
+    local n = a * 65536 + (b or 0) * 256 + (c or 0)
+    local q1, q2 = math.floor(n / 262144), math.floor(n / 4096) % 64
+    local q3, q4 = math.floor(n / 64) % 64, n % 64
+    out[#out + 1] = abc:sub(q1 + 1, q1 + 1) .. abc:sub(q2 + 1, q2 + 1)
+      .. (b and abc:sub(q3 + 1, q3 + 1) or '=') .. (c and abc:sub(q4 + 1, q4 + 1) or '=')
+  end
+  return table.concat(out)
+end
+
+function F.unb64(s)
+  if not F._b64r then
+    F._b64r = {}
+    for i = 1, 64 do F._b64r[F.B64:byte(i)] = i - 1 end
+  end
+  local r = F._b64r
+  if s:find('[^%w%+/=%s]') then return nil end
+  s = s:gsub('%s', '')
+  if s == '' or #s % 4 ~= 0 then return nil end
+  local out = {}
+  for i = 1, #s, 4 do
+    local c1, c2, c3, c4 = s:byte(i, i + 3)
+    local a, b = r[c1], r[c2]
+    local c = c3 ~= 61 and r[c3] or nil
+    local d = c4 ~= 61 and r[c4] or nil
+    if not a or not b or (c3 ~= 61 and not c) or (c4 ~= 61 and not d) then return nil end
+    local n = a * 262144 + b * 4096 + (c or 0) * 64 + (d or 0)
+    out[#out + 1] = string.char(math.floor(n / 65536))
+    if c then out[#out + 1] = string.char(math.floor(n / 256) % 256) end
+    if d then out[#out + 1] = string.char(n % 256) end
+  end
+  return table.concat(out)
+end
+
+function F.adler(s)
+  local a, b = 1, 0
+  for i = 1, #s do
+    a = (a + s:byte(i)) % 65521
+    b = (b + a) % 65521
+  end
+  return b * 65536 + a
+end
+
+function F.bak_code(sel)
+  local text = F.bak_pack(sel, 'code')
+  return 'FHP1:' .. F.b64(text) .. ':' .. string.format('%.0f', F.adler(text))
+end
+
+function F.bak_uncode(code)
+  local body, sum = F.trim(code or ''):match('^FHP1:([%w%+/=%s]+):(%d+)$')
+  if not body then return nil, 'это не код fHelper: он начинается с FHP1:' end
+  local text = F.unb64(body)
+  if not text or string.format('%.0f', F.adler(text)) ~= sum then return nil, 'код скопирован не полностью или повреждён' end
+  return F.bak_parse(text)
+end
+
+-- What is inside, for the preview, and the commands that binds and favourites would send.
+function F.bak_info(pack)
+  local out = {}
+  for _, sid in ipairs(pack.order) do
+    local sec = pack.sect[sid]
+    local s = F.bak_sect(sid)
+    local n, text, cmds = 0, nil, {}
+    for _, name in ipairs(sec.names) do
+      for _, line in ipairs(sec.files[name]) do
+        if sid == 'binds' then
+          local kind, rest = line:match('^%d+|([^|]*)|(.*)$')
+          if kind then
+            n = n + 1
+            local arg = (rest:match('^(.*)|%d+$') or rest)
+            if (kind == 'chat' or kind == 'say') and F.trim(arg):find('^/') then cmds[#cmds + 1] = F.trim(arg) end
+          end
+        elseif sid == 'favs' then
+          n = n + 1
+          local t = line:match('^F|[^|]*|[^|]*|(.*)$')
+          t = F.trim(t and F.note_unesc(t) or line)
+          if t:find('^/') then cmds[#cmds + 1] = t end
+        elseif sid == 'notes' then
+          if name == 'fhelp_notes.txt' and line:find('^N|') then n = n + 1 end
+        elseif sid == 'wants' then
+          if line:find('^W|') then n = n + 1 end
+        else
+          n = n + 1
+        end
+      end
+    end
+    if sid == 'theme' then text = 'цвета и шрифт'
+    elseif sid == 'cfg' then text = 'все настройки'
+    elseif sid == 'data' then text = #sec.names .. ' ' .. F.ru_count(#sec.names, 'файл', 'файла', 'файлов') .. ', ' .. n .. ' записей'
+    else text = tostring(n) end
+    out[#out + 1] = {id = sid, name = s.name, text = text, cmds = cmds, merge = s.merge}
+  end
+  return out
+end
+
+-- Merging keeps everything of mine and adds only what I do not have.
+function F.bak_merge_binds(mine, theirs)
+  local used, out, added, skipped = {}, {}, 0, 0
+  local function key(line)
+    local vk, rest = line:match('^(%d+)|[^|]*|(.*)$')
+    if not vk then return nil end
+    return vk .. '|' .. (rest:match('|(%d+)$') or '0')
+  end
+  for _, l in ipairs(mine) do
+    out[#out + 1] = l
+    local k = key(l)
+    if k then used[k] = true end
+  end
+  for _, l in ipairs(theirs) do
+    local k = key(l)
+    if k and not used[k] then
+      used[k] = true
+      out[#out + 1] = l
+      added = added + 1
+    elseif k then skipped = skipped + 1 end
+  end
+  return out, added, skipped
+end
+
+function F.bak_merge_favs(mine, theirs)
+  local seen, out, added, skipped = {}, {}, 0, 0
+  local function key(l)
+    local t = l:match('^F|[^|]*|[^|]*|(.*)$')
+    return F.trim(t and F.note_unesc(t) or l)
+  end
+  for _, l in ipairs(mine) do
+    out[#out + 1] = l
+    seen[key(l)] = true
+  end
+  for _, l in ipairs(theirs) do
+    local k = key(l)
+    if k ~= '' and not seen[k] then
+      seen[k] = true
+      out[#out + 1] = l
+      added = added + 1
+    else skipped = skipped + 1 end
+  end
+  return out, added, skipped
+end
+
+function F.bak_merge_wants(mine, theirs)
+  local seen, out, top, added, skipped = {}, {}, 0, 0, 0
+  for _, l in ipairs(mine) do
+    local id, item, mode = l:match('^W|(%d+)|(%d+)|(%a+)|')
+    if id then
+      out[#out + 1] = l
+      seen[item .. mode] = true
+      top = math.max(top, tonumber(id))
+    end
+  end
+  for _, l in ipairs(theirs) do
+    local item, mode, rest = l:match('^W|%d+|(%d+)|(%a+)|(.*)$')
+    if item and not seen[item .. mode] and #out < F.WANT_MAX then
+      seen[item .. mode] = true
+      top = top + 1
+      out[#out + 1] = 'W|' .. top .. '|' .. item .. '|' .. mode .. '|' .. rest
+      added = added + 1
+    elseif item then skipped = skipped + 1 end
+  end
+  return out, added, skipped
+end
+
+-- Folders are matched by name; a note already in the same folder with the same text is skipped.
+function F.bak_merge_notes(mine, theirs)
+  local seq, types, by_name, texts, out = 0, {}, {}, {}, {}
+  local function bump(id) seq = math.max(seq, tonumber(id) or 0) end
+  for _, l in ipairs(mine) do
+    local kind, rest = l:match('^(.)|(.*)$')
+    if kind == 'S' then bump(rest)
+    elseif kind == 'T' then
+      local id, name = rest:match('^([^|]*)|(.*)$')
+      if id then
+        bump(id)
+        types[#types + 1] = l
+        by_name[F.lower_fast(F.trim(F.note_unesc(name)))] = id
+      end
+    elseif kind == 'N' then
+      local id, tid, text = rest:match('^([^|]*)|([^|]*)|(.*)$')
+      if id then
+        bump(id)
+        out[#out + 1] = l
+        texts[tid .. '|' .. text] = true
+      end
+    end
+  end
+  local map, added, skipped = {}, 0, 0
+  for _, l in ipairs(theirs) do
+    local id, name = l:match('^T|([^|]*)|(.*)$')
+    if id then
+      local low = F.lower_fast(F.trim(F.note_unesc(name)))
+      if not by_name[low] then
+        seq = seq + 1
+        by_name[low] = tostring(seq)
+        types[#types + 1] = 'T|' .. seq .. '|' .. name
+      end
+      map[id] = by_name[low]
+    end
+  end
+  for _, l in ipairs(theirs) do
+    local tid, text = l:match('^N|[^|]*|([^|]*)|(.*)$')
+    local to = tid and map[tid]
+    if to then
+      if texts[to .. '|' .. text] then skipped = skipped + 1
+      else
+        seq = seq + 1
+        texts[to .. '|' .. text] = true
+        out[#out + 1] = 'N|' .. seq .. '|' .. to .. '|' .. text
+        added = added + 1
+      end
+    end
+  end
+  local all = {'S|' .. seq}
+  for _, t in ipairs(types) do all[#all + 1] = t end
+  for _, n in ipairs(out) do all[#all + 1] = n end
+  return all, added, skipped
+end
+
+F.BAK_MERGE = {binds = F.bak_merge_binds, favs = F.bak_merge_favs, wants = F.bak_merge_wants}
+
+function F.bak_flush()
+  pcall(F.note_flush)
+  if F.int_dirty then pcall(F.int_save) end
+  pcall(F.save_cfg)
+end
+
+function F.bak_all()
+  local sel = {}
+  for _, s in ipairs(F.BAK) do sel[s.id] = true end
+  return sel
+end
+
+function F.bak_save(sel, name)
+  F.bak_flush()
+  local text = F.bak_pack(sel, 'file')
+  F.mkdir(F.bak_dir())
+  local path = F.bak_dir() .. '\\' .. name
+  local f = io.open(path, 'wb')
+  if not f then return nil end
+  f:write(text)
+  f:close()
+  return path, #text
+end
+
+function F.bak_files()
+  local out = {}
+  if not lfs_ok then return out end
+  pcall(function()
+    for name in lfs.dir(F.bak_dir()) do
+      if name:match('%.fhp$') then
+        local path = F.bak_dir() .. '\\' .. name
+        out[#out + 1] = {name = name, path = path, size = lfs.attributes(path, 'size') or 0, t = lfs.attributes(path, 'modification') or 0}
+      end
+    end
+  end)
+  table.sort(out, function(a, b) return a.t > b.t end)
+  return out
+end
+
+-- Once a day, a minute after the start: the whole profile, the last F.BAK_KEEP days are kept.
+function F.bak_tick(now)
+  if cfg.bak_auto ~= 1 then return end
+  if not F._bak_at then F._bak_at = now - 540 end
+  if now - F._bak_at < 600 then return end
+  F._bak_at = now
+  local name = 'auto_' .. os.date('%Y-%m-%d') .. '.fhp'
+  if doesFileExist(F.bak_dir() .. '\\' .. name) then return end
+  if not F.bak_save(F.bak_all(), name) then return end
+  F.log_line('Автобэкап: ' .. name)
+  local autos = {}
+  for _, f in ipairs(F.bak_files()) do
+    if f.name:match('^auto_') then autos[#autos + 1] = f end
+  end
+  table.sort(autos, function(a, b) return a.name > b.name end)
+  for i = F.BAK_KEEP + 1, #autos do os.remove(autos[i].path) end
+  F.bak_list = nil
+end
+
+-- Writes the chosen sections and restarts fHelper so every list is read anew. A copy of
+-- everything goes first, "Откатить" brings it back. Nothing saves over the files until restart.
+function F.bak_apply(pack, sel, modes)
+  local undo = F.bak_save(F.bak_all(), 'before_import.fhp')
+  if not undo then return false, 'не удалось сохранить копию перед импортом' end
+  local report = {}
+  for _, sid in ipairs(pack.order) do
+    if sel[sid] and not (sid == 'theme' and sel.cfg and pack.sect.cfg) then
+      local sec = pack.sect[sid]
+      local s = F.bak_sect(sid)
+      if sid == 'theme' then
+        local ini = F.bak_read(F.cfg_path()) or {}
+        local vals = {}
+        for _, l in ipairs(sec.files.theme) do
+          local k, v = l:match('^([%w_]+)=([%-%d%.]+)$')
+          if k then vals[k] = v end
+        end
+        local out, done = {}, {}
+        for _, l in ipairs(ini) do
+          local k = l:match('^([%w_]+)=')
+          if k and vals[k] then
+            out[#out + 1] = k .. '=' .. vals[k]
+            done[k] = true
+          else out[#out + 1] = l end
+        end
+        for _, k in ipairs(F.THEME_KEYS) do
+          if vals[k] and not done[k] then out[#out + 1] = k .. '=' .. vals[k] end
+        end
+        F.bak_write(F.cfg_path(), out)
+        report[#report + 1] = s.name
+      else
+        local add = s.merge and modes[sid] == 'add'
+        local a, k = 0, 0
+        for _, name in ipairs(sec.names) do
+          if not (add and name == 'fhelp_pins.txt') then
+            local path = F.bak_path(pack.kind, name)
+            local lines = sec.files[name]
+            if add then
+              local fn = sid == 'notes' and F.bak_merge_notes or F.BAK_MERGE[sid]
+              local na, nk
+              lines, na, nk = fn(F.bak_read(path) or {}, lines)
+              a, k = a + na, k + nk
+            end
+            F.bak_write(path, lines)
+          end
+        end
+        report[#report + 1] = s.name .. (add and (': +' .. a .. (k > 0 and (', уже было ' .. k) or '')) or '')
+      end
+    end
+  end
+  F.log_line('Импорт профиля: ' .. table.concat(report, '; '))
+  F.chat_brand('Профиль загружен: ' .. table.concat(report, '; ') .. '. fHelper перезапускается')
+  F._restoring = true
+  cfg.open = 1
+  lua_thread.create(function()
+    wait(200)
+    thisScript():reload()
+  end)
+  return true
+end
+
+function F.bak_open(pack, err)
+  if not pack then
+    F.notify('Не открылся: ' .. tostring(err), true)
+    return
+  end
+  F.bak_in = {pack = pack, info = F.bak_info(pack), sel = {}, modes = {}}
+  for _, sid in ipairs(pack.order) do
+    F.bak_in.sel[sid] = true
+    F.bak_in.modes[sid] = 'add'
+  end
+end
+
+function F.bak_card()
+  F.card_begin('Перенос и бэкап', 'Бинды, избранное, заметки, тема и всё остальное: в файл, другу или с другого ПК', 'ICON_FA_FILE_EXPORT')
+  F.bak_sel = F.bak_sel or F.bak_all()
+  if F.bak_in then
+    F.bak_preview()
+    F.card_end()
+    return
+  end
+  F.hint('Что сохранять:')
+  for _, s in ipairs(F.BAK) do
+    local sub = s.sub or ''
+    if not s.share then sub = sub .. (sub ~= '' and '. ' or '') .. 'Только в файл, в код для друга не попадает' end
+    if F.switch('bak' .. s.id, s.name, F.bak_sel[s.id] == true, sub ~= '' and sub or nil) then
+      F.bak_sel[s.id] = not F.bak_sel[s.id]
+    end
+  end
+  imgui.Spacing()
+  if F.button('Сохранить в файл##baksave', 200, 0, 'primary') then
+    local path, n = F.bak_save(F.bak_sel, 'fhelp_' .. os.date('%Y-%m-%d_%H%M%S') .. '.fhp')
+    F.bak_list = nil
+    if path then F.notify('Сохранено: config\\fhelp_saves, ' .. math.ceil(n / 1024) .. ' КБ', true)
+    else F.notify('Не удалось сохранить файл', true) end
+  end
+  F.same_if_fit(F.s(200))
+  if F.button('Код для друга##bakcode', 200, 0) then
+    local code = F.bak_code(F.bak_sel)
+    setClipboardText(code)
+    F.notify('Код скопирован, ' .. math.ceil(#code / 1024) .. ' КБ. Длинный код Discord сам отправит файлом', true)
+  end
+  F.same_if_fit(F.s(200))
+  if F.button('Папка бэкапов##bakdir', 200, 0) then
+    F.mkdir(F.bak_dir())
+    F.shell_open('explore', F.bak_dir())
+  end
+  F.divider()
+  F.hint('Загрузить:')
+  if F.button('Вставить код из буфера##bakpaste', 240, 0) then
+    local ok, text = pcall(getClipboardText)
+    F.bak_open(F.bak_uncode(ok and text or ''))
+  end
+  local undo = F.bak_dir() .. '\\before_import.fhp'
+  if doesFileExist(undo) then
+    F.same_if_fit(F.s(240))
+    if F.button('Откатить импорт##bakundo', 240, 0, 'danger') then
+      local pack, err = F.bak_parse(table.concat(F.bak_read(undo) or {}, '\n'))
+      if pack then
+        F.ask('Вернуть всё, как было до последнего импорта? fHelper перезапустится.', 'Откатить', 'fn', {fn = function()
+          local sel, modes = {}, {}
+          for _, sid in ipairs(pack.order) do sel[sid], modes[sid] = true, 'replace' end
+          os.remove(F.bak_dir() .. '\\before_undo.fhp')
+          os.rename(undo, F.bak_dir() .. '\\before_undo.fhp')
+          F.bak_apply(pack, sel, modes)
+        end})
+      else F.notify('Копия не читается: ' .. tostring(err), true) end
+    end
+  end
+  F.bak_list = F.bak_list or F.bak_files()
+  if #F.bak_list > 0 then
+    imgui.Spacing()
+    for i = 1, math.min(#F.bak_list, 8) do
+      local f = F.bak_list[i]
+      local sub = os.date('%d.%m.%Y %H:%M', f.t) .. '  ·  ' .. math.max(1, math.ceil(f.size / 1024)) .. ' КБ'
+      if f.name:match('^auto_') then sub = sub .. '  ·  автобэкап'
+      elseif f.name == 'before_import.fhp' then sub = sub .. '  ·  копия перед импортом' end
+      F.item_row(f.name, 0, sub, 'открыть', 7000 + i, 'Посмотреть, что внутри, и выбрать, что загрузить', function()
+        F.bak_open(F.bak_parse(table.concat(F.bak_read(f.path) or {}, '\n')))
+      end)
+    end
+  end
+  imgui.Spacing()
+  F.chest_flag('bakauto', 'Автобэкап раз в день', 'bak_auto', 'Хранятся последние ' .. F.BAK_KEEP .. ' дней в config\\fhelp_saves')
+  F.card_end()
+end
+
+function F.bak_preview()
+  local b = F.bak_in
+  local pack = b.pack
+  F.hint((pack.kind == 'code' and 'Код' or 'Файл') .. ' от ' .. pack.date .. ', fHelper ' .. pack.app .. '. Выбери, что загрузить:')
+  local cmds = {}
+  for _, it in ipairs(b.info) do
+    if F.switch('bakin' .. it.id, it.name .. ': ' .. it.text, b.sel[it.id] == true) then b.sel[it.id] = not b.sel[it.id] end
+    if it.merge and b.sel[it.id] then
+      local m = F.segment('bakm' .. it.id, {{'add', 'Добавить к моим'}, {'replace', 'Заменить мои'}}, b.modes[it.id], math.min(F.s(360), F.inner_w()))
+      if m then b.modes[it.id] = m end
+    end
+    if b.sel[it.id] then
+      for _, c in ipairs(it.cmds) do cmds[#cmds + 1] = c end
+    end
+  end
+  if #cmds > 0 then
+    F.hint_bad('Команды в биндах и избранном (проверь, что они безопасны):')
+    for i = 1, math.min(#cmds, 15) do F.hint('   ' .. cmds[i]) end
+    if #cmds > 15 then F.hint('   и ещё ' .. (#cmds - 15)) end
+  end
+  F.hint('Перед загрузкой fHelper сам сохранит копию: кнопка «Откатить импорт» вернёт всё как было.')
+  imgui.Spacing()
+  local any = false
+  for _, v in pairs(b.sel) do if v then any = true end end
+  if F.button('Загрузить##bakgo', 200, 0, 'primary') and any then
+    F.ask('Загрузить выбранное? fHelper перезапустится.', 'Загрузить', 'fn', {fn = function()
+      local ok, err = F.bak_apply(pack, b.sel, b.modes)
+      if not ok then F.notify(err, true) end
+      F.bak_in = nil
+    end})
+  end
+  F.same_if_fit(F.s(160))
+  if F.button('Отмена##bakno', 160, 0) then F.bak_in = nil end
+end
+
 function F.draw_settings_page()
   F.page_head('Настройки', 'Вид окна, сообщения и данные fHelper')
   F.card_begin('Окно', nil, 'ICON_FA_WINDOW_MAXIMIZE')
@@ -6385,6 +7497,7 @@ function F.draw_settings_page()
   F.card_end()
   F.toast_settings()
   F.upd_card()
+  F.bak_card()
   F.card_begin('Данные', 'Всё хранится в moonloader\\config', 'ICON_FA_DATABASE')
   local m = F.mem_st or {}
   if m.free and m.free < F.MEM_WARN then F.hint_bad(F.mem_text() .. '. Перезапусти игру.')
@@ -6412,6 +7525,16 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.17.0', '09.11.2026', {
+    {'add', 'Лавки → «Хочу найти»: предмет и цена, купить не дороже или продать не дешевле'},
+    {'add', 'Открываешь лавку, и если там нужное, приходит уведомление со звуком и строка в чат'},
+    {'add', 'Находки закрепляются: лавка, цена, насколько выгоднее лимита, расстояние и кнопка маршрута'},
+    {'add', 'Плашка с находками на экране и команда /fwant: добавить, список, маршрут к последней находке'},
+    {'add', 'Настройки → «Перенос и бэкап»: профиль в файл, код для друга, загрузка с выбором, что брать'},
+    {'add', 'При загрузке можно добавить к своим или заменить; команды из чужих биндов видно заранее'},
+    {'add', 'Копия перед каждой загрузкой и кнопка «Откатить импорт», автобэкап раз в день'},
+    {'fix', 'В лавках у цены больше нет двойного знака $'},
+  }},
   {'1.16.0', '08.11.2026', {
     {'fix', 'Доходы → Предметы снова записывают: строки чата не распознавались из-за кодировки игры'},
     {'add', 'Предметы: что пришло в пункт выдачи («В хранилище») и выбор: всё, в инвентарь или в хранилище'},
@@ -6430,7 +7553,8 @@ F.PATCH = {
     {'add', 'Видно, сколько памяти свободно у игры, сколько занимает мир вокруг и сам fHelper'},
     {'add', 'Можно разгружать самому, когда памяти остаётся мало, до предупреждения'},
     {'add', 'Команда /fmem'},
-  }},  {'1.14.0', '08.11.2026', {
+  }},
+  {'1.14.0', '08.11.2026', {
     {'add', 'Настройки → «Цвет и шрифт»: шесть тем, свой цвет фона, акцента и текста'},
     {'add', 'Выбор шрифта: Segoe UI, Tahoma, Arial, Verdana, Calibri, Trebuchet'},
     {'add', 'Ширина окна от 860 до 1600 и непрозрачность от 50%'},
@@ -6440,7 +7564,8 @@ F.PATCH = {
   {'1.13.0', '08.11.2026', {
     {'fix', 'Таймер больше не пропадает от случайного клика по строке: убрать его можно только корзиной справа'},
   }},
-  {'1.12.0', '08.11.2026', {    {'add', 'Новая страница «Сундуки»: таймеры сундуков, тайников, ящиков и ларцов с обратным отсчётом'},
+  {'1.12.0', '08.11.2026', {
+    {'add', 'Новая страница «Сундуки»: таймеры сундуков, тайников, ящиков и ларцов с обратным отсчётом'},
     {'add', 'Время отката берётся прямо из инвентаря, достаточно его открыть'},
     {'add', 'Когда откат прошёл, появляется уведомление «Можно открыть», строка в чате и звук'},
     {'add', 'После захода в игру fHelper скажет, что откатилось, пока тебя не было'},
@@ -11480,6 +12605,9 @@ if imgui_ok then
   F.pin_frame = imgui.OnFrame(function() return F.pins_on() end, F.draw_pins)
   F.pin_frame.HideCursor = true
   F.pin_frame.LockPlayer = false
+  F.want_frame = imgui.OnFrame(function() return F.want_bar_on() end, F.draw_want_bar)
+  F.want_frame.HideCursor = true
+  F.want_frame.LockPlayer = false
   F.time_frame = imgui.OnFrame(function() return F.time_on() end, F.draw_time)
   F.time_frame.HideCursor = true
   F.time_frame.LockPlayer = false
@@ -11620,7 +12748,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 24
+F.BUILD = 25
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -11982,7 +13110,7 @@ function main()
   F.load_notes()
   F.pay_load()
   -- A broken data file must not stop the whole menu from starting.
-  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load, F.shop_load}) do
+  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load, F.shop_load, F.want_load}) do
     local ok, err = pcall(fn)
     if not ok then F.log_line('Загрузка данных: ' .. tostring(err)) end
   end
@@ -12039,6 +13167,7 @@ function main()
   sampRegisterChatCommand('fupdate', F.upd_cmd)
   sampRegisterChatCommand('fchest', F.chest_cmd)
   sampRegisterChatCommand('fmem', F.mem_cmd)
+  sampRegisterChatCommand('fwant', function(arg) pcall(F.want_cmd, arg) end)
   local int_mark = 0
   local frames = 0
   local fps_mark = os.clock()
@@ -12067,6 +13196,7 @@ function main()
     F.pay_tick()
     F.car_tick()
     pcall(F.mem_tick, now)
+    if not F._restoring then pcall(F.bak_tick, now) end
     pcall(F.upd_tick, now)
     pcall(F.shop_tick)
     pcall(F.chest_tick)
@@ -12111,6 +13241,10 @@ end
 addEventHandler('onScriptTerminate', function(scr)
   if scr ~= script.this then
     pcall(F.sc_terminated, scr)
+    return
+  end
+  if F._restoring then
+    pcall(F.lib_free)
     return
   end
   pcall(function()
