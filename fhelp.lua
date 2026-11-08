@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.11.0'
+local VER = '1.11.1'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(16)
+script_version_number(17)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -3335,6 +3335,7 @@ function F.header_icon(id, x, y, glyph, tip, action)
       F.close_menu()
     elseif action == 'settings' then page = 'settings'
     elseif action == 'reload' then F.queue('reload_self')
+    elseif action == 'upd' then F.upd_button()
     elseif action == 'patch' then
       modal = {kind = 'patch', title = 'Что нового'}
       cfg.seen_ver = VER
@@ -3379,7 +3380,7 @@ function F.paint_top(ww, wp, side_w)
     F.text_at(font_main, 16, lx + ls + 10, by + F.s(18) + 1, F.col('text', 130), F.proj().name)
   end
   dl:AddLine(imgui.ImVec2(wp.x + 1, math.floor(wp.y + hh) + 0.5), imgui.ImVec2(wp.x + ww - 1, math.floor(wp.y + hh) + 0.5), F.col('text', 22), 1)
-  local controls = 5 * 34 + 16
+  local controls = 6 * 34 + 16
   local tx = wp.x + side_w + 22
   if not collapsed then
     local title = F.nav_title(page)
@@ -3410,6 +3411,13 @@ function F.paint_top(ww, wp, side_w)
   F.header_icon('##min', bx, iy, glyph('ICON_FA_WINDOW_MINIMIZE', '_'), collapsed and 'Развернуть' or 'Свернуть', 'min')
   bx = bx - 34
   F.header_icon('##rel', bx, iy, glyph('ICON_FA_SYNC', 'R'), 'Перезагрузить fHelper', 'reload')
+  bx = bx - 34
+  local u = F.upd_state()
+  local busy = u.state == 'checking' or u.state == 'loading'
+  F.header_icon('##upd', bx, iy, busy and glyph('ICON_FA_HOURGLASS_HALF', '…') or glyph('ICON_FA_CLOUD_DOWNLOAD_ALT', 'U'), F.upd_tip(), 'upd')
+  if u.state == 'new' then
+    dl:AddCircleFilled(imgui.ImVec2(bx + 25, iy + 7), 4, F.col('accent'), 12)
+  end
   bx = bx - 34
   F.header_icon('##patch', bx, iy, glyph('ICON_FA_BULLHORN', '!'), 'Что нового в версии ' .. VER, 'patch')
   if cfg.seen_ver ~= VER then
@@ -5898,6 +5906,11 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.11.1', '08.11.2026', {
+    {'add', 'Кнопка проверки обновления в шапке рядом с «Что нового»'},
+    {'add', 'Если вышла новая версия, кнопка сразу предлагает обновиться и показывает, что изменилось'},
+    {'add', 'Точка на кнопке, пока есть неустановленное обновление'},
+  }},
   {'1.11.0', '08.11.2026', {
     {'add', 'Раздел «Эксперимент» → «Лавки»: fHelper запоминает товары и цены каждой лавки, которую ты открыл'},
     {'add', 'Поиск товара по всем записанным лавкам: самые дешёвые сверху, у скупки сверху те, кто платит больше'},
@@ -10148,7 +10161,7 @@ function F.draw_overlay(ww, wh, wp)
     F.text_at(font_main, 16, x + pad + (head_h - gw) / 2, cy - F.s(16) / 2, F.col('accent_hi'), icon)
     tx = x + pad + head_h + 12
   end
-  local title = ask and 'Подтверждение' or (m.title or 'Сообщение')
+  local title = ask and (m.title or 'Подтверждение') or (m.title or 'Сообщение')
   F.text_at(font_bold, 18, tx, cy - F.s(18) / 2 - 1, F.col('text'), F.fit_text(font_bold, title, x + mw - pad - tx))
   local body_y = y + pad + head_h + 14
   if ask then
@@ -10505,7 +10518,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 16
+F.BUILD = 17
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -10584,6 +10597,8 @@ function F.upd_check(manual)
   F.fetch(base .. 'version.json?t=' .. os.time(), path, function(ok)
     local info = ok and F.upd_parse(F.upd_read(path))
     os.remove(path)
+    local want = u.want
+    u.want = nil
     if not info then
       u.state = 'fail'
       if manual then F.notify('Не удалось проверить обновление, нет связи с GitHub') end
@@ -10596,7 +10611,8 @@ function F.upd_check(manual)
       return
     end
     u.state = 'new'
-    if manual or cfg.upd_skip ~= info.build then F.upd_announce(info) end
+    if want then F.upd_offer()
+    elseif manual or cfg.upd_skip ~= info.build then F.upd_announce(info) end
   end)
 end
 
@@ -10682,6 +10698,47 @@ function F.upd_install()
       thisScript():reload()
     end)
   end)
+end
+
+-- The button in the window head: checks right away and offers to install what it found.
+function F.upd_offer()
+  local u = F.upd_state()
+  local info = u.info
+  if not info then return end
+  local lines = {'Вышла версия ' .. info.version .. ', у тебя ' .. VER .. '.'}
+  for i = 1, math.min(#info.notes, 6) do lines[#lines + 1] = '•  ' .. info.notes[i] end
+  if #info.notes > 6 then lines[#lines + 1] = '…и ещё ' .. (#info.notes - 6) end
+  if u.err then lines[#lines + 1] = 'Прошлая попытка: ' .. u.err end
+  lines[#lines + 1] = ''
+  lines[#lines + 1] = 'Обновить сейчас? fHelper сам перезапустится, старая версия останется в fhelp_backup.'
+  modal = {kind = 'ask', title = 'Доступно обновление', text = table.concat(lines, '\n'), ok = 'Обновить', job = {op = 'fn', fn = F.upd_install}}
+end
+
+function F.upd_button()
+  local u = F.upd_state()
+  if not F.upd_base() then
+    F.notify('Адрес обновлений ещё не настроен', true)
+    return
+  end
+  if u.state == 'new' and u.info then
+    F.upd_offer()
+    return
+  end
+  if u.state == 'checking' or u.state == 'loading' or u.state == 'done' then
+    if u.state == 'checking' then u.want = true end
+    F.notify(F.UPD_TEXT[u.state], true)
+    return
+  end
+  u.want = true
+  F.upd_check(true)
+end
+
+function F.upd_tip()
+  local u = F.upd_state()
+  if u.state == 'new' and u.info then return 'Вышла версия ' .. u.info.version .. ', нажми, чтобы обновить' end
+  if u.state == 'checking' then return 'Проверяю обновление…' end
+  if u.state == 'loading' then return 'Скачиваю обновление…' end
+  return 'Проверить обновление'
 end
 
 function F.upd_cmd()
