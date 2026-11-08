@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.12.0'
+local VER = '1.13.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(19)
+script_version_number(20)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -152,6 +152,7 @@ local cfg = {
   chest_sound = 1,
   chest_all = 0,
   chest_pre = 0,
+  chest_auto = 0,
   toast_chest = 1,
 }
 
@@ -169,7 +170,7 @@ local CFG_NUM = {
   {'toast_alpha', 0.3, 1}, {'toast_time', 2, 30}, {'toast_max', 1, 10}, {'toast_menu', 0, 1},
   {'toast_merge', 0, 1}, {'toast_sound', 0, 1}, {'toast_bar', 0, 1},
   {'upd_on', 0, 1}, {'upd_skip', 0, 1e9}, {'shop_on', 0, 1},
-  {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},
+  {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10}, {'chest_auto', 0, 1},
   {'toast_chest', 0, 1},
 }
 
@@ -6046,8 +6047,13 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
-  {'1.12.0', '08.11.2026', {
-    {'add', 'Новая страница «Сундуки»: таймеры сундуков, тайников, ящиков и ларцов с обратным отсчётом'},
+  {'1.13.0', '08.11.2026', {
+    {'add', 'Сундуки могут открываться сами: когда откат прошёл, fHelper откроет инвентарь и использует сундук'},
+    {'add', 'Включается в «Сундуки» → «Как работает» → «Открывать самому», для отдельного сундука можно оставить «вручную»'},
+    {'add', 'Кнопка «Открыть сейчас» у готового сундука'},
+    {'fix', 'Таймер больше не пропадает от случайного клика по строке: убрать его можно только корзиной справа'},
+  }},
+  {'1.12.0', '08.11.2026', {    {'add', 'Новая страница «Сундуки»: таймеры сундуков, тайников, ящиков и ларцов с обратным отсчётом'},
     {'add', 'Время отката берётся прямо из инвентаря, достаточно его открыть'},
     {'add', 'Когда откат прошёл, появляется уведомление «Можно открыть», строка в чате и звук'},
     {'add', 'После захода в игру fHelper скажет, что откатилось, пока тебя не было'},
@@ -7663,13 +7669,18 @@ function F.chest_load()
   st.by = {}
   local old = os.time() - 30 * 86400
   for _, line in ipairs(F.read_lines('fhelp_chests.txt')) do
-    local key, id, ends, src, dur, at, told, name = line:match('^([^|]+)|(%d+)|(%d+)|(%a+)|(%d+)|(%d+)|(%d)|(.*)$')
+    -- Since 1.13 a line has the auto-open flag before the name.
+    local key, id, ends, src, dur, at, told, auto, name = line:match('^([^|]+)|(%d+)|(%d+)|(%a+)|(%d+)|(%d+)|(%d)|(%d)|(.*)$')
+    if not key then
+      key, id, ends, src, dur, at, told, name = line:match('^([^|]+)|(%d+)|(%d+)|(%a+)|(%d+)|(%d+)|(%d)|(.*)$')
+    end
     ends = tonumber(ends)
     if key and ends and ends > old then
       dur = tonumber(dur) or 0
       st.by[key] = {
         key = key, id = tonumber(id) or 0, ends = ends, src = src, dur = dur > 0 and dur or nil,
         at = tonumber(at) or 0, told = tonumber(told) or 0, pre = tonumber(told) or 0, name = name,
+        auto = auto == '0' and 0 or nil,
       }
     end
   end
@@ -7682,7 +7693,7 @@ function F.chest_save()
     out[#out + 1] = table.concat({
       e.key, tostring(e.id or 0), tostring(math.floor(e.ends or 0)), e.src or 'inv',
       tostring(math.floor(e.dur or 0)), tostring(math.floor(e.at or 0)), tostring(e.told == 1 and 1 or 0),
-      (tostring(e.name or ''):gsub('[|\r\n]', ' ')),
+      e.auto == 0 and '0' or '1', (tostring(e.name or ''):gsub('[|\r\n]', ' ')),
     }, '|')
   end
   table.sort(out)
@@ -7755,6 +7766,7 @@ end
 function F.chest_used(id, name, def_min)
   local st = F.chest_state()
   local now = os.time()
+  if F.chest_run then F.chest_run.used = true end
   -- The inventory may already have sent the new time for this very opening.
   for aid in pairs(F.CHEST_ALT[id] or {[id] = true}) do
     local c = st.by[F.chest_key(aid, name)]
@@ -7770,34 +7782,184 @@ end
 
 function F.chest_items(items)
   local now = os.time()
-  local best = {}
+  local best, slot = {}, {}
   for _, it in pairs(items) do
     if type(it) == 'table' then
       local id, t = tonumber(it.item), tonumber(it.time)
       if id and id > 0 and t and t > now and t - now < 172800 then
-        if not best[id] or t > best[id] then best[id] = t end
+        if not best[id] or t > best[id] then best[id], slot[id] = t, tonumber(it.slot) end
       end
     end
   end
   for id, t in pairs(best) do
     local name = F.item_label(id)
-    if F.chest_kind(name) then F.chest_set(id, name, t, 'inv') end
+    if F.chest_kind(name) then
+      local e = F.chest_set(id, name, t, 'inv')
+      if e and slot[id] then e.slot = slot[id] end
+    end
   end
 end
 
+-- While fHelper opens a chest itself it reads every slot, a ready chest has no time left.
+function F.chest_slots(run, items)
+  local now = os.time()
+  for _, it in pairs(items) do
+    if type(it) == 'table' and tonumber(it.item) == run.id and tonumber(it.slot) then
+      local t = tonumber(it.time) or 0
+      if not run.slot or t <= now then run.slot = tonumber(it.slot) end
+    end
+  end
+  run.got = os.clock()
+end
+
 function F.chest_packet(text)
-  if cfg.chest_on ~= 1 or not text:find('playerInventory', 1, true) or not text:find('"time"', 1, true) then return end
+  if cfg.chest_on ~= 1 then return end
+  local run = F.chest_run
+  if text:find('event.setActiveView', 1, true) then
+    F.chest_inv_open = text:match('`%s*%[%s*"([^"]+)"') == 'Inventory'
+    if run and F.chest_inv_open then run.view = true end
+  end
+  if not text:find('playerInventory', 1, true) then return end
+  if not run and not text:find('"time"', 1, true) then return end
   for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
-    if body:find('"time"%s*:%s*[1-9]') then
+    if run or body:find('"time"%s*:%s*[1-9]') then
       local v = F.json_value(body, 1)
       if type(v) == 'table' and v.action == nil then v = v[1] end
       if type(v) == 'string' then v = F.json_value(v, 1) end
+      if type(v) == 'table' and run and v.action == 3 then run.info = true end
       if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table'
         and tonumber(v.data.type) == 1 and type(v.data.items) == 'table' then
+        if run then F.chest_slots(run, v.data.items) end
         F.chest_items(v.data.items)
       end
     end
   end
+end
+
+-- Opening by itself: the same steps as by hand. Y opens the inventory, a right click on the chest
+-- asks the server for its menu, and the «Использовать» button (action 1) uses it.
+
+function F.chest_auto_for(e)
+  return cfg.chest_auto == 1 and e.auto ~= 0 and (e.id or 0) > 0 and e.tried ~= e.ends
+end
+
+-- Why it is not a good moment now, nil when it is.
+function F.chest_auto_block()
+  if F.typing() then return 'открыт чат, диалог или пауза' end
+  local ok, car = pcall(isCharInAnyCar, PLAYER_PED)
+  if ok and car then return 'ты в машине' end
+  if show then return 'открыто меню fHelper' end
+  if not F.chest_inv_open then
+    local fine, cur = pcall(sampIsCursorActive)
+    if fine and cur then return 'открыто другое окно' end
+  end
+  return nil
+end
+
+function F.chest_wait(fn, limit)
+  local start = os.clock()
+  while os.clock() - start < limit do
+    if fn() then return true end
+    wait(50)
+  end
+  return fn() and true or false
+end
+
+function F.chest_key_tap(vk)
+  setVirtualKeyDown(vk, true)
+  wait(80)
+  setVirtualKeyDown(vk, false)
+end
+
+function F.chest_auto_said(e, ok, why)
+  if ok then
+    F.toast('chest', {key = 'chauto' .. e.key, item = e.id, icon = 'ICON_FA_MAGIC', title = 'Открыл сам', text = e.name, life = 10})
+    if cfg.chest_chat == 1 then F.chat_brand('Открыл сам: {E08A55}' .. e.name) end
+  else
+    F.toast('chest', {
+      key = 'chauto' .. e.key, item = e.id, icon = 'ICON_FA_EXCLAMATION_TRIANGLE',
+      title = 'Не получилось открыть сам', text = e.name .. ': ' .. why, life = 12,
+    })
+    if cfg.chest_chat == 1 then F.chat_brand('Не получилось открыть сам: {E08A55}' .. e.name .. '{FFFFFF}, ' .. why .. '. Открой вручную.') end
+  end
+  F.chest_sound()
+end
+
+function F.chest_auto_go(e, run)
+  local was = F.chest_inv_open
+  if not was then
+    F.chest_key_tap(0x59)
+    F.chest_wait(function() return run.slot and os.clock() - (run.got or 0) > 0.35 end, 3)
+  end
+  local slot = run.slot or e.slot
+  local later = e.ends > os.time() + 5
+  if not slot or later then
+    F.chest_shut(run, was)
+    -- A timer from the chat was only a guess, the inventory has just told the real one.
+    if later then return nil, 'later' end
+    if not was and not run.got then return false, 'инвентарь не открылся' end
+    return false, 'сундука нет в инвентаре'
+  end
+  local before = e.ends
+  wait(250)
+  F.cef_send('rightClickOnBlock|{"slot": ' .. slot .. ', "type": 1}')
+  F.chest_wait(function() return run.info end, 1.5)
+  wait(150)
+  F.cef_send('clickOnButton|{"type": 1,"slot": ' .. slot .. ', "action": 1}')
+  local ok = F.chest_wait(function() return run.used or e.ends > before + 30 end, 4)
+  wait(300)
+  F.chest_shut(run, was)
+  if not ok then return false, 'сервер не ответил' end
+  return true
+end
+
+-- Close only what fHelper opened itself.
+function F.chest_shut(run, was)
+  if was or not (run.view or run.got) then return end
+  F.cef_send('inventoryClose')
+  -- If the view still says inventory, close it the way the player does.
+  if run.view and not F.chest_wait(function() return not F.chest_inv_open end, 0.8) then F.chest_key_tap(0x59) end
+end
+
+function F.chest_auto_start(e)
+  if F.chest_run then return false end
+  e.tried = e.ends
+  local run = {id = e.id, key = e.key}
+  F.chest_run = run
+  F.log_line('Автооткрытие: ' .. tostring(e.name))
+  lua_thread.create(function()
+    local fine, ok, why = pcall(F.chest_auto_go, e, run)
+    F.chest_run = nil
+    if not fine then
+      F.log_line('Автооткрытие: ' .. tostring(ok))
+      ok, why = false, 'ошибка, подробности в журнале'
+    end
+    if why ~= 'later' then F.chest_auto_said(e, ok, why) end
+  end)
+  return true
+end
+
+function F.chest_auto_tick(now)
+  if F.chest_run or now < (F._chest_auto_next or 0) then return end
+  local st = F.chest_state()
+  if now - st.start < 20 then return end
+  local pick
+  for _, e in pairs(st.by) do
+    if e.ends + 3 <= now and F.chest_auto_for(e) then
+      if not pick or e.ends < pick.ends then pick = e end
+    end
+  end
+  if not pick then return end
+  if F.chest_auto_block() then
+    -- Do not stay silent for long: after two minutes say it like without auto-open.
+    if not pick.anote and now - pick.ends > 120 then
+      pick.anote = true
+      F.chest_ready({pick}, true)
+    end
+    return
+  end
+  F._chest_auto_next = now + 8
+  F.chest_auto_start(pick)
 end
 
 function F.chest_feed(text)
@@ -7826,14 +7988,19 @@ function F.chest_sound()
   end)
 end
 
-function F.chest_ready(list)
+-- force: say it even when auto-open would take this chest, it could not do it in time.
+function F.chest_ready(list, force)
   table.sort(list, function(a, b) return a.ends < b.ends end)
   local st = F.chest_state()
-  local away = {}
+  local away, said = {}, 0
   for _, e in ipairs(list) do
-    if e.ends < st.start - 60 then
+    if not force and F.chest_auto_for(e) then
+      -- auto-open tells the result itself
+    elseif e.ends < st.start - 60 and not force then
+      said = said + 1
       away[#away + 1] = e
     else
+      said = said + 1
       F.toast('chest', {
         key = 'ch' .. e.key, item = e.id > 0 and e.id or nil, icon = 'ICON_FA_GIFT',
         title = 'Можно открыть', text = e.name, life = 12,
@@ -7841,6 +8008,7 @@ function F.chest_ready(list)
       if cfg.chest_chat == 1 then F.chat_brand('Можно открыть: {E08A55}' .. e.name) end
     end
   end
+  if said == 0 then return end
   if #away > 0 then
     local names = {}
     for i = 1, #away do names[i] = away[i].name end
@@ -7882,6 +8050,7 @@ function F.chest_tick()
     st.rev = st.rev + 1
     F.chest_save()
   end
+  if cfg.chest_auto == 1 then F.chest_auto_tick(now) end
 end
 
 function F.left_text(sec)
@@ -7933,6 +8102,68 @@ function F.chest_flag(id, label, key, sub)
   end
 end
 
+function F.chest_open_now(e)
+  if F.chest_run then
+    F.notify('Уже открываю другой сундук')
+    return
+  end
+  if show then F.toggle() end
+  e.tried = nil
+  -- Give the menu a moment to close, the game must see the key.
+  lua_thread.create(function()
+    wait(400)
+    F.chest_auto_start(e)
+  end)
+end
+
+-- One timer: the row copies the item code, the icons on the right do the rest.
+function F.chest_row(e, i, now)
+  local p = imgui.GetCursorScreenPos()
+  local w = F.inner_w()
+  local h = F.s(48)
+  local ib = F.s(30)
+  local left = e.ends - now
+  local can_open = left <= 0 and (e.id or 0) > 0
+  local auto = cfg.chest_auto == 1 and (e.id or 0) > 0
+  local icons = 1 + (auto and 1 or 0) + (can_open and 1 or 0)
+  local bx = p.x + w - ib
+  local right = left > 0 and F.left_text(left) or (F.chest_run and F.chest_run.key == e.key and 'Открываю…' or 'Готов')
+  local rw = F.text_w(font_bold, right)
+  local rx = bx - (ib + 2) * (icons - 1) - rw - F.s(12)
+  local clicked, hovered = F.hotspot('##chrow' .. i, p.x - 6, p.y, math.max(1, rx - p.x), h - 4)
+  if hovered then F.round_rect(p.x - 6, p.y, w + 12, h - 4, F.col('text', 16), nil, 8)
+  elseif i % 2 == 0 then F.round_rect(p.x - 6, p.y, w + 12, h - 4, F.col('side', 90), nil, 8) end
+  local sz = F.s(36)
+  F.lib_pic(F.item_pic_of(e.id), p.x, p.y + (h - 4 - sz) / 2, sz)
+  local tx = p.x + sz + F.s(12)
+  local tw = rx - tx - F.s(8)
+  local sub = left > 0 and ('Откроется в ' .. F.chest_when(e.ends)) or ('Можно открыть с ' .. F.chest_when(e.ends))
+  sub = sub .. '  ·  ' .. (e.src == 'inv' and 'по инвентарю' or 'по чату, примерно')
+  if e.dur then sub = sub .. '  ·  откат ' .. F.left_text(e.dur) end
+  if auto then sub = sub .. '  ·  ' .. (e.auto == 0 and 'вручную' or 'откроется сам') end
+  F.text_at(font_main, 16, tx, p.y + F.s(4), F.col('text', 230), F.fit_text(font_main, e.name, tw))
+  F.text_at(font_main, 16, tx, p.y + F.s(24), F.col('text', 120), F.fit_text(font_main, sub, tw))
+  F.text_at(font_bold, 18, rx, p.y + (h - 4 - F.s(18)) / 2 - 1, F.col('accent_hi'), right)
+  if hovered then F.tip(e.id > 0 and 'Нажми, чтобы скопировать код предмета для чата' or 'Нажми, чтобы скопировать название') end
+  if clicked then F.note_copy(e.id > 0 and (':item' .. e.id .. ':') or e.name) end
+  local iy = p.y + (h - 4 - ib) / 2
+  local act
+  if F.ghost_icon('##chdel' .. i, bx, iy, 'ICON_FA_TRASH', 'Убрать таймер', true) then act = 'del' end
+  local x = bx
+  if auto then
+    x = x - ib - 2
+    local tip = e.auto == 0 and 'Сейчас вручную. Нажми, чтобы fHelper открывал этот сундук сам'
+      or 'Откроется сам. Нажми, чтобы открывать этот сундук вручную'
+    if F.ghost_icon('##chauto' .. i, x, iy, e.auto == 0 and 'ICON_FA_HAND_PAPER' or 'ICON_FA_MAGIC', tip) then act = 'auto' end
+  end
+  if can_open then
+    x = x - ib - 2
+    if F.ghost_icon('##chopen' .. i, x, iy, 'ICON_FA_PLAY', 'Открыть сейчас: fHelper сам откроет инвентарь и использует сундук') then act = 'open' end
+  end
+  F.advance(p, w, h)
+  return act
+end
+
 function F.draw_chests()
   F.page_head('Сундуки', 'Таймеры сундуков и тайников: fHelper скажет, когда их снова можно открыть')
   local st = F.chest_state()
@@ -7954,28 +8185,26 @@ function F.draw_chests()
   if cfg.chest_on ~= 1 then
     F.empty('ICON_FA_GIFT', 'Таймеры выключены', 'Включи их в карточке «Как работает» ниже')
   end
-  F.card_begin('Таймеры', #list > 0 and 'Нажми на строку, чтобы убрать таймер' or nil, 'ICON_FA_HOURGLASS_HALF')
+  F.card_begin('Таймеры', #list > 0 and 'Убрать таймер можно корзиной справа' or nil, 'ICON_FA_HOURGLASS_HALF')
   if #list == 0 then
     F.empty('ICON_FA_GIFT', 'Таймеров пока нет', 'Открой сундук или тайник, или просто открой инвентарь: fHelper сам увидит таймеры')
   end
-  local drop
+  local act, at
   for i = 1, #list do
-    local e = list[i]
-    local left = e.ends - now
-    local sub
-    if left > 0 then
-      sub = 'Откроется в ' .. F.chest_when(e.ends)
-    else
-      sub = 'Можно открыть с ' .. F.chest_when(e.ends)
-    end
-    sub = sub .. '  ·  ' .. (e.src == 'inv' and 'по инвентарю' or 'по чату, примерно')
-    if e.dur then sub = sub .. '  ·  откат ' .. F.left_text(e.dur) end
-    F.item_row(e.name, e.id, sub, left > 0 and F.left_text(left) or 'Готов', i, 'Нажми, чтобы убрать таймер', function() drop = e.key end)
+    local a = F.chest_row(list[i], i, now)
+    if a then act, at = a, list[i] end
   end
-  if drop then
-    st.by[drop] = nil
+  if act == 'del' then
+    st.by[at.key] = nil
     st.rev = st.rev + 1
     F.chest_save()
+  elseif act == 'auto' then
+    at.auto = at.auto == 0 and nil or 0
+    if at.auto == nil then at.tried = nil end
+    st.rev = st.rev + 1
+    F.chest_save()
+  elseif act == 'open' then
+    F.chest_open_now(at)
   end
   if ready > 0 then
     imgui.Spacing()
@@ -7995,6 +8224,10 @@ function F.draw_chests()
     F.chest_flag('chchat', 'Сообщение в чат', 'chest_chat', 'Строка fHelper в чате, видна только тебе')
     F.chest_flag('chsnd', 'Звук', 'chest_sound', 'Короткий игровой звук, когда сундук готов')
     F.chest_flag('chall', 'Все предметы с таймером', 'chest_all', 'Не только сундуки, а любой предмет, у которого в инвентаре идёт откат')
+    F.chest_flag('chauto', 'Открывать самому', 'chest_auto', 'Когда откат прошёл, fHelper сам откроет инвентарь и использует сундук')
+    if cfg.chest_auto == 1 then
+      F.hint('Открывает, только когда ты пешком, не печатаешь и не в другом окне, иначе ждёт. Инвентарь на секунду мелькнёт на экране. Отдельный сундук можно перевести на «вручную» кнопкой в строке таймера.')
+    end
     imgui.Spacing()
     imgui.TextUnformatted('Напомнить заранее')
     local v = F.segment('chpre', F.CHEST_PRE, cfg.chest_pre)
@@ -11056,7 +11289,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 19
+F.BUILD = 20
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
