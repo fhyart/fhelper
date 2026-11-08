@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.15.0'
+local VER = '1.16.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(22)
+script_version_number(24)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -797,21 +797,190 @@ function F.rel_path(path)
   return p
 end
 
-function F.find_loaded(path)
+-- A script that died stays in MoonLoader's list for a while: it does not count as running,
+-- unless with_dead asks for it (to unload it before a new start).
+function F.sc_dead(s)
+  local ok, d = pcall(function() return s.dead end)
+  return ok and d == true
+end
+
+function F.find_loaded(path, with_dead)
   local want = path:lower():gsub('/', '\\')
   local base = want:match('[^\\]+$') or want
   local loose = nil
   local loose_n = 0
-  for _, s in ipairs(script.list()) do
-    local sp = s.path and s.path:lower():gsub('/', '\\') or nil
-    if sp == want then return s end
-    if s.filename and s.filename:lower() == base then
-      loose = s
-      loose_n = loose_n + 1
+  for _, s in ipairs(F._scan_list or script.list()) do
+    if with_dead or not F.sc_dead(s) then
+      local sp = s.path and s.path:lower():gsub('/', '\\') or nil
+      if sp == want then return s end
+      if s.filename and s.filename:lower() == base then
+        loose = s
+        loose_n = loose_n + 1
+      end
     end
   end
   if loose_n == 1 then return loose end
   return nil
+end
+
+-- Script starts. "Loaded successfully" in MoonLoader only means the file ran to its end:
+-- main() can still fail a moment later. So fHelper starts a script, watches it for a few
+-- seconds and reads moonloader.log for its errors before saying it works.
+
+F.SC = {}
+F.SC_WATCH = 3
+
+function F.sc_key(path) return (path or ''):lower():gsub('/', '\\') end
+function F.sc_get(path) return F.SC[F.sc_key(path)] end
+function F.sc_set(path, st) F.SC[F.sc_key(path)] = st end
+
+-- fHelper's own unload must not be reported as a crash.
+function F.sc_quiet(path)
+  F._sc_quiet = F._sc_quiet or {}
+  F._sc_quiet[F.sc_key(path)] = os.clock()
+end
+
+function F.ml_log_path() return F.wd() .. '\\moonloader.log' end
+
+function F.ml_log_size()
+  local f = io.open(F.ml_log_path(), 'rb')
+  if not f then return 0 end
+  local n = f:seek('end') or 0
+  f:close()
+  return n
+end
+
+-- New lines of moonloader.log after the offset, at most 64 KB of them, as UTF-8.
+function F.ml_log_since(off)
+  local f = io.open(F.ml_log_path(), 'rb')
+  if not f then return {} end
+  local size = f:seek('end') or 0
+  -- The log starts over each game session.
+  if off > size then off = 0 end
+  off = math.max(off, size - 65536)
+  f:seek('set', off)
+  local data = f:read('*a') or ''
+  f:close()
+  local out = {}
+  for line in data:gmatch('[^\r\n]+') do
+    local u = line
+    if not F.utf8_ok(u) and enc_ok then
+      local ok, s = pcall(function() return encoding.UTF8:encode(line) end)
+      if ok and s then u = s end
+    end
+    out[#out + 1] = u
+  end
+  return out
+end
+
+-- The first error of the script among the log lines, and whether it died.
+-- MoonLoader names a script by its script_name, or by its file name when it has none.
+function F.ml_errors(lines, path)
+  local want = F.sc_key(path)
+  local file = (want:match('[^\\]+$') or want)
+  local names = {[file] = true}
+  local pending = false
+  for i = 1, #lines do
+    local l = lines[i]
+    local lp = l:match("Loading script '(.-)'")
+    if lp then pending = F.sc_key(lp) == want
+    elseif pending then
+      local nm = l:match('%(system%)%s+(.-): Loaded successfully')
+      if nm then names[nm:lower()] = true pending = false end
+    end
+  end
+  local res = {}
+  for i = 1, #lines do
+    local l = lines[i]
+    local lvl, who, msg = l:match('%((%a+)%)%s+(.-):%s+(.*)$')
+    local mine = who and names[who:lower()]
+    if not mine and lvl and (lvl == 'error' or lvl == 'exception' or lvl == 'fatal') then
+      mine = l:lower():find(file, 1, true) ~= nil
+      if mine and not msg then msg = l end
+    end
+    if mine and (lvl == 'error' or lvl == 'exception' or lvl == 'fatal') then
+      if msg:find('died', 1, true) or msg:find('terminated', 1, true) then
+        res.died = true
+      elseif not res.err and not msg:find('^stack traceback') then
+        -- The full path of the file only takes room.
+        res.err = F.utf_cut((msg:gsub('[%a]:\\[^:]-\\([^\\:]+%.lua)', '%1')), 220)
+      end
+    elseif mine and lvl == 'system' and msg:find('terminated', 1, true) then
+      res.ended = true
+    end
+  end
+  return res
+end
+
+function F.sc_alive(path)
+  local s = F.find_loaded(path)
+  return s ~= nil
+end
+
+function F.sc_start(path, op)
+  local cur = F.sc_get(path)
+  if cur and cur.state == 'wait' then
+    F.notify('Скрипт уже запускается, подожди пару секунд')
+    return
+  end
+  local name = F.rel_path(path)
+  F.sc_set(path, {state = 'wait', at = os.time()})
+  lua_thread.create(function()
+    local off = F.ml_log_size()
+    -- A dead or still running copy goes first: two copies of one script break each other.
+    local old = F.find_loaded(path, true)
+    if old then
+      F.sc_quiet(path)
+      pcall(function() old:unload() end)
+      local t0 = os.clock()
+      repeat wait(100) until not F.find_loaded(path, true) or os.clock() - t0 > 2
+    end
+    local ok, s = pcall(script.load, path)
+    local alive = ok and s ~= nil
+    if alive then
+      local t0 = os.clock()
+      repeat
+        wait(250)
+        alive = F.sc_alive(path)
+      until not alive or os.clock() - t0 >= F.SC_WATCH
+    end
+    local e = F.ml_errors(F.ml_log_since(off), path)
+    local done = op == 'reload' and 'Перезагружен' or 'Запущен'
+    if alive and not e.err and not e.died then
+      F.sc_set(path, {state = 'ok', at = os.time()})
+      F.remember(path)
+      F.notify(done .. ' ' .. name .. ', работает')
+    else
+      local why = e.err or (not ok and tostring(s)) or (alive and 'в журнале MoonLoader ошибка')
+        or (s == nil and 'MoonLoader не загрузил файл') or 'скрипт сразу остановился'
+      F.sc_set(path, {state = 'fail', at = os.time(), err = why})
+      F.log_line('Скрипт ' .. name .. ' не запустился: ' .. why)
+      F.notify(name .. ' не запустился: ' .. why)
+    end
+    need_scan = true
+  end)
+end
+
+-- Another script stopped on its own: if the log says it crashed, its row shows why.
+function F.sc_terminated(scr)
+  local ok, path = pcall(function() return scr.path end)
+  if not ok or type(path) ~= 'string' or path == '' then return end
+  local key = F.sc_key(path)
+  local q = F._sc_quiet and F._sc_quiet[key]
+  if q and os.clock() - q < 5 then return end
+  local cur = F.SC[key]
+  if cur and cur.state == 'wait' then return end
+  need_scan = true
+  local off = math.max(0, F.ml_log_size() - 16384)
+  lua_thread.create(function()
+    wait(300)
+    local e = F.ml_errors(F.ml_log_since(off), path)
+    if e.err or e.died then
+      F.SC[key] = {state = 'fail', at = os.time(), err = e.err or 'скрипт упал', crashed = true}
+      F.log_line('Скрипт ' .. F.rel_path(path) .. ' упал: ' .. (e.err or '?'))
+    end
+    need_scan = true
+  end)
 end
 
 function F.is_self_path(path)
@@ -886,6 +1055,8 @@ function F.scan_files()
       warn = warn,
     }
   end
+  local lok, list = pcall(script.list)
+  F._scan_list = lok and list or nil
   local ok, err = pcall(function()
     for name in lfs.dir(root) do
       if name ~= '.' and name ~= '..' and name:sub(1, 1) ~= '#' and name:sub(1, 1) ~= '.' then
@@ -901,6 +1072,7 @@ function F.scan_files()
       end
     end
   end)
+  F._scan_list = nil
   if not ok then
     F.log_line('Список скриптов: ' .. tostring(err))
   end
@@ -933,33 +1105,18 @@ function F.perform(j)
     F.save_cfg()
     thisScript():reload()
     return
-  elseif j.op == 'load' then
-    local s = script.load(j.path)
-    if s then
-      F.remember(j.path)
-      F.notify('Запущен ' .. F.rel_path(j.path))
-      need_scan = true
-    else
-      F.notify('Не удалось запустить ' .. F.rel_path(j.path))
-    end
-  elseif j.op == 'reload' then
-    local s = F.find_loaded(j.path)
-    if not s then
-      F.notify('Скрипт не запущен')
-      return
-    end
+  elseif j.op == 'load' or j.op == 'reload' then
     if F.is_self_path(j.path) then
       F.perform({op = 'reload_self'})
       return
     end
-    s:reload()
-    F.remember(j.path)
-    F.notify('Перезагружен ' .. F.rel_path(j.path))
-    need_scan = true
+    F.sc_start(j.path, j.op)
   elseif j.op == 'unload' then
-    local s = F.find_loaded(j.path)
+    local s = F.find_loaded(j.path, true)
     if not s then
       F.notify('Скрипт не запущен')
+      F.sc_set(j.path, nil)
+      need_scan = true
       return
     end
     local self = F.is_self_path(j.path)
@@ -969,8 +1126,10 @@ function F.perform(j)
       cfg.off = 1
       F.save_cfg()
     end
+    F.sc_quiet(j.path)
     s:unload()
     if not self then
+      F.sc_set(j.path, nil)
       F.notify('Выгружен ' .. F.rel_path(j.path))
       need_scan = true
     end
@@ -988,18 +1147,7 @@ function F.perform(j)
       F.perform({op = 'reload_self'})
       return
     end
-    local s = F.find_loaded(path)
-    if s then
-      s:reload()
-      F.notify('Перезагружен ' .. cfg.last)
-    else
-      if script.load(path) then
-        F.notify('Запущен ' .. cfg.last)
-      else
-        F.notify('Не удалось запустить ' .. cfg.last)
-      end
-    end
-    need_scan = true
+    F.sc_start(path, F.find_loaded(path) and 'reload' or 'load')
   elseif j.op == 'dir' then
     F.shell_open('explore', F.wd())
   elseif j.op == 'log' then
@@ -3380,7 +3528,10 @@ end
 function F.script_visible(item)
   if filter_st == 'Включен' and not item.loaded then return false end
   if filter_st == 'Выключен' and item.loaded then return false end
-  if filter_st == 'Проверить' and not item.warn then return false end
+  if filter_st == 'Проверить' and not item.warn then
+    local sc = F.sc_get(item.path)
+    if not (sc and sc.state == 'fail') then return false end
+  end
   if filter_cat ~= 'Все' and (item.category or '') ~= filter_cat then return false end
   local q = F.search_text()
   if q == '' then return true end
@@ -3688,10 +3839,14 @@ function F.script_row(item, w)
   local sw_x = rel_x - F.s(12) - F.s(40)
   local _, hovered = F.hotspot('##row' .. item.path, p.x, p.y, math.max(40, sw_x - p.x - 8), h)
   F.round_rect(p.x, p.y, w, h, hovered and F.col('raised') or F.col('panel'), F.col('text', hovered and 34 or 18), 14)
-  local stripe = item.warn and F.col('bad') or (item.loaded and F.col('accent') or F.col('text', 46))
+  local sc = F.sc_get(item.path)
+  local failed = sc and sc.state == 'fail'
+  local waiting = sc and sc.state == 'wait'
+  local stripe = (item.warn or failed) and F.col('bad') or (item.loaded and F.col('accent') or F.col('text', 46))
   dl:AddRectFilled(imgui.ImVec2(p.x + 10, p.y + F.s(15)), imgui.ImVec2(p.x + 13, p.y + h - F.s(15)), stripe, 2)
-  local status = item.warn and 'проверить' or (item.loaded and 'включен' or 'выключен')
-  local tone = item.warn and 'bad' or (item.loaded and 'on' or 'muted')
+  local status = waiting and 'запуск…' or (failed and (sc.crashed and 'упал' or 'ошибка'))
+    or (item.warn and 'проверить' or (item.loaded and 'включен' or 'выключен'))
+  local tone = waiting and 'muted' or ((failed or item.warn) and 'bad' or (item.loaded and 'on' or 'muted'))
   local text_end = sw_x - F.s(14)
   if w >= F.s(560) then
     local cw = F.chip_w(status)
@@ -3709,14 +3864,21 @@ function F.script_row(item, w)
     end
   end
   local sub = item.desc ~= '' and item.desc or (item.author ~= '' and ('автор: ' .. item.author) or item.rel)
-  F.text_at(font_main, 16, tx, p.y + F.s(32), F.col('text', 135), F.fit_text(font_main, sub, text_end - tx))
+  local sub_col = F.col('text', 135)
+  if failed then
+    sub, sub_col = sc.err or 'не запустился', F.col('bad')
+  end
+  F.text_at(font_main, 16, tx, p.y + F.s(32), sub_col, F.fit_text(font_main, sub, text_end - tx))
+  if failed and hovered then
+    F.tip((sc.crashed and 'Скрипт упал: ' or 'Не запустился: ') .. (sc.err or '?') .. '\nПереключатель или ↻ запустят его заново.')
+  end
   local sw_hit, sw_hover = F.hotspot('##sw' .. item.path, sw_x, p.y + (h - F.s(22)) / 2, F.s(40), F.s(22))
   F.knob('row' .. item.path, sw_x, p.y + (h - F.s(22)) / 2, item.loaded, sw_hover)
   if sw_hover then F.tip(item.loaded and 'Выключить' or 'Включить') end
   if sw_hit then F.toggle_script(item) end
   local iy = p.y + (h - ib) / 2
-  if item.loaded and F.ghost_icon('##rl' .. item.path, rel_x, iy, 'ICON_FA_REDO', 'Перезагрузить') then
-    F.queue('reload', {path = item.path})
+  if (item.loaded or failed) and F.ghost_icon('##rl' .. item.path, rel_x, iy, 'ICON_FA_REDO', item.loaded and 'Перезагрузить' or 'Запустить заново') then
+    F.queue(item.loaded and 'reload' or 'load', {path = item.path})
   end
   if F.ghost_icon('##in' .. item.path, info_x, iy, 'ICON_FA_INFO_CIRCLE', 'Подробнее') then
     local lines = {
@@ -3725,6 +3887,7 @@ function F.script_row(item, w)
       'Автор: ' .. (item.author ~= '' and item.author or '—'),
       'Категория: ' .. (item.category or '—'),
       item.warn and 'В файле есть запуск программ или библиотек. Открой его и проверь сам.' or 'Замечаний по запуску программ нет.',
+      failed and ((sc.crashed and 'Упал: ' or 'Ошибка запуска: ') .. (sc.err or '?')) or 'Ошибок запуска не было.',
       'Папка: ' .. item.path,
     }
     modal = {kind = 'script', title = item.name, lines = lines, path = item.path}
@@ -3737,7 +3900,8 @@ function F.draw_scripts_page()
   local on, warn = 0, 0
   for i = 1, #file_list do
     if file_list[i].loaded then on = on + 1 end
-    if file_list[i].warn then warn = warn + 1 end
+    local sc = F.sc_get(file_list[i].path)
+    if file_list[i].warn or (sc and sc.state == 'fail') then warn = warn + 1 end
   end
   local p = imgui.GetCursorScreenPos()
   local x = p.x
@@ -6248,6 +6412,19 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.16.0', '08.11.2026', {
+    {'fix', 'Доходы → Предметы снова записывают: строки чата не распознавались из-за кодировки игры'},
+    {'add', 'Предметы: что пришло в пункт выдачи («В хранилище») и выбор: всё, в инвентарь или в хранилище'},
+    {'add', 'Скрипты: после запуска fHelper проверяет, что скрипт правда работает, и показывает ошибку из журнала MoonLoader'},
+    {'add', 'Скрипты: упавший скрипт помечается «упал» с причиной, кнопка ↻ запускает его заново'},
+    {'fix', 'Скрипты: зависшая или упавшая копия выгружается перед новым запуском, двух копий одного скрипта больше нет'},
+    {'fix', 'Таймер сундука из чата снова запускается'},
+  }},
+  {'1.15.1', '08.11.2026', {
+    {'fix', 'fHelper больше не съедает память игры со временем: раньше каждый кадр оставлял в ней след'},
+    {'add', 'Память: видно, сколько памяти уходит за час'},
+    {'chg', 'После разгрузки видно, сколько отдал мир вокруг'},
+  }},
   {'1.15.0', '08.11.2026', {
     {'add', 'Эксперимент → «Память»: разгрузить память игры без перезахода'},
     {'add', 'Видно, сколько памяти свободно у игры, сколько занимает мир вокруг и сам fHelper'},
@@ -7669,7 +7846,9 @@ end
 -- Items that came in: from the chat lines "В инвентарь добавлен предмет" and the like.
 
 F.ITL_MAX = 6000
-F.ITL_SRC = {inv = 'В инвентарь', store = 'Из хранилища', prize = 'Награда'}
+F.ITL_SRC = {inv = 'В инвентарь', store = 'Из хранилища', prize = 'Награда', box = 'В хранилище'}
+-- What the "Куда" switch shows: everything that came to the inventory, or to the storage.
+F.ITL_WHERE = {inv = {inv = true, store = true, prize = true}, box = {box = true}}
 
 function F.itl_state()
   if not F.itl then F.itl = {list = {}, rev = 0} end
@@ -7745,38 +7924,55 @@ function F.item_got(id, qty, src, name)
   return r
 end
 
+-- The game sends chat in CP1251: the words are looked for only after the text is UTF-8.
 function F.item_feed(text)
-  if not (text:find('редмет', 1, true) or text:find('забрали', 1, true)) then return end
-  local raw = F.int_pack(F.game_text(text))
+  local u = F.game_text(text)
+  if not (u:find('редмет', 1, true) or u:find('забрали', 1, true) or u:find('посылка', 1, true)) then return end
+  local raw = F.int_pack(u)
   if raw == '' or raw:find('%w%[%d+%]') or raw:find('[\128-\255]%[%d+%]') then return end
   raw = F.trim((raw:gsub(':u%x%x%x%x+:', '')))
   local id = raw:match('^В инвентарь добавлен предмет:%s*:item(%d+):')
-  if id then return F.item_got(tonumber(id), 1, 'inv') end
+  if id then
+    -- Taking from the storage also says "added to the inventory" for the same item.
+    local s = F._itl_store
+    if s and s.id == tonumber(id) and os.clock() - s.at < 4 then return end
+    return F.item_got(tonumber(id), 1, 'inv')
+  end
   local name = raw:match("^В инвентарь добавлен предмет:%s*'(.-)'")
   if name then return F.item_got(nil, 1, 'inv', name) end
+  id = raw:match('^В пункт выдачи пришла посылка:?%s*:item(%d+):')
+  if id then return F.item_got(tonumber(id), 1, 'box') end
+  name = raw:match("^В пункт выдачи пришла посылка:?%s*'(.-)'")
+  if name then return F.item_got(nil, 1, 'box', name) end
   local q
   name, q = raw:match("Вы забрали предмет '(.-)%((%d+) шт%.?%)', из хранилища")
-  if name then return F.item_got(nil, tonumber(q), 'store', name) end
-  name = raw:match("Вы забрали предмет '(.-)', из хранилища")
-  if name then return F.item_got(nil, 1, 'store', name) end
+  if not name then name = raw:match("Вы забрали предмет '(.-)', из хранилища") end
+  if name then
+    local r = F.item_got(nil, tonumber(q) or 1, 'store', name)
+    F._itl_store = {id = r.id, at = os.clock()}
+    return r
+  end
   name, q = raw:match("Вы успешно забрали %- '(.-)' в количестве (%d+)")
   if name then return F.item_got(nil, tonumber(q), 'prize', name) end
 end
 
-function F.itl_view(from, to, q)
+function F.itl_view(from, to, q, where)
   local st = F.itl_state()
-  local key = from .. '|' .. to .. '|' .. q .. '|' .. st.rev
+  local only = F.ITL_WHERE[where or 'all']
+  local key = from .. '|' .. to .. '|' .. q .. '|' .. tostring(where) .. '|' .. st.rev
   if F._itl_key == key then return F._itl end
   local low = F.lower_fast(q)
   local out = {groups = {}, rows = {}, qty = 0, n = 0}
   local at = {}
   for i = #st.list, 1, -1 do
     local r = st.list[i]
-    if r.t >= from and r.t <= to and (low == '' or F.lower_fast(r.name):find(low, 1, true)) then
+    if r.t >= from and r.t <= to and (not only or only[r.src])
+      and (low == '' or F.lower_fast(r.name):find(low, 1, true)) then
       out.n = out.n + 1
       out.qty = out.qty + r.qty
       if #out.rows < 40 then out.rows[#out.rows + 1] = r end
-      local gk = r.id > 0 and r.id or r.name
+      -- The same item that came to the inventory and to the storage stays two lines.
+      local gk = (r.id > 0 and r.id or r.name) .. (r.src == 'box' and '|box' or '')
       local g = at[gk]
       if not g then
         g = {id = r.id, name = r.name, qty = 0, n = 0, last = r.t, src = r.src}
@@ -7822,9 +8018,16 @@ function F.item_row(name, id, sub, right, i, tip, fn)
 end
 
 function F.income_items(from, to)
+  local where = F.segment('itlwhere', {
+    {'all', 'Всё'},
+    {'inv', 'В инвентарь'},
+    {'box', 'В хранилище'},
+  }, F.itl_where or 'all', math.min(F.s(420), F.inner_w()))
+  if where then F.itl_where = where end
+  imgui.Spacing()
   F.field('##itemq', 'Поиск по названию предмета', ui.item_q, 80, F.inner_w(), 'item_q')
   imgui.Spacing()
-  local view = F.itl_view(from, to, F.trim(F.buf_get(ui.item_q)))
+  local view = F.itl_view(from, to, F.trim(F.buf_get(ui.item_q)), F.itl_where or 'all')
   F.tile_grid('itl', {
     {'ICON_FA_BOX_OPEN', 'Получено штук', tostring(view.qty)},
     {'ICON_FA_LAYER_GROUP', 'Разных предметов', tostring(#view.groups)},
@@ -7833,7 +8036,9 @@ function F.income_items(from, to)
   imgui.Spacing()
   F.card_begin('Что пришло', 'Одинаковые предметы сложены, больше всего сверху', 'ICON_FA_LAYER_GROUP')
   if #view.groups == 0 then
-    F.empty('ICON_FA_BOX_OPEN', 'Предметов нет', 'Они появятся, когда в чате будет «В инвентарь добавлен предмет»')
+    F.empty('ICON_FA_BOX_OPEN', 'Предметов нет', F.itl_where == 'box'
+      and 'Они появятся, когда в чате будет «В пункт выдачи пришла посылка»'
+      or 'Они появятся, когда в чате будет «В инвентарь добавлен предмет» или «Вы забрали предмет из хранилища»')
   end
   for i = 1, math.min(#view.groups, 60) do
     local g = view.groups[i]
@@ -8023,8 +8228,8 @@ end
 
 function F.chest_feed(text)
   if cfg.chest_on ~= 1 then return end
-  if not (text:find('ундук', 1, true) or text:find('открыли', 1, true)) then return end
   local raw = F.trim(F.game_text(text))
+  if not (raw:find('ундук', 1, true) or raw:find('открыли', 1, true)) then return end
   raw = F.trim((raw:gsub('^%[Информация%]', '')))
   for i = 1, #F.CHEST_CHAT do
     local c = F.CHEST_CHAT[i]
@@ -9105,6 +9310,7 @@ function F.mem_tick(now)
   F.mem_st.lua = collectgarbage('count') / 1024
   F.mem_st.pics = F._lib and F._lib.cached or 0
   if not st then return end
+  F.mem_trend(now, st.free)
   if not F._mem_logged or now - F._mem_logged > 1800 then
     F._mem_logged = now
     F.log_line(string.format('Память: свободно у игры %.0f из %.0f МБ, fHelper %.0f МБ', st.free, st.total, F.mem_st.lua))
@@ -9127,6 +9333,16 @@ function F.mem_tick(now)
     F.chat_brand(msg)
     pcall(F.toast, 'sys', {force = true, key = 'mem', icon = 'ICON_FA_EXCLAMATION_TRIANGLE', title = 'Мало памяти', text = msg})
   end
+end
+
+-- How fast the free memory goes, MB per hour over the last half hour (at least 5 minutes of samples).
+function F.mem_trend(now, free)
+  local h = F.mem_hist or {}
+  F.mem_hist = h
+  h[#h + 1] = {now, free}
+  while #h > 1 and now - h[1][1] > 1800 do table.remove(h, 1) end
+  local dt = now - h[1][1]
+  F.mem_rate = dt >= 300 and (h[1][2] - free) / dt * 3600 or nil
 end
 
 -- Streaming memory of the game: models and textures of the world around, used and allowed, in MB.
@@ -9186,11 +9402,8 @@ end
 
 function F.mem_result(r)
   local parts = {}
-  if r.free1 and r.free2 then
-    local d = r.free2 - r.free1
-    parts[#parts + 1] = string.format('свободно %.0f МБ (%s%.0f)', r.free2, d >= 0 and '+' or '', d)
-  end
-  if r.s1 and r.s2 then parts[#parts + 1] = string.format('мир %.0f → %.0f МБ', r.s1, r.s2) end
+  if r.s1 and r.s2 then parts[#parts + 1] = string.format('мир отдал %.0f МБ (%.0f → %.0f)', math.max(0, r.s1 - r.s2), r.s1, r.s2) end
+  if r.free2 then parts[#parts + 1] = string.format('свободно %.0f МБ', r.free2) end
   if (r.pics or 0) > 0 then parts[#parts + 1] = 'картинок ' .. r.pics end
   if not r.game then parts[#parts + 1] = 'игра не ответила' end
   return table.concat(parts, ', ')
@@ -9209,6 +9422,7 @@ function F.draw_exp_mem()
     {'ICON_FA_MEMORY', 'Свободно у игры', m.free and string.format('%.0f МБ', m.free) or '—'},
     {'ICON_FA_GLOBE', 'Мир вокруг', used and string.format('%.0f / %.0f МБ', used, limit) or '—'},
     {'ICON_FA_CUBE', 'fHelper', string.format('%.0f МБ', m.lua or collectgarbage('count') / 1024)},
+    {'ICON_FA_CHART_LINE', 'Уходит за час', F.mem_rate and string.format('%.0f МБ', math.max(0, F.mem_rate)) or 'считаю'},
   }, 200)
   if low then F.hint_bad('Памяти мало: скоро будут фризы и квадраты вместо текста.') end
   imgui.Spacing()
@@ -9220,7 +9434,8 @@ function F.draw_exp_mem()
   F.chest_flag('memauto', 'Разгружать самому', 'mem_auto', 'Когда игре остаётся меньше ' .. F.MEM_WARN .. ' МБ, разгрузить до предупреждения')
   F.divider()
   F.hint('Что делается: fHelper отдаёт свои картинки и память, игра выгружает модели и текстуры, которые сейчас не видны, мир вокруг подгружается заново. На секунду может подвиснуть и мелькнуть текстуры.')
-  F.hint('Это помогает отложить перезаход, но не заменяет его: большую часть памяти держат окна Arizona и другие скрипты, их отсюда не освободить.')
+  F.hint('Почему «свободно» почти не растёт: память мира остаётся у игры, и она берёт её под новые модели вместо того, чтобы занимать ещё. Windows считает её занятой, поэтому цифра не меняется, но падать она начинает медленнее.')
+  F.hint('Это помогает отложить перезаход, но не заменяет его: большую часть памяти держат сама игра, Arizona и другие скрипты, их отсюда не освободить.')
   F.hint('Команда /fmem делает то же самое.')
   F.card_end()
 end
@@ -11405,7 +11620,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 22
+F.BUILD = 24
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -11692,13 +11907,22 @@ function F.file_mtime(path)
   return 0
 end
 
+-- MoonLoader leaves a copy of the script's data in the game's memory on every thisScript()
+-- and script.list(), for good. Asked once, kept: called each frame it ate the 32-bit space.
 function F.self_path()
+  if F._self_path then return F._self_path end
   local ok, s = pcall(thisScript)
-  if ok and s and s.path and s.path ~= '' then return s.path end
+  if ok and s and s.path and s.path ~= '' then
+    F._self_path = s.path
+    return s.path
+  end
   return F.wd() .. '\\fhelp.lua'
 end
 
 function F.watch_self()
+  local now = os.clock()
+  if F._watch_at and now - F._watch_at < 1 then return end
+  F._watch_at = now
   local stamp = F.file_mtime(F.self_path())
   if stamp <= 0 then return end
   if not disk_stamp then
@@ -11724,6 +11948,10 @@ end
 function F.ensure_boot()
   local path = F.wd() .. '\\fhelp_boot.lua'
   if not doesFileExist(path) then return end
+  -- script.list() leaks a little each call: once in 30 s is enough to notice a missing boot.
+  local at = os.clock()
+  if F._boot_at and at - F._boot_at < 30 then return end
+  F._boot_at = at
   local ok, list = pcall(script.list)
   if not ok or not list then return end
   for i = 1, #list do
@@ -11881,7 +12109,10 @@ function main()
 end
 
 addEventHandler('onScriptTerminate', function(scr)
-  if scr ~= script.this then return end
+  if scr ~= script.this then
+    pcall(F.sc_terminated, scr)
+    return
+  end
   pcall(function()
     if play.online then F.play_commit(os.time(), true) end
     if F._lim == 0 then F.write_limiter(1) end
