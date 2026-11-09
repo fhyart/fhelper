@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.17.0'
+local VER = '1.18.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(25)
+script_version_number(26)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -164,6 +164,16 @@ local cfg = {
   want_x = -1,
   want_y = -1,
   bak_auto = 1,
+  shift_auto = 1,
+  shift_bar = 1,
+  shift_x = -1,
+  shift_y = -1,
+  shift_scale = 1,
+  shift_alpha = 0.9,
+  shift_fields = 251,
+  shift_goal = 0,
+  shift_job = 1,
+  shift_chat = 1,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -185,6 +195,8 @@ local CFG_NUM = {
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
   {'mem_auto', 0, 1},
   {'want_pin', 0, 1}, {'want_sound', 0, 1}, {'want_x', -1, 10000}, {'want_y', -1, 10000}, {'bak_auto', 0, 1},
+  {'shift_auto', 0, 1}, {'shift_bar', 0, 1}, {'shift_x', -1, 10000}, {'shift_y', -1, 10000}, {'shift_scale', 0.6, 2},
+  {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 4}, {'shift_chat', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -276,6 +288,9 @@ if imgui_ok then
   ui.shop_q = imgui.new.char[80]()
   ui.want_q = imgui.new.char[80]()
   ui.want_price = imgui.new.char[32]()
+  ui.shift_goal = imgui.new.char[32]()
+  ui.shift_scale = imgui.new.float(100)
+  ui.shift_alpha = imgui.new.float(90)
   ui.rng_h = imgui.new.float(0)
   ui.rng_m = imgui.new.float(0)
   ui.toast_x = imgui.new.float(98)
@@ -336,7 +351,7 @@ F.PROJ_FILES = {
   ['fhelp_income.txt'] = true, ['fhelp_ledger.txt'] = true,
   ['fhelp_ints.txt'] = true, ['fhelp_craft.txt'] = true,
   ['fhelp_cars.txt'] = true, ['fhelp_items.txt'] = true, ['fhelp_shops.txt'] = true,
-  ['fhelp_chests.txt'] = true, ['fhelp_wants.txt'] = true,
+  ['fhelp_chests.txt'] = true, ['fhelp_wants.txt'] = true, ['fhelp_shifts.txt'] = true,
 }
 
 function F.log_path()
@@ -1969,6 +1984,8 @@ function F.hook_chat()
     if not ok then F.feed_err('предметы', err) end
     ok, err = pcall(F.chest_feed, text)
     if not ok then F.feed_err('сундуки', err) end
+    ok, err = pcall(F.shift_feed, text)
+    if not ok then F.feed_err('смена', err) end
   end
   ev.onSetVehicleNumberPlate = function(id, text)
     F.car_plates[id] = F.game_text(text or '')
@@ -6868,9 +6885,9 @@ F.BAK = {
   {id = 'notes', name = 'Заметки', sub = 'с папками и закреплёнными', files = {'fhelp_notes.txt', 'fhelp_pins.txt'}, share = true, merge = true},
   {id = 'wants', name = 'Хочу найти', files = {'fhelp_wants.txt'}, share = true, merge = true},
   {id = 'craft', name = 'Рецепты крафта', files = {'fhelp_craft.txt'}, share = true},
-  {id = 'data', name = 'История', sub = 'доходы, сделки, предметы, лавки, машины, сундуки, калькулятор',
+  {id = 'data', name = 'История', sub = 'доходы, смены, сделки, предметы, лавки, машины, сундуки, калькулятор',
     files = {'fhelp_income.txt', 'fhelp_ledger.txt', 'fhelp_ints.txt', 'fhelp_items.txt', 'fhelp_shops.txt',
-      'fhelp_cars.txt', 'fhelp_chests.txt', 'fhelp_calc.txt'}},
+      'fhelp_cars.txt', 'fhelp_chests.txt', 'fhelp_calc.txt', 'fhelp_shifts.txt'}},
 }
 F.THEME_KEYS = {'ui_bg', 'ui_acc', 'ui_text', 'ui_font', 'opacity', 'scale', 'win_w'}
 -- A friend's pins carry the places of his screen, they stay home.
@@ -7525,6 +7542,15 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.18.0', '09.11.2026', {
+    {'add', 'Доходы → Работа → «Смена»: выбираешь работу (такси, рейсы, пицца или любая) и fHelper считает смену'},
+    {'add', 'В смене: заработано, заказы и средний чек, топливо и другие расходы, чистыми, в час, уровень и тариф таксиста'},
+    {'add', 'Пауза, цель на смену с уведомлением, история смен с лучшей сменой и средним в час'},
+    {'add', 'Смена может начаться сама по строке «Вы начали работу…»; время вне игры считается паузой'},
+    {'add', 'Плашка смены на экране: какие строки показывать, размер, прозрачность, перетаскивание. Команда /fshift'},
+    {'add', 'Заправка на АЗС и покупка канистр попадают в «Расходы» с литрами и видом топлива'},
+    {'add', 'Чаевые таксиста записываются в работу'},
+  }},
   {'1.17.0', '09.11.2026', {
     {'add', 'Лавки → «Хочу найти»: предмет и цена, купить не дороже или продать не дешевле'},
     {'add', 'Открываешь лавку, и если там нужное, приходит уведомление со звуком и строка в чат'},
@@ -7753,10 +7779,14 @@ function F.cef_packet(bs)
   if not fine then F.feed_err('лавки', err) end
   fine, err = pcall(F.chest_packet, text)
   if not fine then F.feed_err('сундуки', err) end
+  fine, err = pcall(F.gas_packet, text)
+  if not fine then F.feed_err('АЗС', err) end
   local at = text:find('updateMoney', 1, true)
   if not at then return end
   local n = tonumber(text:match('(%d+)', at))
   if not n then return end
+  fine, err = pcall(F.gas_money, cfg.money_real, n)
+  if not fine then F.feed_err('АЗС', err) end
   if not F._money_seen then
     F._money_seen = true
     F.log_line('Наличные с сервера: ' .. (F.fmt_money(n) or tostring(n)))
@@ -8138,6 +8168,8 @@ function F.led_add(cat, amount, text, qty, who, cur)
     end
   end)
   pcall(F.toast_led, r)
+  local ok, err = pcall(F.shift_led, r)
+  if not ok then F.feed_err('смена', err) end
 end
 
 -- Phrases are taken from real Arizona chat logs. Specific rules go first.
@@ -8203,6 +8235,7 @@ function F.led_rules()
   end)
   simple('Премия за работу таксистом: ' .. M, 'work', 'Такси: премия')
   simple('%[Такси%] Клиент оплатил: ' .. M, 'work', 'Такси: клиент')
+  simple('Чаевых таксиста.-Вы получили %+' .. M, 'work', 'Такси: чаевые')
   simple('Вы доставили пиццу, заработано %+?' .. M, 'work', 'Доставка пиццы')
   add('Вы получили премию за \'(.-)\' в размере ' .. M, function(what, a)
     return 'work', n(a), 'Премия: ' .. what
@@ -8297,6 +8330,777 @@ function F.led_feed(text)
   local vc = raw:find(':CASHV:', 1, true) and not raw:find(':CASH:', 1, true)
   local cat, amount, what, qty, who = F.led_parse(raw)
   if cat then F.led_add(cat, amount, what, qty, who, vc and 'vc' or 'sa') end
+end
+
+-- Gas stations
+
+-- The station window gets its prices as event.gasstation.initializeFuelTypes, a purchase goes
+-- out as "purchaseFuel|<id>|<liters>". The chat never says the sum, so the drop of cash right after
+-- the purchase is the real price (a discount coupon included); price × liters is the fallback.
+F.gas = {types = {}, prods = {}}
+
+function F.gas_objects(text, fn)
+  for obj in text:gmatch('{(.-)}') do
+    local id = obj:match('"id"%s*:%s*"([^"]*)"') or obj:match('"id"%s*:%s*(%d+)')
+    local price = tonumber(obj:match('"price"%s*:%s*"?([%d%.]+)'))
+    local title = ''
+    local at = obj:find('"title"%s*:%s*"')
+    if at then
+      local q = obj:find('"', obj:find(':', at, true), true)
+      local ok, s = pcall(F.json_string, obj, q)
+      if ok and s then title = F.game_text(s) end
+    end
+    if id and price then fn(id, price, title) end
+  end
+end
+
+function F.gas_packet(text)
+  if not text:find('event.gasstation.', 1, true) then return end
+  if text:find('initializeFuelTypes', 1, true) then
+    F.gas.types = {}
+    F.gas_objects(text, function(id, price, title) F.gas.types[id] = {price = price, title = title} end)
+  elseif text:find('initializeProducts', 1, true) then
+    F.gas.prods = {}
+    F.gas_objects(text, function(id, price, title) F.gas.prods[id] = {price = price, title = title} end)
+  end
+end
+
+function F.gas_sent(bs)
+  raknetBitStreamIgnoreBits(bs, 8)
+  if raknetBitStreamReadInt8(bs) ~= 18 then return end
+  local len = tonumber(raknetBitStreamReadInt16(bs)) or 0
+  if len <= 0 or len > 4096 then return end
+  F.gas_out(raknetBitStreamReadString(bs, len) or '')
+end
+
+function F.gas_out(text)
+  local id, liters = text:match('^purchaseFuel|([^|]+)|([%d%.]+)')
+  if id then
+    local t = F.gas.types[id] or {}
+    F.gas.pend = {liters = tonumber(liters) or 0, price = t.price, title = t.title or '', at = os.clock()}
+    return
+  end
+  id = text:match('^purchaseProduct|([^|]+)')
+  if id then
+    local t = F.gas.prods[id] or {}
+    F.gas.pend_can = {price = t.price, title = t.title or '', at = os.clock()}
+  end
+end
+
+function F.gas_record(text, amount, liters, title)
+  amount = math.floor((tonumber(amount) or 0) + 0.5)
+  if amount <= 0 then return end
+  local who = ''
+  if (liters or 0) > 0 then who = string.format('%g л', liters) end
+  if title and title ~= '' then who = who ~= '' and (who .. ' · ' .. title) or title end
+  F._gas_liters = liters or 0
+  F.led_add('spend', amount, text, 0, who)
+  F._gas_liters = nil
+end
+
+-- Cash from the server went down: right after a purchase at the station, that is its price.
+function F.gas_money(old, new)
+  old, new = tonumber(old), tonumber(new)
+  if not old or not new or old < 0 or new >= old then return end
+  local drop, now = old - new, os.clock()
+  local p = F.gas.pend
+  if p and not p.done and now - p.at < 120 then
+    p.done = true
+    F.gas_record('Топливо: АЗС', drop, p.liters, p.title)
+    return
+  end
+  local c = F.gas.pend_can
+  if c and now - c.at < 30 then
+    F.gas.pend_can = nil
+    F.gas_record('Топливо: канистра', drop, 0, c.title)
+  end
+end
+
+-- "[АЗС] Процесс заправки завершён": if the cash never changed, the window's price is used.
+function F.gas_done()
+  local p = F.gas.pend
+  F.gas.pend = nil
+  if not p or p.done or os.clock() - p.at > 300 then return end
+  if p.price and p.liters > 0 then F.gas_record('Топливо: АЗС', p.price * p.liters, p.liters, p.title) end
+end
+
+-- Work shifts
+
+F.SHIFT_JOBS = {
+  {key = 'taxi', name = 'Такси', icon = 'ICON_FA_TAXI', inc = {'Такси: клиент', 'Такси: премия', 'Такси: чаевые'},
+    order = 'Такси: клиент', unit = {'заказ', 'заказа', 'заказов'}, rows = 'Заказы', tip = 'клиенты, премии и чаевые таксиста'},
+  {key = 'trip', name = 'Рейсы', icon = 'ICON_FA_TRUCK', inc = {'Рейс'}, order = 'Рейс',
+    unit = {'рейс', 'рейса', 'рейсов'}, rows = 'Рейсы', tip = 'зарплата за рейсы: дальнобойщик, автобус'},
+  {key = 'pizza', name = 'Пицца', icon = 'ICON_FA_PIZZA_SLICE', inc = {'Доставка пиццы'}, order = 'Доставка пиццы',
+    unit = {'доставка', 'доставки', 'доставок'}, rows = 'Доставки', tip = 'доставка пиццы'},
+  {key = 'any', name = 'Любая работа', icon = 'ICON_FA_BRIEFCASE', unit = {'выплата', 'выплаты', 'выплат'},
+    rows = 'Выплаты', tip = 'всё, что попадает в «Работу»: смены, патрули, премии'},
+}
+-- Spending that belongs to the shift. The first match wins, so repairs go before fines.
+F.SHIFT_COST = {
+  {key = 'fuel', name = 'Топливо', icon = 'ICON_FA_GAS_PUMP', pre = {'Топливо'}},
+  {key = 'repair', name = 'Ремонт', icon = 'ICON_FA_WRENCH', pre = {'Ремонт транспорта', 'Автосервис', 'Штраф: восстановление'}},
+  {key = 'fine', name = 'Штрафы', icon = 'ICON_FA_GAVEL', pre = {'Штраф'}},
+  {key = 'rent', name = 'Аренда', icon = 'ICON_FA_KEY', pre = {'Аренда'}},
+}
+F.SHIFT_NUM = {'id', 't0', 't1', 'pause', 'pause_at', 'beat', 'inc', 'n', 'prem', 'fuel', 'liters', 'refuel',
+  'repair', 'fine', 'rent', 'goal', 'lvl0', 'lvl', 'tariff', 'last', 'hit', 'auto'}
+F.SHIFT_MAX = 300
+-- Bits of cfg.shift_fields: what the on-screen bar shows.
+F.SHIFT_FIELDS = {
+  {1, 'Время смены'}, {2, 'Заработано'}, {4, 'Расходы'}, {8, 'Топливо'}, {16, 'Чистыми'},
+  {32, 'В час'}, {64, 'Заказы и средний чек'}, {128, 'Цель'}, {256, 'С последнего заказа'}, {512, 'Уровень и тариф'},
+}
+F.shifts = {}
+F.shift_rev = 0
+
+function F.shift_job(key)
+  for _, j in ipairs(F.SHIFT_JOBS) do
+    if j.key == key then return j end
+  end
+  return F.SHIFT_JOBS[#F.SHIFT_JOBS]
+end
+
+function F.shift_title(s)
+  if s.title and s.title ~= '' then return s.title end
+  return F.shift_job(s.job).name
+end
+
+function F.has_pre(text, list)
+  for _, p in ipairs(list or {}) do
+    if text:sub(1, #p) == p then return true end
+  end
+  return false
+end
+
+-- S|job|<numbers>|title, the title is escaped and goes last.
+function F.shift_line(s)
+  local out = {'S', s.job}
+  for _, k in ipairs(F.SHIFT_NUM) do out[#out + 1] = string.format('%.0f', tonumber(s[k]) or 0) end
+  out[#out + 1] = F.note_esc(s.title or '')
+  return table.concat(out, '|')
+end
+
+function F.shift_parse(line)
+  if line:sub(1, 2) ~= 'S|' then return nil end
+  local parts, pos = {}, 3
+  for _ = 1, #F.SHIFT_NUM + 1 do
+    local bar = line:find('|', pos, true)
+    if not bar then return nil end
+    parts[#parts + 1] = line:sub(pos, bar - 1)
+    pos = bar + 1
+  end
+  local s = {job = parts[1], title = F.note_unesc(line:sub(pos))}
+  if not s.job:match('^%a+$') then return nil end
+  for i, k in ipairs(F.SHIFT_NUM) do
+    local v = tonumber(parts[i + 1])
+    if not v then return nil end
+    s[k] = v
+  end
+  if s.id <= 0 or s.t0 <= 0 then return nil end
+  return s
+end
+
+function F.shift_load()
+  F.shifts, F.shift, F.shift_seq = {}, nil, 0
+  for _, line in ipairs(F.read_lines('fhelp_shifts.txt')) do
+    local s = F.shift_parse(line)
+    if s then
+      F.shift_seq = math.max(F.shift_seq, s.id)
+      F.shifts[#F.shifts + 1] = s
+    end
+  end
+  while #F.shifts > F.SHIFT_MAX do table.remove(F.shifts, 1) end
+  for i = #F.shifts, 1, -1 do
+    local s = F.shifts[i]
+    if s.t1 == 0 then
+      if F.shift then
+        -- Only one shift can run: an older open one is closed where it was last seen.
+        s.t1 = math.max(s.t0, s.beat)
+      else
+        F.shift = s
+        -- The game was closed: the time away is a pause, not work.
+        if s.pause_at == 0 and s.beat > 0 and os.time() - s.beat > 300 then
+          s.pause_at = s.beat
+          F.shift_away = true
+        end
+      end
+    end
+  end
+  F.shift_rev = F.shift_rev + 1
+end
+
+function F.shift_save()
+  local out = {}
+  if F.shift then F.shift.beat = os.time() end
+  for _, s in ipairs(F.shifts) do out[#out + 1] = F.shift_line(s) end
+  F.write_lines('fhelp_shifts.txt', out)
+  F.shift_rev = F.shift_rev + 1
+end
+
+function F.shift_secs(s, now)
+  now = now or os.time()
+  local e = s.t1 > 0 and s.t1 or now
+  local p = s.pause + (s.pause_at > 0 and math.max(0, e - s.pause_at) or 0)
+  return math.max(0, e - s.t0 - p)
+end
+
+function F.shift_costs(s)
+  return s.fuel + s.repair + s.fine + s.rent
+end
+
+function F.shift_net(s)
+  return s.inc - F.shift_costs(s)
+end
+
+-- Below five minutes an hourly rate says nothing.
+function F.shift_hour(s, now)
+  local t = F.shift_secs(s, now)
+  if t < 300 then return nil end
+  return F.shift_net(s) * 3600 / t
+end
+
+function F.dur_text(sec)
+  sec = math.max(0, math.floor(sec))
+  return string.format('%d:%02d:%02d', math.floor(sec / 3600), math.floor(sec / 60) % 60, sec % 60)
+end
+
+function F.dur_short(sec)
+  sec = math.max(0, math.floor(sec))
+  local h, m = math.floor(sec / 3600), math.floor(sec / 60) % 60
+  if h > 0 then return h .. ' ч ' .. m .. ' мин' end
+  return m .. ' мин'
+end
+
+function F.shift_start(job, title, auto)
+  if F.shift then return nil, 'смена уже идёт' end
+  local j = F.shift_job(job)
+  F.shift_seq = (F.shift_seq or 0) + 1
+  local s = {job = j.key, title = title or '', auto = auto and 1 or 0, goal = math.max(0, tonumber(cfg.shift_goal) or 0)}
+  s.id, s.t0 = F.shift_seq, os.time()
+  for _, k in ipairs(F.SHIFT_NUM) do s[k] = s[k] or 0 end
+  F.shifts[#F.shifts + 1] = s
+  while #F.shifts > F.SHIFT_MAX do table.remove(F.shifts, 1) end
+  F.shift, F.shift_away = s, nil
+  F.shift_save()
+  F.toast('sys', {force = true, quiet = true, icon = j.icon, title = 'Смена началась', text = F.shift_title(s)
+    .. (auto and '  ·  сама, по чату' or '')})
+  return s
+end
+
+function F.shift_pause(on)
+  local s = F.shift
+  if not s then return end
+  local now = os.time()
+  if on == nil then on = s.pause_at == 0 end
+  if on and s.pause_at == 0 then s.pause_at = now
+  elseif not on and s.pause_at > 0 then
+    s.pause = s.pause + math.max(0, now - s.pause_at)
+    s.pause_at = 0
+  end
+  F.shift_away = nil
+  F.shift_save()
+end
+
+function F.shift_report(s)
+  local m = function(n) return F.fmt_money(n) or '$0' end
+  local j = F.shift_job(s.job)
+  local parts = {F.shift_title(s) .. ': ' .. F.dur_text(F.shift_secs(s)), 'заработано ' .. m(s.inc)}
+  if s.n > 0 then parts[#parts + 1] = s.n .. ' ' .. F.ru_count(s.n, j.unit[1], j.unit[2], j.unit[3]) end
+  if s.fuel > 0 then parts[#parts + 1] = 'топливо ' .. m(s.fuel) end
+  local other = F.shift_costs(s) - s.fuel
+  if other > 0 then parts[#parts + 1] = 'другие расходы ' .. m(other) end
+  parts[#parts + 1] = 'чистыми ' .. m(F.shift_net(s))
+  local h = F.shift_hour(s)
+  if h then parts[#parts + 1] = m(h) .. ' в час' end
+  return table.concat(parts, ', ')
+end
+
+function F.shift_stop()
+  local s = F.shift
+  if not s then return nil end
+  local now = os.time()
+  if s.pause_at > 0 then
+    s.pause = s.pause + math.max(0, now - s.pause_at)
+    s.pause_at = 0
+  end
+  s.t1 = now
+  F.shift = nil
+  -- A shift that was started by mistake is not kept.
+  if F.shift_secs(s) < 60 and s.inc == 0 and F.shift_costs(s) == 0 then
+    for i, x in ipairs(F.shifts) do
+      if x == s then table.remove(F.shifts, i) break end
+    end
+    F.shift_save()
+    F.notify('Пустая смена не сохранена', true)
+    return s
+  end
+  F.shift_save()
+  if cfg.shift_chat == 1 then F.chat_brand('Смена окончена. ' .. F.shift_report(s)) end
+  F.toast('sys', {force = true, quiet = true, icon = 'ICON_FA_FLAG_CHECKERED', title = 'Смена окончена: ' .. F.shift_title(s),
+    text = 'Чистыми ' .. (F.fmt_money(F.shift_net(s)) or '$0') .. '  ·  ' .. F.dur_short(F.shift_secs(s)), life = 10})
+  return s
+end
+
+function F.shift_del(id)
+  for i, s in ipairs(F.shifts) do
+    if s.id == id and s ~= F.shift then
+      table.remove(F.shifts, i)
+      F.shift_save()
+      return true
+    end
+  end
+  return false
+end
+
+function F.shift_goal_check(s)
+  if s.goal <= 0 or s.hit == 1 or F.shift_net(s) < s.goal then return end
+  s.hit = 1
+  F.toast('sys', {force = true, icon = 'ICON_FA_TROPHY', title = 'Цель смены выполнена', life = 12,
+    text = 'Чистыми ' .. (F.fmt_money(F.shift_net(s)) or '') .. ' из ' .. (F.fmt_money(s.goal) or '') .. '  ·  ' .. F.dur_short(F.shift_secs(s))})
+  F.chat_brand('Цель смены выполнена: чистыми ' .. (F.fmt_money(F.shift_net(s)) or '') .. ' за ' .. F.dur_short(F.shift_secs(s)))
+  F.want_sound()
+end
+
+-- Every ledger record passes here; the running shift takes its job's pay and the car's costs.
+function F.shift_led(r)
+  local s = F.shift
+  if not s or r.cur ~= 'sa' then return end
+  local text = r.text or ''
+  local j = F.shift_job(s.job)
+  local took = false
+  if r.cat == 'work' then
+    if j.inc then took = F.has_pre(text, j.inc)
+    -- A job's own end line repeats what its payouts already brought.
+    else took = not (text:sub(1, #'Смена: ') == 'Смена: ' and s.inc > 0) end
+    if took then
+      s.inc = s.inc + r.amount
+      if not j.order or F.has_pre(text, {j.order}) then
+        s.n = s.n + 1
+        s.last = os.time()
+      elseif j.key == 'taxi' then
+        s.prem = s.prem + r.amount
+      end
+    end
+  elseif r.cat == 'spend' then
+    for _, c in ipairs(F.SHIFT_COST) do
+      if F.has_pre(text, c.pre) then
+        s[c.key] = s[c.key] + r.amount
+        if c.key == 'fuel' then
+          s.refuel = s.refuel + 1
+          s.liters = s.liters + (tonumber(F._gas_liters) or 0)
+        end
+        took = true
+        break
+      end
+    end
+  end
+  if not took then return end
+  F.shift_save()
+  F.shift_goal_check(s)
+end
+
+function F.shift_auto(job, title)
+  if cfg.shift_auto ~= 1 then return end
+  local s = F.shift
+  if s then
+    if s.job == job and s.pause_at > 0 then F.shift_pause(false) end
+    return
+  end
+  F.shift_start(job, title, true)
+end
+
+function F.shift_feed(text)
+  local raw = F.game_text(text)
+  if raw == '' then return end
+  raw = F.trim(F.int_human(raw, true))
+  if raw == '' or not F.led_system(raw) then return end
+  if raw:find('[АЗС] Процесс заправки', 1, true) then
+    F.gas_done()
+    return
+  end
+  local s = F.shift
+  if raw:find('Вы успешно заправили транспорт', 1, true) then
+    if s then
+      s.refuel = s.refuel + 1
+      F.shift_save()
+    end
+    return
+  end
+  if raw:find('Вы начали работу таксистом', 1, true) then
+    F.shift_auto('taxi')
+    return
+  end
+  local what = raw:match('Вы начали работу ([^%.!]+)')
+  if what then
+    F.shift_auto('any', 'Работа: ' .. F.trim(what))
+    return
+  end
+  if s and s.auto == 1 and s.job == 'any' and raw:find('Вы завершили работу', 1, true) then
+    F.shift_stop()
+    return
+  end
+  local lvl = tonumber(raw:match('уровень таксиста до (%d+)'))
+  if lvl and s and s.job == 'taxi' then
+    if s.lvl0 == 0 then s.lvl0 = lvl - 1 end
+    s.lvl = lvl
+    s.tariff = F.led_num(raw:match('тариф: %$?([%d%.,]+)')) or s.tariff
+    F.shift_save()
+  end
+end
+
+-- Each minute the shift notes it is alive, so a closed game turns into a pause.
+function F.shift_tick(now)
+  if not F.shift or now < (F._shift_beat or 0) then return end
+  F._shift_beat = now + 60
+  F.shift_save()
+  if F.shift_away and not F._shift_said then
+    F._shift_said = true
+    F.chat_brand('Смена «' .. F.shift_title(F.shift) .. '» на паузе, пока тебя не было. Продолжить: /fshift')
+  end
+end
+
+-- /fshift: status or resume  ·  /fshift такси|рейсы|пицца|любая  ·  /fshift пауза  ·  /fshift стоп
+function F.shift_cmd(arg)
+  local low = F.lower_fast(F.trim(F.game_text(arg or '')))
+  local s = F.shift
+  if low == 'стоп' or low == 'stop' or low == 'конец' then
+    if not s then F.chat_brand('Смена не идёт') return end
+    F.shift_stop()
+    return
+  end
+  if low == 'пауза' or low == 'pause' then
+    if not s then F.chat_brand('Смена не идёт') return end
+    F.shift_pause()
+    F.chat_brand(F.shift.pause_at > 0 and 'Смена на паузе' or 'Смена продолжается')
+    return
+  end
+  if low == '' then
+    if not s then
+      F.chat_brand('Смена не идёт. Начать: /fshift такси, /fshift рейсы, /fshift пицца или /fshift любая')
+      return
+    end
+    if s.pause_at > 0 then
+      F.shift_pause(false)
+      F.chat_brand('Смена продолжается. ' .. F.shift_report(s))
+    else
+      F.chat_brand(F.shift_report(s) .. '. Пауза: /fshift пауза, конец: /fshift стоп')
+    end
+    return
+  end
+  local pick
+  for _, j in ipairs(F.SHIFT_JOBS) do
+    local name = F.lower_fast(j.name)
+    if low == j.key or name:find(low, 1, true) == 1 then pick = j break end
+  end
+  if not pick then
+    F.chat_brand('Не понял. /fshift такси|рейсы|пицца|любая, /fshift пауза, /fshift стоп')
+    return
+  end
+  local ok, err = F.shift_start(pick.key)
+  if not ok then F.chat_brand('Не начал: ' .. err .. '. Закончить: /fshift стоп') return end
+  F.chat_brand('Смена «' .. pick.name .. '» началась')
+end
+
+function F.shift_field_on(bit)
+  return math.floor((tonumber(cfg.shift_fields) or 0) / bit) % 2 == 1
+end
+
+function F.shift_field_set(bit, on)
+  local v = tonumber(cfg.shift_fields) or 0
+  if F.shift_field_on(bit) ~= on then v = v + (on and bit or -bit) end
+  cfg.shift_fields = v
+  dirty = true
+end
+
+-- Rows the bar and the card share: label, value, and an optional share for a progress line.
+function F.shift_rows(s, all)
+  local now = os.time()
+  local j = F.shift_job(s.job)
+  local m = function(n) return F.fmt_money(n) or '$0' end
+  local rows = {}
+  local function add(bit, label, value, extra)
+    if all or F.shift_field_on(bit) then rows[#rows + 1] = {label, value, extra} end
+  end
+  add(1, 'Время', F.dur_text(F.shift_secs(s, now)) .. (s.pause_at > 0 and '  пауза' or ''))
+  add(2, 'Заработано', m(s.inc))
+  add(4, 'Расходы', F.shift_costs(s) > 0 and ('-' .. m(F.shift_costs(s))) or '$0')
+  add(8, 'Топливо', (s.fuel > 0 and ('-' .. m(s.fuel)) or '$0') .. (s.liters > 0 and string.format('  %g л', s.liters) or ''))
+  add(16, 'Чистыми', m(F.shift_net(s)), {strong = true, bad = F.shift_net(s) < 0})
+  local h = F.shift_hour(s, now)
+  add(32, 'В час', h and m(h) or '—')
+  if s.n > 0 or all then
+    add(64, j.rows, tostring(s.n) .. (s.n > 0 and ('  ·  ~' .. m((s.inc - s.prem) / s.n)) or ''))
+  end
+  if s.goal > 0 then
+    local share = math.max(0, math.min(1, F.shift_net(s) / s.goal))
+    add(128, 'Цель', string.format('%d%% из %s', math.floor(share * 100), m(s.goal)), {share = share})
+  end
+  if s.last > 0 then add(256, 'Последний заказ', F.dur_short(now - s.last) .. ' назад') end
+  if s.lvl > 0 then
+    add(512, 'Уровень', s.lvl .. (s.lvl0 > 0 and s.lvl > s.lvl0 and string.format(' (+%d)', s.lvl - s.lvl0) or '')
+      .. (s.tariff > 0 and ('  ·  тариф ' .. m(s.tariff)) or ''))
+  end
+  return rows
+end
+
+function F.shift_bar_on()
+  if hidden or cfg.shift_bar ~= 1 or not F.shift then return false end
+  local ok, pause = pcall(isPauseMenuActive)
+  if ok and pause then return false end
+  if show and not (page == 'income' and F.inc_tab == 'work') then return false end
+  return true
+end
+
+function F.draw_shift_bar()
+  local s = F.shift
+  if not s then return end
+  local rows = F.shift_rows(s)
+  local ts = math.max(0.6, math.min(2, tonumber(cfg.shift_scale) or 1))
+  local alpha = math.max(0.2, math.min(1, tonumber(cfg.shift_alpha) or 0.9))
+  local io = imgui.GetIO()
+  local sw, sh = io.DisplaySize.x, io.DisplaySize.y
+  if sw < 100 then sw = 1366 end
+  if sh < 100 then sh = 768 end
+  local pad, head, row = 12 * ts, 30 * ts, 22 * ts
+  local ww = math.floor(250 * ts)
+  local wh = head + #rows * row + pad
+  local x, y = cfg.shift_x, cfg.shift_y
+  if x < 0 then x = 24 end
+  if y < 0 then y = sh * 0.38 end
+  x = math.max(0, math.min(sw - ww, x))
+  y = math.max(0, math.min(sh - wh, y))
+  local WF = imgui.WindowFlags
+  local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse + WF.NoCollapse
+    + WF.NoSavedSettings + WF.NoFocusOnAppearing + WF.NoMove + (WF.NoBackground or 0)
+  if not show then flags = flags + WF.NoMouseInputs end
+  imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.Always)
+  imgui.SetNextWindowSize(imgui.ImVec2(ww, wh), imgui.Cond.Always)
+  imgui.PushStyleColor(imgui.Col.WindowBg, F.vec4(0, 0, 0, 0))
+  imgui.PushStyleColor(imgui.Col.Border, F.vec4(0, 0, 0, 0))
+  imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, 0)
+  imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
+  imgui.Begin('fhelp-shift', nil, flags)
+  F.use_font(font_main)
+  local a = math.floor(alpha * 255)
+  F.round_rect(x, y, ww, wh, F.col('bg', a), F.col(s.pause_at > 0 and 'text' or 'accent', math.floor(alpha * 90)), 12 * ts)
+  local j = F.shift_job(s.job)
+  local title = F.shift_title(s)
+  F.text_at(font_main, 16, x + pad, y + (head - 16 * ts) / 2, F.col('accent'), F.faico(s.pause_at > 0 and 'ICON_FA_PAUSE' or j.icon), nil, ts)
+  F.text_at(font_main, 16, x + pad + 24 * ts, y + (head - 16 * ts) / 2, F.col('text', 220),
+    F.fit_text(font_main, title .. (s.pause_at > 0 and '  ·  пауза' or ''), (ww - pad * 2 - 24 * ts) / ts), nil, ts)
+  for i, r in ipairs(rows) do
+    local ry = y + head + (i - 1) * row
+    local extra = r[3] or {}
+    F.text_at(font_main, 16, x + pad, ry + 3 * ts, F.col('text', 135), r[1], nil, ts)
+    local vw = F.text_w(font_main, r[2]) * ts
+    local col = extra.bad and F.col('bad') or (extra.strong and F.col('accent_hi') or F.col('text', 230))
+    F.text_at(font_main, 16, x + ww - pad - vw, ry + 3 * ts, col, r[2], nil, ts)
+    if extra.share then
+      local by = ry + row - 3 * ts
+      F.round_rect(x + pad, by, ww - pad * 2, 3 * ts, F.col('text', 22), nil, 2)
+      if extra.share > 0 then F.round_rect(x + pad, by, math.max(3, (ww - pad * 2) * extra.share), 3 * ts, F.col('accent'), nil, 2) end
+    end
+  end
+  if show then
+    imgui.SetCursorScreenPos(imgui.ImVec2(x, y))
+    imgui.InvisibleButton('##shiftdrag', imgui.ImVec2(ww, wh))
+    if imgui.IsItemHovered() then F.tip('Перетащи плашку мышью') end
+    local active = imgui.IsItemActive()
+    if active and imgui.IsMouseDragging(0) then
+      cfg.shift_x = math.max(0, math.min(sw - ww, x + io.MouseDelta.x))
+      cfg.shift_y = math.max(0, math.min(sh - wh, y + io.MouseDelta.y))
+      F._shift_moved = true
+    elseif F._shift_moved and not active then
+      F._shift_moved = nil
+      dirty = true
+    end
+  end
+  F.done_font(font_main)
+  imgui.End()
+  imgui.PopStyleVar(2)
+  imgui.PopStyleColor(2)
+end
+
+-- The card on top of Income → Work: start, the running shift, its goal, the bar's look.
+function F.shift_card()
+  local s = F.shift
+  if not s then
+    F.card_begin('Смена', 'Выбери работу и начни: fHelper посчитает заработок, топливо и чистую прибыль', 'ICON_FA_STOPWATCH')
+    local list = {}
+    for _, j in ipairs(F.SHIFT_JOBS) do list[#list + 1] = {j.key, j.name} end
+    F.shift_pick = F.shift_pick or (F.SHIFT_JOBS[math.floor(tonumber(cfg.shift_job) or 1)] or F.SHIFT_JOBS[1]).key
+    local v = F.segment('shiftjob', list, F.shift_pick)
+    if v then
+      F.shift_pick = v
+      for i, j in ipairs(F.SHIFT_JOBS) do if j.key == v then cfg.shift_job = i end end
+      dirty = true
+    end
+    F.hint('Считается: ' .. F.shift_job(F.shift_pick).tip .. '. Расходы: АЗС, канистры, ремонт, штрафы, аренда.')
+    imgui.Spacing()
+    if F.button('Начать смену##shiftgo', 200, 0, 'primary') then F.shift_start(F.shift_pick) end
+    imgui.Spacing()
+    F.chest_flag('shiftauto', 'Начинать само', 'shift_auto', 'По строке «Вы начали работу…» в чате. Такси узнаётся отдельно')
+    F.card_end()
+    return
+  end
+  local paused = s.pause_at > 0
+  F.card_begin('Смена: ' .. F.shift_title(s), paused and 'На паузе: время не идёт, деньги считаются' or ('Идёт с ' .. os.date('%H:%M', s.t0)), F.shift_job(s.job).icon)
+  local rows = F.shift_rows(s, true)
+  local tiles = {}
+  for _, r in ipairs(rows) do
+    if r[1] ~= 'Цель' then tiles[#tiles + 1] = {'ICON_FA_CIRCLE', r[1], r[2]} end
+  end
+  local icons = {['Время'] = 'ICON_FA_STOPWATCH', ['Заработано'] = 'ICON_FA_ARROW_DOWN', ['Расходы'] = 'ICON_FA_ARROW_UP',
+    ['Топливо'] = 'ICON_FA_GAS_PUMP', ['Чистыми'] = 'ICON_FA_EQUALS', ['В час'] = 'ICON_FA_TACHOMETER_ALT',
+    ['Последний заказ'] = 'ICON_FA_HISTORY', ['Уровень'] = 'ICON_FA_LEVEL_UP_ALT'}
+  for _, t in ipairs(tiles) do t[1] = icons[t[2]] or F.shift_job(s.job).icon end
+  F.tile_grid('shift', tiles, 180)
+  local other = {}
+  for _, c in ipairs(F.SHIFT_COST) do
+    if c.key ~= 'fuel' and s[c.key] > 0 then other[#other + 1] = c.name .. ' ' .. F.fmt_money(s[c.key]) end
+  end
+  local fuel = s.refuel > 0 and (s.refuel .. ' ' .. F.ru_count(s.refuel, 'заправка', 'заправки', 'заправок')) or 'заправок не было'
+  F.hint('Топливо: ' .. fuel .. (#other > 0 and ('. Ещё: ' .. table.concat(other, ', ')) or '') .. '.')
+  imgui.Spacing()
+  -- Goal
+  local w = F.inner_w()
+  if s.goal > 0 then
+    local share = math.max(0, math.min(1, F.shift_net(s) / s.goal))
+    local p = imgui.GetCursorScreenPos()
+    F.text_at(font_main, 16, p.x, p.y, F.col('text', 200), 'Цель: ' .. F.fmt_money(s.goal) .. (s.hit == 1 and '  ·  выполнена' or ''))
+    local pct = string.format('%d%%', math.floor(share * 100))
+    F.text_at(font_main, 16, p.x + w - F.text_w(font_main, pct), p.y, F.col('accent_hi'), pct)
+    F.round_rect(p.x, p.y + F.s(24), w, F.s(6), F.col('text', 18), nil, 3)
+    if share > 0 then F.round_rect(p.x, p.y + F.s(24), math.max(6, w * share), F.s(6), F.col('accent'), nil, 3) end
+    F.advance(p, w, F.s(36))
+  end
+  F.field('##shiftgoal', s.goal > 0 and 'Новая цель, например 50кк' or 'Цель чистыми, например 50кк', ui.shift_goal, 32,
+    math.max(F.s(140), w - F.s(130) - 8), 'shift_goal')
+  imgui.SameLine(0, 8)
+  if F.button((s.goal > 0 and 'Сменить' or 'Задать') .. '##shiftgoalset', 130, 0) then
+    local n = F.calc_eval(F.buf_get(ui.shift_goal))
+    if n and n >= 0 then
+      s.goal, s.hit = math.floor(n + 0.5), 0
+      cfg.shift_goal = s.goal
+      dirty = true
+      F.buf_set(ui.shift_goal, '', 32)
+      F.shift_save()
+      F.shift_goal_check(s)
+    else F.notify('Укажи сумму, например 50кк', true) end
+  end
+  imgui.Spacing()
+  if F.button((paused and 'Продолжить' or 'Пауза') .. '##shiftpause', 150, 0, paused and 'primary' or nil) then F.shift_pause() end
+  imgui.SameLine(0, 8)
+  if F.button('Завершить##shiftstop', 150, 0) then F.shift_stop() end
+  imgui.SameLine(0, 8)
+  if F.button('Скопировать##shiftcopy', 150, 0) then F.note_copy(F.shift_report(s)) end
+  if imgui.IsItemHovered() then F.tip('Итог смены одной строкой') end
+  F.card_end()
+end
+
+function F.shift_stats()
+  local key = F.shift_rev
+  if F._shift_sk == key and F._shift_st then return F._shift_st end
+  local st = {n = 0, net = 0, secs = 0, best = nil}
+  for _, s in ipairs(F.shifts) do
+    if s.t1 > 0 then
+      st.n = st.n + 1
+      st.net = st.net + F.shift_net(s)
+      st.secs = st.secs + F.shift_secs(s)
+      if not st.best or F.shift_net(s) > F.shift_net(st.best) then st.best = s end
+    end
+  end
+  F._shift_sk, F._shift_st = key, st
+  return st
+end
+
+function F.shift_row(s, i)
+  local p = imgui.GetCursorScreenPos()
+  local w = F.inner_w()
+  local h = F.s(48)
+  local ib = F.s(30)
+  local del_x = p.x + w - ib
+  if i % 2 == 0 then F.round_rect(p.x - 6, p.y, w + 12, h - 4, F.col('side', 90), nil, 8) end
+  local net = F.shift_net(s)
+  local money = F.fmt_money(net) or '$0'
+  local hr = F.shift_hour(s)
+  local right2 = hr and ((F.fmt_money(hr) or '') .. ' в час') or ''
+  local mw = math.max(F.text_w(font_bold, money), F.text_w(font_main, right2))
+  local rx = del_x - F.s(12) - mw
+  local tw = rx - p.x - F.s(16)
+  local j = F.shift_job(s.job)
+  F.text_at(font_main, 16, p.x + 4, p.y + F.s(4), F.col('text', 230), F.fit_text(font_main, F.faico(j.icon) .. '  ' .. F.shift_title(s), tw))
+  local sub = F.short_stamp(os.date('%Y-%m-%d %H:%M:%S', s.t0)) .. '  ·  ' .. F.dur_short(F.shift_secs(s))
+  if s.n > 0 then sub = sub .. '  ·  ' .. s.n .. ' ' .. F.ru_count(s.n, j.unit[1], j.unit[2], j.unit[3]) end
+  if s.fuel > 0 then sub = sub .. '  ·  топливо ' .. F.fmt_money(s.fuel) end
+  F.text_at(font_main, 16, p.x + 4, p.y + F.s(24), F.col('text', 120), F.fit_text(font_main, sub, tw))
+  F.text_at(font_bold, 18, del_x - F.s(12) - F.text_w(font_bold, money), p.y + F.s(3), net < 0 and F.col('bad') or F.col('accent_hi'), money)
+  if right2 ~= '' then F.text_at(font_main, 16, del_x - F.s(12) - F.text_w(font_main, right2), p.y + F.s(24), F.col('text', 120), right2) end
+  local act
+  if F.ghost_icon('##shdel' .. s.id, del_x, p.y + (h - 4 - ib) / 2, 'ICON_FA_TRASH', 'Удалить смену', true) then act = 'del' end
+  F.advance(p, w, h)
+  return act
+end
+
+function F.shift_history()
+  local st = F.shift_stats()
+  if st.n == 0 then return end
+  F.card_begin('История смен', nil, 'ICON_FA_HISTORY')
+  F.tile_grid('shifts', {
+    {'ICON_FA_LIST', 'Смен', tostring(st.n)},
+    {'ICON_FA_EQUALS', 'Всего чистыми', F.fmt_money(st.net)},
+    {'ICON_FA_TACHOMETER_ALT', 'В среднем в час', st.secs >= 300 and F.fmt_money(st.net * 3600 / st.secs) or '—'},
+    {'ICON_FA_TROPHY', 'Лучшая смена', st.best and F.fmt_money(F.shift_net(st.best)) or '—'},
+  }, 180)
+  imgui.Spacing()
+  local del
+  local n = 0
+  for i = #F.shifts, 1, -1 do
+    local s = F.shifts[i]
+    if s.t1 > 0 then
+      n = n + 1
+      if F.shift_row(s, n) == 'del' then del = s.id end
+      if n >= 15 then break end
+    end
+  end
+  if st.n > 15 then F.hint('Показаны последние 15 из ' .. st.n) end
+  if del then F.shift_del(del) end
+  F.card_end()
+end
+
+function F.shift_bar_card()
+  F.card_begin('Плашка смены', 'Видна, пока идёт смена. Двигается мышью, когда меню открыто на этой вкладке', 'ICON_FA_DESKTOP')
+  F.chest_flag('shiftbar', 'Плашка на экране', 'shift_bar')
+  if cfg.shift_bar == 1 then
+    F.divider()
+    for _, f in ipairs(F.SHIFT_FIELDS) do
+      if F.switch('shf' .. f[1], f[2], F.shift_field_on(f[1])) then F.shift_field_set(f[1], not F.shift_field_on(f[1])) end
+    end
+    F.divider()
+    if F.slider_row('shiftscale', 'Размер', ui.shift_scale, 60, 200, '%.0f%%') then
+      cfg.shift_scale = math.max(0.6, math.min(2, ui.shift_scale[0] / 100))
+      dirty = true
+    end
+    if F.slider_row('shiftalpha', 'Непрозрачность фона', ui.shift_alpha, 20, 100, '%.0f%%') then
+      cfg.shift_alpha = math.max(0.2, math.min(1, ui.shift_alpha[0] / 100))
+      dirty = true
+    end
+    if F.button('Вернуть на место##shiftpos', 200, 0) then
+      cfg.shift_x, cfg.shift_y = -1, -1
+      dirty = true
+    end
+  end
+  F.chest_flag('shiftchat', 'Итог смены в чат', 'shift_chat', 'Когда смена заканчивается')
+  F.hint('Команды: /fshift — итог или продолжить, /fshift такси, /fshift пауза, /fshift стоп.')
+  F.card_end()
+end
+
+function F.income_work(from, to)
+  F.shift_card()
+  F.shift_history()
+  F.shift_bar_card()
+  F.income_list('work', from, to)
 end
 
 F.PERIODS = {
@@ -8548,6 +9352,7 @@ function F.draw_income()
   if F.inc_tab == 'pay' then F.income_paydays(from, to)
   elseif F.inc_tab == 'items' then F.income_items(from, to)
   elseif F.inc_tab == 'over' then F.income_over(from, to)
+  elseif F.inc_tab == 'work' then F.income_work(from, to)
   else F.income_list(F.inc_tab, from, to) end
 end
 
@@ -12606,8 +13411,11 @@ if imgui_ok then
   F.pin_frame.HideCursor = true
   F.pin_frame.LockPlayer = false
   F.want_frame = imgui.OnFrame(function() return F.want_bar_on() end, F.draw_want_bar)
+  F.shift_frame = imgui.OnFrame(function() return F.shift_bar_on() end, F.draw_shift_bar)
   F.want_frame.HideCursor = true
   F.want_frame.LockPlayer = false
+  F.shift_frame.HideCursor = true
+  F.shift_frame.LockPlayer = false
   F.time_frame = imgui.OnFrame(function() return F.time_on() end, F.draw_time)
   F.time_frame.HideCursor = true
   F.time_frame.LockPlayer = false
@@ -12748,7 +13556,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 25
+F.BUILD = 26
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -13110,7 +13918,7 @@ function main()
   F.load_notes()
   F.pay_load()
   -- A broken data file must not stop the whole menu from starting.
-  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load, F.shop_load, F.want_load}) do
+  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load, F.shop_load, F.want_load, F.shift_load}) do
     local ok, err = pcall(fn)
     if not ok then F.log_line('Загрузка данных: ' .. tostring(err)) end
   end
@@ -13135,6 +13943,8 @@ function main()
     ui.time_x[0] = cfg.time_x
     ui.time_y[0] = cfg.time_y
     ui.time_scale[0] = cfg.time_scale * 100
+    ui.shift_scale[0] = cfg.shift_scale * 100
+    ui.shift_alpha[0] = cfg.shift_alpha * 100
     F.toast_ui()
   end
   if cfg.off == 1 then
@@ -13168,6 +13978,7 @@ function main()
   sampRegisterChatCommand('fchest', F.chest_cmd)
   sampRegisterChatCommand('fmem', F.mem_cmd)
   sampRegisterChatCommand('fwant', function(arg) pcall(F.want_cmd, arg) end)
+  sampRegisterChatCommand('fshift', function(arg) pcall(F.shift_cmd, arg) end)
   local int_mark = 0
   local frames = 0
   local fps_mark = os.clock()
@@ -13200,6 +14011,7 @@ function main()
     pcall(F.upd_tick, now)
     pcall(F.shop_tick)
     pcall(F.chest_tick)
+    if not F._restoring then pcall(F.shift_tick, now) end
     F.watch_self()
     if frame then
       frame.LockPlayer = (show or anim > 0.45) and not hidden and cfg.lock == 1
@@ -13252,6 +14064,7 @@ addEventHandler('onScriptTerminate', function(scr)
     if F._lim == 0 then F.write_limiter(1) end
     F.note_flush()
     if F.int_dirty then F.int_save() end
+    if F.shift then F.shift_save() end
     F.save_cfg()
   end)
   pcall(F.lib_free)
@@ -13289,6 +14102,8 @@ function onSendPacket(id, bs)
   if ok then F.note_bytes(n, false) end
   if id == 220 then
     pcall(F.car_sent, bs)
+    pcall(raknetBitStreamResetReadPointer, bs)
+    pcall(F.gas_sent, bs)
     pcall(raknetBitStreamResetReadPointer, bs)
   end
 end
