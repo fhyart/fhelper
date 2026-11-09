@@ -1,4 +1,6 @@
-# fHelper
+# fHelper — хелпер для Arizona RP
+
+**Arizona RP Helper | fHelper for Arizona RP**
 
 Помощник для MoonLoader на Arizona RP и Rodina RP: доходы и пейдеи, уведомления на экране, бинды, заметки, интеграции, калькулятор, крафт, сканер машин.
 
