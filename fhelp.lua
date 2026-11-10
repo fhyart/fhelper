@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.18.0'
+local VER = '1.19.0'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(26)
+script_version_number(27)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -174,6 +174,11 @@ local cfg = {
   shift_goal = 0,
   shift_job = 1,
   shift_chat = 1,
+  vc_here = 0,
+  loc2_money = -1,
+  loc2_bank = -1,
+  loc2_depo = -1,
+  inc_cur = 0,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -190,13 +195,13 @@ local CFG_NUM = {
   {'toast_alpha', 0.3, 1}, {'toast_time', 2, 30}, {'toast_max', 1, 10}, {'toast_menu', 0, 1},
   {'toast_merge', 0, 1}, {'toast_sound', 0, 1}, {'toast_bar', 0, 1},
   {'upd_on', 0, 1}, {'upd_skip', 0, 1e9}, {'shop_on', 0, 1},
-  {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},
-  {'toast_chest', 0, 1},
+  {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},  {'toast_chest', 0, 1},
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
   {'mem_auto', 0, 1},
   {'want_pin', 0, 1}, {'want_sound', 0, 1}, {'want_x', -1, 10000}, {'want_y', -1, 10000}, {'bak_auto', 0, 1},
   {'shift_auto', 0, 1}, {'shift_bar', 0, 1}, {'shift_x', -1, 10000}, {'shift_y', -1, 10000}, {'shift_scale', 0.6, 2},
-  {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 4}, {'shift_chat', 0, 1},
+  {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 5}, {'shift_chat', 0, 1},
+  {'vc_here', 0, 1}, {'loc2_money', -1, 1e15}, {'loc2_bank', -1, 1e15}, {'loc2_depo', -1, 1e15}, {'inc_cur', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -267,6 +272,7 @@ if imgui_ok then
   ui.calc = imgui.new.char[160]()
   ui.int_q = imgui.new.char[80]()
   ui.lib_q = imgui.new.char[80]()
+  ui.item_price = imgui.new.char[32]()
   ui.led_q = imgui.new.char[80]()
   ui.note_q = imgui.new.char[80]()
   ui.clog_q = imgui.new.char[80]()
@@ -288,11 +294,11 @@ if imgui_ok then
   ui.shop_q = imgui.new.char[80]()
   ui.want_q = imgui.new.char[80]()
   ui.want_price = imgui.new.char[32]()
-  ui.shift_goal = imgui.new.char[32]()
-  ui.shift_scale = imgui.new.float(100)
+  ui.shift_goal = imgui.new.char[32]()  ui.shift_scale = imgui.new.float(100)
   ui.shift_alpha = imgui.new.float(90)
   ui.rng_h = imgui.new.float(0)
   ui.rng_m = imgui.new.float(0)
+  ui.rng_time = imgui.new.char[32]()
   ui.toast_x = imgui.new.float(98)
   ui.toast_y = imgui.new.float(30)
   ui.toast_scale = imgui.new.float(100)
@@ -307,6 +313,7 @@ local NAV = {
   {'income', 'ICON_FA_COINS', 'Доходы'},
   {'chests', 'ICON_FA_GIFT', 'Сундуки'},
   {'chat', 'ICON_FA_COMMENTS', 'Чат'},
+  {'items', 'ICON_FA_BOXES', 'Предметы'},
   {'scripts', 'ICON_FA_CODE', 'Скрипты'},
   {'binds', 'ICON_FA_BOLT', 'Бинды'},
   {'notes', 'ICON_FA_STICKY_NOTE', 'Заметки'},
@@ -352,6 +359,7 @@ F.PROJ_FILES = {
   ['fhelp_ints.txt'] = true, ['fhelp_craft.txt'] = true,
   ['fhelp_cars.txt'] = true, ['fhelp_items.txt'] = true, ['fhelp_shops.txt'] = true,
   ['fhelp_chests.txt'] = true, ['fhelp_wants.txt'] = true, ['fhelp_shifts.txt'] = true,
+  ['fhelp_lib.txt'] = true,
 }
 
 function F.log_path()
@@ -458,8 +466,18 @@ function F.fmt_money(n)
     body = body .. parts[i]
   end
   if F.is_rod() then return (neg and '-' or '') .. body .. ' руб.' end
-  if neg then return '-$' .. body end
-  return '$' .. body
+  local mark = F._cur_vc and 'VC$' or '$'
+  if neg then return '-' .. mark .. body end
+  return mark .. body
+end
+
+-- The same sum in a chosen currency: VC$ on Vice City, $ elsewhere.
+function F.fmt_cur(n, vc)
+  local old = F._cur_vc
+  F._cur_vc = vc and true or false
+  local s = F.fmt_money(n)
+  F._cur_vc = old
+  return s
 end
 
 function F.to_cp(s)
@@ -1510,7 +1528,7 @@ function F.refresh_live()
     -- GTA keeps money in a capped 32-bit value, the server's CEF event has the real sum.
     local money = tonumber(cfg.money_real) or -1
     if money < 0 then money = tonumber(getPlayerMoney(PLAYER_HANDLE)) end
-    if money then live.money = F.fmt_money(money) or live.money end
+    if money then live.money = F.fmt_cur(money, F.here_vc()) or live.money end
   end)
   -- For our own player SA-MP pools return 0 health, the ped has the real value.
   pcall(function()
@@ -1765,6 +1783,7 @@ function F.pay_save()
   for i = 1, #st.list do
     local rec = st.list[i]
     lines[#lines + 1] = '#' .. (rec.t or '') .. '|' .. tostring(rec.total or 0) .. '|' .. tostring(rec.az or 0)
+      .. (rec.cur == 'vc' and '|vc' or '')
     local items = rec.items or {}
     for j = 1, #items do
       local it = items[j]
@@ -1780,9 +1799,10 @@ function F.pay_load()
   local rec
   for _, line in ipairs(F.read_lines('fhelp_income.txt')) do
     if line:sub(1, 1) == '#' then
-      local t, total, az = line:match('^#(.-)|([%+%-]?%d+)|([%+%-]?%d+)$')
+      local t, total, az, cur = line:match('^#(.-)|([%+%-]?%d+)|([%+%-]?%d+)|(%a+)$')
+      if not t then t, total, az = line:match('^#(.-)|([%+%-]?%d+)|([%+%-]?%d+)$') end
       if t then
-        rec = {t = t, total = tonumber(total) or 0, az = tonumber(az) or 0, items = {}}
+        rec = {t = t, total = tonumber(total) or 0, az = tonumber(az) or 0, items = {}, cur = cur == 'vc' and 'vc' or 'sa'}
         st.list[#st.list + 1] = rec
       else
         rec = nil
@@ -1836,6 +1856,8 @@ function F.pay_close()
     end
   end
   st.buf = {}
+  local cur = (st.vc or F.here_vc()) and 'vc' or 'sa'
+  st.vc = nil
   if #items == 0 then return end
   -- Arizona marks what came in with (+$N) next to the bank and the deposit,
   -- so their sum is the payday. The salary line repeats the bank part.
@@ -1855,7 +1877,7 @@ function F.pay_close()
   end
   if total == nil and not az_set then return end
   if total == nil then total = 0 end
-  local rec = {t = os.date('%Y-%m-%d %H:%M:%S'), total = total, az = az_set and az or 0, items = items}
+  local rec = {t = os.date('%Y-%m-%d %H:%M:%S'), total = total, az = az_set and az or 0, items = items, cur = cur}
   st.list[#st.list + 1] = rec
   while #st.list > F.PAY_MAX do table.remove(st.list, 1) end
   st.pick = #st.list
@@ -1863,7 +1885,7 @@ function F.pay_close()
   st.last = rec
   st.closed_at = os.clock()
   F.pay_save()
-  local shown = F.fmt_money(total) or tostring(total)
+  local shown = F.fmt_cur(total, cur == 'vc') or tostring(total)
   F.log_line('Пейдей: ' .. shown)
   pcall(F.toast_pay, rec)
 end
@@ -1917,8 +1939,9 @@ end
 function F.pay_feed(text)
   local raw = F.game_text(text)
   if raw == '' then return end
-  -- Arizona writes money as :CASH:1.234.567 and adds emoji codes like :u1F4B0:.
-  raw = raw:gsub(':CASH:', '$'):gsub(':u%x+:', '')
+  -- Arizona writes money as :CASH:1.234.567 (:CASHV: on Vice City) and adds emoji codes like :u1F4B0:.
+  local vc_line = raw:find(':CASHV:', 1, true) and not raw:find(':CASH:', 1, true)
+  raw = raw:gsub(':CASHV:', '$'):gsub(':CASH:', '$'):gsub(':u%x+:', '')
   raw = F.trim(F.proj_text(raw))
   if raw == '' then return end
   local low = F.lower_text(raw)
@@ -1927,6 +1950,7 @@ function F.pay_feed(text)
   local header = low:find('банковский чек', 1, true) ~= nil
   local st = F.pay_state()
   F.pay_took = false
+  if vc_line and st.open and not F.here_vc() then F.here_set(true) end
   F.track_balance(raw)
   if header then
     if st.open then F.pay_close() end
@@ -1936,6 +1960,7 @@ function F.pay_feed(text)
     st.rules = 0
     return
   end
+  if vc_line and st.open then st.vc = true end
   if st.open and rule then
     -- The first line of ===== sits right under the header, the second one ends the check.
     st.rules = (st.rules or 0) + 1
@@ -1974,7 +1999,9 @@ function F.hook_chat()
   ev.onServerMessage = function(color, text)
     if not text then return end
     -- One bad line must not stop the others or the chat itself.
-    local ok, err = pcall(F.pay_feed, text)
+    local ok, err = pcall(F.here_feed, text)
+    if not ok then F.feed_err('город', err) end
+    ok, err = pcall(F.pay_feed, text)
     if not ok then F.feed_err('пейдей', err) end
     ok, err = pcall(F.led_feed, text)
     if not ok then F.feed_err('доходы', err) end
@@ -1983,8 +2010,7 @@ function F.hook_chat()
     ok, err = pcall(F.item_feed, text)
     if not ok then F.feed_err('предметы', err) end
     ok, err = pcall(F.chest_feed, text)
-    if not ok then F.feed_err('сундуки', err) end
-    ok, err = pcall(F.shift_feed, text)
+    if not ok then F.feed_err('сундуки', err) end    ok, err = pcall(F.shift_feed, text)
     if not ok then F.feed_err('смена', err) end
   end
   ev.onSetVehicleNumberPlate = function(id, text)
@@ -4145,8 +4171,7 @@ function F.draw_binds()
   elseif bind_kind == 'chat' or bind_kind == 'say' then
     if F.button((F.faico('ICON_FA_LINK') ~= '' and (F.faico('ICON_FA_LINK') .. '  ') or '') .. 'Вставить интеграцию##bint', 230, 0) then
       F.int_pick = 'bind'
-      F.chat_tab = 'lib'
-      page = 'chat'
+      page = 'items'
     end
     F.int_preview(F.buf_get(ui_bind))
     if #favs > 0 then
@@ -4328,10 +4353,11 @@ function F.income_paydays(from, to)
     return
   end
   local idx, sum, az, best = {}, 0, 0, nil
+  local cur = F.inc_cur()
   for i = #st.list, 1, -1 do
     local r = st.list[i]
     local t = r.t or ''
-    if t >= from and t <= to then
+    if t >= from and t <= to and (r.cur or 'sa') == cur then
       idx[#idx + 1] = i
       sum = sum + (r.total or 0)
       az = az + (r.az or 0)
@@ -6626,6 +6652,7 @@ end
 function F.proj_set(key)
   if key == cfg.proj or not F.PROJ[key] then return end
   if F.int_dirty then F.int_save() end
+  if cfg.vc_here == 1 then F.here_set(false) end
   cfg.proj = key
   cfg.money_real, cfg.alt_money_real = cfg.alt_money_real, cfg.money_real
   cfg.bank, cfg.alt_bank = cfg.alt_bank, cfg.bank
@@ -6884,6 +6911,7 @@ F.BAK = {
   {id = 'favs', name = 'Избранное чата', files = {'fhelp_favs.txt'}, share = true, merge = true},
   {id = 'notes', name = 'Заметки', sub = 'с папками и закреплёнными', files = {'fhelp_notes.txt', 'fhelp_pins.txt'}, share = true, merge = true},
   {id = 'wants', name = 'Хочу найти', files = {'fhelp_wants.txt'}, share = true, merge = true},
+  {id = 'lib', name = 'Избранные предметы', sub = 'и недавно открытые', files = {'fhelp_lib.txt'}, share = true},
   {id = 'craft', name = 'Рецепты крафта', files = {'fhelp_craft.txt'}, share = true},
   {id = 'data', name = 'История', sub = 'доходы, смены, сделки, предметы, лавки, машины, сундуки, калькулятор',
     files = {'fhelp_income.txt', 'fhelp_ledger.txt', 'fhelp_ints.txt', 'fhelp_items.txt', 'fhelp_shops.txt',
@@ -7542,6 +7570,21 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.0', '10.11.2026', {
+    {'add', 'Vice City: доходы, расходы, пейдеи и смены считаются в VC$ отдельно от долларов'},
+    {'add', 'В Доходах переключатель $ / VC$; при перелёте он сам переключается на валюту города'},
+    {'add', 'Наличные, банк и депозит хранятся для каждого города свои; обмен $ на VC$ виден с обеих сторон'},
+    {'add', 'Свой период: время можно вписать руками — 14:30, 1430 или с днём: 09.11 14:30'},
+    {'add', 'Смена «Лесоруб»: тележки, дрова, ДВК, бонусы группы, продажа древесины и примерная цена добытого'},
+    {'add', 'Смена лесоруба начинается сама, когда берёшь бензопилу или первую тележку'},
+    {'add', 'Точные дрова и ДВК с бонусами аксессуаров берутся из инвентаря, оплата тележки — из «+$» у наличных'},
+    {'add', 'Библиотека: поиск по бафам — к лесорубу, дальнобою, такси, депозиту, урону и другим'},
+    {'add', '«Предметы» — отдельный раздел меню, раньше это была вкладка «Чат → Библиотека»'},
+    {'add', 'Нажми на предмет: карточка с полным описанием, бафами, ценами в открытых лавках, твоими сделками и сколько он выпадал'},
+    {'add', 'Из карточки: «Хочу найти» с ценой, код в бинд, заметку, отправку или чат игры; стрелки листают предметы'},
+    {'add', 'Избранные и недавние предметы, команда /fitem <название или ID>'},
+    {'add', 'Нажатие на предмет в лавках, доходах и других списках тоже открывает его карточку'},
+  }},
   {'1.18.0', '09.11.2026', {
     {'add', 'Доходы → Работа → «Смена»: выбираешь работу (такси, рейсы, пицца или любая) и fHelper считает смену'},
     {'add', 'В смене: заработано, заказы и средний чек, топливо и другие расходы, чистыми, в час, уровень и тариф таксиста'},
@@ -7752,7 +7795,10 @@ end
 function F.fmt_saved(key)
   local n = tonumber(cfg[key]) or -1
   if n < 0 then return '—' end
-  return F.fmt_money(n) or '—'
+  -- Outside Income the saved bank and deposit are the current city's.
+  local vc = F._cur_vc
+  if vc == nil then vc = F.here_vc() end
+  return F.fmt_cur(n, vc) or '—'
 end
 
 function F.cef_text(bs)
@@ -7781,7 +7827,8 @@ function F.cef_packet(bs)
   if not fine then F.feed_err('сундуки', err) end
   fine, err = pcall(F.gas_packet, text)
   if not fine then F.feed_err('АЗС', err) end
-  local at = text:find('updateMoney', 1, true)
+  fine, err = pcall(F.wood_packet, text)
+  if not fine then F.feed_err('лесопилка', err) end  local at = text:find('updateMoney', 1, true)
   if not at then return end
   local n = tonumber(text:match('(%d+)', at))
   if not n then return end
@@ -7795,7 +7842,79 @@ function F.cef_packet(bs)
     cfg.money_real = n
     stat_dirty = true
   end
-  live.money = F.fmt_money(n) or live.money
+  live.money = F.fmt_cur(n, F.here_vc()) or live.money
+end
+
+-- Vice City
+
+-- The Vice City server pays in VC$ (U+1FC23 in chat). Cash, bank and deposit are kept for both
+-- cities: on a flight the current ones go to loc2_* and the other city's come back, and the
+-- Income page turns to that city's currency by itself.
+function F.here_vc()
+  return cfg.vc_here == 1 and not F.is_rod()
+end
+
+function F.here_set(vc)
+  if F.is_rod() then return end
+  local v = vc and 1 or 0
+  if (cfg.vc_here == 1) == vc then return end
+  cfg.vc_here = v
+  cfg.money_real, cfg.loc2_money = cfg.loc2_money, cfg.money_real
+  cfg.bank, cfg.loc2_bank = cfg.loc2_bank, cfg.bank
+  cfg.depo, cfg.loc2_depo = cfg.loc2_depo, cfg.depo
+  local n = tonumber(cfg.money_real) or -1
+  live.money = n >= 0 and (F.fmt_cur(n, vc) or live.money) or '—'
+  cfg.inc_cur = v
+  dirty, stat_dirty = true, true
+  F.log_line(vc and 'Город: Vice City, валюта VC$' or 'Город: Сан-Андреас, валюта $')
+  F.toast('sys', {force = true, quiet = true, icon = 'ICON_FA_PLANE', title = vc and 'Vice City' or 'Сан-Андреас',
+    text = vc and 'Доходы и расходы теперь в VC$' or 'Доходы и расходы снова в $'})
+end
+
+function F.here_feed(text)
+  local u = F.game_text(text)
+  if u:find('Добро пожаловать в город Vice City', 1, true) then F.here_set(true)
+  elseif u:find('Добро пожаловать на Arizona Role Play', 1, true) then F.here_set(false) end
+end
+
+-- What Income shows: 'vc' or 'sa'.
+function F.inc_cur()
+  return cfg.inc_cur == 1 and not F.is_rod() and 'vc' or 'sa'
+end
+
+-- The switch is shown once Vice City has ever been seen.
+function F.vc_known()
+  if F.is_rod() then return false end
+  if cfg.vc_here == 1 or cfg.inc_cur == 1 then return true end
+  local led = F.led_state()
+  if F._vck_rev == led.rev then return F._vck end
+  local any = false
+  for i = #led.list, 1, -1 do
+    if led.list[i].cur == 'vc' then any = true break end
+  end
+  F._vck_rev, F._vck = led.rev, any
+  return any
+end
+
+-- "Вы успешно приобрели VC$X за $Y" buys VC$ with dollars, "Вы успешно обменяли VC$X на $Y" goes back.
+-- Both sides are written down, each in its own currency.
+function F.led_exchange(raw)
+  if not (raw:find(':CASHV:', 1, true) and raw:find(':CASH:', 1, true)) then return false end
+  local s = raw:gsub('{%x%x%x%x%x%x}', '')
+  local n = F.led_num
+  local v, d = s:match('Вы успешно приобрели%s*:CASHV:([%d][%d%.,]*)%s*за%s*:CASH:([%d][%d%.,]*)')
+  if v then
+    F.led_add('buy', n(d), 'Покупка VC$', 0, F.fmt_cur(n(v), true) or '', 'sa')
+    F.led_add('other', n(v), 'Обмен: из $', 0, F.fmt_cur(n(d), false) or '', 'vc')
+    return true
+  end
+  v, d = s:match('Вы успешно обменяли%s*:CASHV:([%d][%d%.,]*)%s*на%s*:CASH:([%d][%d%.,]*)')
+  if v then
+    F.led_add('sell', n(d), 'Обмен VC$', 0, F.fmt_cur(n(v), true) or '', 'sa')
+    F.led_add('buy', n(v), 'Обмен: в $', 0, F.fmt_cur(n(d), false) or '', 'vc')
+    return true
+  end
+  return false
 end
 
 -- Integrations
@@ -8237,6 +8356,9 @@ function F.led_rules()
   simple('%[Такси%] Клиент оплатил: ' .. M, 'work', 'Такси: клиент')
   simple('Чаевых таксиста.-Вы получили %+' .. M, 'work', 'Такси: чаевые')
   simple('Вы доставили пиццу, заработано %+?' .. M, 'work', 'Доставка пиццы')
+  add('доставил дрова! Ваш бонус: %+?([%d%.,]+) дров, %+?' .. M, function(_, a)
+    return 'work', n(a), 'Лесоруб: бонус группы'
+  end)
   add('Вы получили премию за \'(.-)\' в размере ' .. M, function(what, a)
     return 'work', n(a), 'Премия: ' .. what
   end)
@@ -8327,9 +8449,14 @@ function F.led_feed(text)
   if F.pay_took or F.pay_state().open then return end
   local raw = F.proj_text(F.game_text(text))
   if raw == '' then return end
+  if F.led_exchange(raw) then return end
   local vc = raw:find(':CASHV:', 1, true) and not raw:find(':CASH:', 1, true)
   local cat, amount, what, qty, who = F.led_parse(raw)
-  if cat then F.led_add(cat, amount, what, qty, who, vc and 'vc' or 'sa') end
+  if cat then
+    F.led_add(cat, amount, what, qty, who, vc and 'vc' or 'sa')
+    -- Only the Vice City server pays in VC$ alone: a missed welcome line still flips the city.
+    if vc and not F.here_vc() then F.here_set(true) end
+  end
 end
 
 -- Gas stations
@@ -8394,7 +8521,7 @@ function F.gas_record(text, amount, liters, title)
   if (liters or 0) > 0 then who = string.format('%g л', liters) end
   if title and title ~= '' then who = who ~= '' and (who .. ' · ' .. title) or title end
   F._gas_liters = liters or 0
-  F.led_add('spend', amount, text, 0, who)
+  F.led_add('spend', amount, text, 0, who, F.here_vc() and 'vc' or 'sa')
   F._gas_liters = nil
 end
 
@@ -8435,7 +8562,12 @@ F.SHIFT_JOBS = {
     unit = {'доставка', 'доставки', 'доставок'}, rows = 'Доставки', tip = 'доставка пиццы'},
   {key = 'any', name = 'Любая работа', icon = 'ICON_FA_BRIEFCASE', unit = {'выплата', 'выплаты', 'выплат'},
     rows = 'Выплаты', tip = 'всё, что попадает в «Работу»: смены, патрули, премии'},
+  -- The sawmill pays in wood: carts go to the conveyor and land in the inventory as Дрова,
+  -- sometimes with Древесина высшего качества. Money comes from the group bonus and from selling the wood.
+  {key = 'wood', name = 'Лесоруб', icon = 'ICON_FA_TREE', inc = {'Лесоруб'}, sell = {'Дрова', 'Древесина'},
+    unit = {'тележка', 'тележки', 'тележек'}, rows = 'Тележки', tip = 'дрова, ДВК, бонусы группы и продажа древесины'},
 }
+F.WOOD_ID, F.DVK_ID = 566, 4032
 -- Spending that belongs to the shift. The first match wins, so repairs go before fines.
 F.SHIFT_COST = {
   {key = 'fuel', name = 'Топливо', icon = 'ICON_FA_GAS_PUMP', pre = {'Топливо'}},
@@ -8444,12 +8576,16 @@ F.SHIFT_COST = {
   {key = 'rent', name = 'Аренда', icon = 'ICON_FA_KEY', pre = {'Аренда'}},
 }
 F.SHIFT_NUM = {'id', 't0', 't1', 'pause', 'pause_at', 'beat', 'inc', 'n', 'prem', 'fuel', 'liters', 'refuel',
-  'repair', 'fine', 'rent', 'goal', 'lvl0', 'lvl', 'tariff', 'last', 'hit', 'auto'}
+  'repair', 'fine', 'rent', 'goal', 'lvl0', 'lvl', 'tariff', 'last', 'hit', 'auto', 'vc', 'wood', 'dvk', 'lost', 'sold',
+  'wood_inv', 'dvk_inv', 'inv', 'pay'}
+-- Shorter lines from older versions: 22 fields before 1.19, 27 in the first 1.19 build.
+F.SHIFT_NUM_OLD = {27, 22}
 F.SHIFT_MAX = 300
 -- Bits of cfg.shift_fields: what the on-screen bar shows.
 F.SHIFT_FIELDS = {
   {1, 'Время смены'}, {2, 'Заработано'}, {4, 'Расходы'}, {8, 'Топливо'}, {16, 'Чистыми'},
-  {32, 'В час'}, {64, 'Заказы и средний чек'}, {128, 'Цель'}, {256, 'С последнего заказа'}, {512, 'Уровень и тариф'},
+  {32, 'В час'}, {64, 'Заказы и средний чек, у лесоруба дрова и ДВК'}, {128, 'Цель'}, {256, 'С последнего заказа'},
+  {512, 'Уровень и тариф'},
 }
 F.shifts = {}
 F.shift_rev = 0
@@ -8458,7 +8594,14 @@ function F.shift_job(key)
   for _, j in ipairs(F.SHIFT_JOBS) do
     if j.key == key then return j end
   end
-  return F.SHIFT_JOBS[#F.SHIFT_JOBS]
+  for _, j in ipairs(F.SHIFT_JOBS) do
+    if j.key == 'any' then return j end
+  end
+end
+
+-- A shift's sums are in the currency of the city it started in.
+function F.shift_m(s, n)
+  return F.fmt_cur(n, s and s.vc == 1) or '$0'
 end
 
 function F.shift_title(s)
@@ -8483,21 +8626,29 @@ end
 
 function F.shift_parse(line)
   if line:sub(1, 2) ~= 'S|' then return nil end
-  local parts, pos = {}, 3
-  for _ = 1, #F.SHIFT_NUM + 1 do
-    local bar = line:find('|', pos, true)
-    if not bar then return nil end
-    parts[#parts + 1] = line:sub(pos, bar - 1)
-    pos = bar + 1
+  local function take(count)
+    local parts, pos = {}, 3
+    for _ = 1, count + 1 do
+      local bar = line:find('|', pos, true)
+      if not bar then return nil end
+      parts[#parts + 1] = line:sub(pos, bar - 1)
+      pos = bar + 1
+    end
+    local s = {job = parts[1], title = F.note_unesc(line:sub(pos))}
+    if not s.job:match('^%a+$') then return nil end
+    for i, k in ipairs(F.SHIFT_NUM) do
+      if i > count then s[k] = 0
+      else
+        local v = tonumber(parts[i + 1])
+        if not v then return nil end
+        s[k] = v
+      end
+    end
+    if s.id <= 0 or s.t0 <= 0 then return nil end
+    return s
   end
-  local s = {job = parts[1], title = F.note_unesc(line:sub(pos))}
-  if not s.job:match('^%a+$') then return nil end
-  for i, k in ipairs(F.SHIFT_NUM) do
-    local v = tonumber(parts[i + 1])
-    if not v then return nil end
-    s[k] = v
-  end
-  if s.id <= 0 or s.t0 <= 0 then return nil end
+  local s = take(#F.SHIFT_NUM)
+  for _, n in ipairs(F.SHIFT_NUM_OLD) do s = s or take(n) end
   return s
 end
 
@@ -8576,7 +8727,8 @@ function F.shift_start(job, title, auto)
   if F.shift then return nil, 'смена уже идёт' end
   local j = F.shift_job(job)
   F.shift_seq = (F.shift_seq or 0) + 1
-  local s = {job = j.key, title = title or '', auto = auto and 1 or 0, goal = math.max(0, tonumber(cfg.shift_goal) or 0)}
+  local s = {job = j.key, title = title or '', auto = auto and 1 or 0, goal = math.max(0, tonumber(cfg.shift_goal) or 0),
+    vc = F.here_vc() and 1 or 0}
   s.id, s.t0 = F.shift_seq, os.time()
   for _, k in ipairs(F.SHIFT_NUM) do s[k] = s[k] or 0 end
   F.shifts[#F.shifts + 1] = s
@@ -8603,14 +8755,28 @@ function F.shift_pause(on)
 end
 
 function F.shift_report(s)
-  local m = function(n) return F.fmt_money(n) or '$0' end
+  local m = function(n) return F.shift_m(s, n) end
   local j = F.shift_job(s.job)
   local parts = {F.shift_title(s) .. ': ' .. F.dur_text(F.shift_secs(s)), 'заработано ' .. m(s.inc)}
   if s.n > 0 then parts[#parts + 1] = s.n .. ' ' .. F.ru_count(s.n, j.unit[1], j.unit[2], j.unit[3]) end
-  if s.fuel > 0 then parts[#parts + 1] = 'топливо ' .. m(s.fuel) end
-  local other = F.shift_costs(s) - s.fuel
-  if other > 0 then parts[#parts + 1] = 'другие расходы ' .. m(other) end
-  parts[#parts + 1] = 'чистыми ' .. m(F.shift_net(s))
+  if j.key == 'wood' then
+    local wood, dvk, exact = F.wood_amounts(s)
+    if wood > 0 then
+      local grp = s.inv == 2 and s.wood_inv or 0
+      parts[#parts + 1] = F.num_text(wood) .. ' дров' .. (grp > 0 and (' (от группы ' .. F.num_text(grp) .. ')') or '')
+        .. (exact and '' or ' (часть без бонусов)')
+    end
+    if dvk then parts[#parts + 1] = 'ДВК ' .. F.num_text(dvk)
+    elseif s.dvk > 0 then parts[#parts + 1] = 'ДВК выпала ' .. s.dvk .. ' ' .. F.ru_count(s.dvk, 'раз', 'раза', 'раз') end
+    local est = F.wood_value(s)
+    if est then parts[#parts + 1] = 'добыто примерно на ' .. m(est) end
+  end
+  if j.key ~= 'wood' then
+    if s.fuel > 0 then parts[#parts + 1] = 'топливо ' .. m(s.fuel) end
+    local other = F.shift_costs(s) - s.fuel
+    if other > 0 then parts[#parts + 1] = 'другие расходы ' .. m(other) end
+    parts[#parts + 1] = 'чистыми ' .. m(F.shift_net(s))
+  end
   local h = F.shift_hour(s)
   if h then parts[#parts + 1] = m(h) .. ' в час' end
   return table.concat(parts, ', ')
@@ -8638,7 +8804,7 @@ function F.shift_stop()
   F.shift_save()
   if cfg.shift_chat == 1 then F.chat_brand('Смена окончена. ' .. F.shift_report(s)) end
   F.toast('sys', {force = true, quiet = true, icon = 'ICON_FA_FLAG_CHECKERED', title = 'Смена окончена: ' .. F.shift_title(s),
-    text = 'Чистыми ' .. (F.fmt_money(F.shift_net(s)) or '$0') .. '  ·  ' .. F.dur_short(F.shift_secs(s)), life = 10})
+    text = 'Чистыми ' .. F.shift_m(s, F.shift_net(s)) .. '  ·  ' .. F.dur_short(F.shift_secs(s)), life = 10})
   return s
 end
 
@@ -8657,32 +8823,40 @@ function F.shift_goal_check(s)
   if s.goal <= 0 or s.hit == 1 or F.shift_net(s) < s.goal then return end
   s.hit = 1
   F.toast('sys', {force = true, icon = 'ICON_FA_TROPHY', title = 'Цель смены выполнена', life = 12,
-    text = 'Чистыми ' .. (F.fmt_money(F.shift_net(s)) or '') .. ' из ' .. (F.fmt_money(s.goal) or '') .. '  ·  ' .. F.dur_short(F.shift_secs(s))})
-  F.chat_brand('Цель смены выполнена: чистыми ' .. (F.fmt_money(F.shift_net(s)) or '') .. ' за ' .. F.dur_short(F.shift_secs(s)))
+    text = 'Чистыми ' .. F.shift_m(s, F.shift_net(s)) .. ' из ' .. F.shift_m(s, s.goal) .. '  ·  ' .. F.dur_short(F.shift_secs(s))})
+  F.chat_brand('Цель смены выполнена: чистыми ' .. F.shift_m(s, F.shift_net(s)) .. ' за ' .. F.dur_short(F.shift_secs(s)))
   F.want_sound()
 end
 
 -- Every ledger record passes here; the running shift takes its job's pay and the car's costs.
 function F.shift_led(r)
   local s = F.shift
-  if not s or r.cur ~= 'sa' then return end
+  if not s or r.cur ~= (s.vc == 1 and 'vc' or 'sa') then return end
   local text = r.text or ''
   local j = F.shift_job(s.job)
   local took = false
-  if r.cat == 'work' then
+  if r.cat == 'sell' and j.sell and F.has_pre(text, j.sell) then
+    -- Wood sold during the shift is what the shift earned.
+    s.inc = s.inc + r.amount
+    s.sold = s.sold + r.amount
+    took = true
+  elseif r.cat == 'work' then
     if j.inc then took = F.has_pre(text, j.inc)
     -- A job's own end line repeats what its payouts already brought.
     else took = not (text:sub(1, #'Смена: ') == 'Смена: ' and s.inc > 0) end
     if took then
       s.inc = s.inc + r.amount
-      if not j.order or F.has_pre(text, {j.order}) then
+      if j.key == 'wood' then
+        -- Carts are counted from the inventory, a group bonus is not a cart.
+      elseif not j.order or F.has_pre(text, {j.order}) then
         s.n = s.n + 1
         s.last = os.time()
       elseif j.key == 'taxi' then
         s.prem = s.prem + r.amount
       end
     end
-  elseif r.cat == 'spend' then
+  elseif r.cat == 'spend' and j.key ~= 'wood' then
+    -- The sawmill is on foot: fuel, repair and fines of the day are not the lumberjack's.
     for _, c in ipairs(F.SHIFT_COST) do
       if F.has_pre(text, c.pre) then
         s[c.key] = s[c.key] + r.amount
@@ -8710,6 +8884,357 @@ function F.shift_auto(job, title)
   F.shift_start(job, title, true)
 end
 
+function F.num_text(n)
+  local s = string.format('%.0f', math.floor(math.abs(tonumber(n) or 0) + 0.5))
+  local out = s:reverse():gsub('(%d%d%d)', '%1 '):reverse():gsub('^ ', '')
+  return ((tonumber(n) or 0) < 0 and '-' or '') .. out
+end
+
+-- Sawmill lines: the chainsaw starts the shift, a cart is counted when its wood reaches the
+-- inventory, a lost cart is not. The group bonus adds wood too; its money comes through the ledger.
+function F.wood_feed(raw)
+  if raw:find('[Лесопилка] Вы арендовали бензопилу', 1, true) then
+    F.shift_auto('wood')
+    return true
+  end
+  local cart = raw:match('%[Лесопилка%] Вы получили тележку с%s*([%d%.,]+)%s*дров')
+  if cart then
+    F.shift_auto('wood')
+    local s = F.shift
+    if s and s.job == 'wood' then F._wood_cart = {n = F.led_num(cart) or 0, at = os.clock()} end
+    return true
+  end
+  local s = F.shift
+  if not s or s.job ~= 'wood' then return false end
+  if raw:find('Тележка с дровами была потеряна', 1, true) then
+    F._wood_cart = nil
+    s.lost = s.lost + 1
+    F.shift_save()
+    return true
+  end
+  local bonus, money = raw:match('доставил дрова! Ваш бонус: %+?([%d%.,]+) дров.-%+%D-([%d][%d%.,]*)')
+  if not bonus then bonus = raw:match('доставил дрова! Ваш бонус: %+?([%d%.,]+) дров') end
+  if bonus then
+    -- Its money is in the ledger from this very line; the wood is counted with the inventory.
+    local q = F.wood_q()
+    q.grp[#q.grp + 1] = {wood = F.led_num(bonus) or 0, money = F.led_num(money or '') or 0, at = os.clock()}
+    return true
+  end
+  return false
+end
+
+-- How the game tells about one delivery, all in the same second (checked on real logs):
+--   own cart:   "+$" at the cash (the pay, it is in no chat line), the wood slot grows by the
+--               cart with all bonuses, the ДВК slot grows; then «добавлен предмет» for each.
+--   group cart: "+$" and wood exactly as the «[Группа] … Ваш бонус: +N дров, +$M» line says.
+-- Every amount comes from the slot that grew; a slot that only moved has no «добавлен» line.
+F.WOOD_WAIT = 1.2
+F.WOOD_SPAN = 3
+
+function F.wood_q()
+  if not F._wq then F._wq = {adds = {}, deltas = {}, money = {}, grp = {}, units = {}} end
+  return F._wq
+end
+
+-- Called for every «добавлен предмет» line.
+function F.wood_item(id)
+  if id ~= F.WOOD_ID and id ~= F.DVK_ID then return end
+  if not F.wood_on() then return end
+  local q = F.wood_q()
+  q.adds[#q.adds + 1] = {id = id, at = os.clock()}
+  F.wood_match()
+end
+
+-- Pairs each «добавлен» line with the slot change of the same item, in order.
+function F.wood_match()
+  local q = F.wood_q()
+  local i = 1
+  while i <= #q.adds do
+    local a = q.adds[i]
+    local hit
+    for k, d in ipairs(q.deltas) do
+      if d.id == a.id and math.abs(d.at - a.at) <= 2 then
+        hit = k
+        break
+      end
+    end
+    if hit then
+      local d = table.remove(q.deltas, hit)
+      table.remove(q.adds, i)
+      q.units[#q.units + 1] = {id = a.id, n = d.n, at = math.min(a.at, d.at)}
+    else
+      i = i + 1
+    end
+  end
+end
+
+function F.wood_take(list, fn)
+  for k, v in ipairs(list) do
+    if fn(v) then return table.remove(list, k) end
+  end
+end
+
+function F.wood_tick()
+  local q = F._wq
+  if not q then return end
+  local now = os.clock()
+  local s = F.wood_on()
+  if not s then
+    F._wq = nil
+    return
+  end
+  F.wood_match()
+  -- A «добавлен» line without a slot change: the amount is not known.
+  for i = #q.adds, 1, -1 do
+    local a = q.adds[i]
+    if now - a.at > 2 then
+      table.remove(q.adds, i)
+      q.units[#q.units + 1] = {id = a.id, at = a.at}
+    end
+  end
+  for i = #q.deltas, 1, -1 do
+    if now - q.deltas[i].at > 2.5 then table.remove(q.deltas, i) end
+  end
+  table.sort(q.units, function(a, b)
+    if a.id ~= b.id then return a.id == F.WOOD_ID end
+    return a.at < b.at
+  end)
+  local changed = false
+  local i = 1
+  while i <= #q.units do
+    local u = q.units[i]
+    if now - u.at < F.WOOD_WAIT then
+      i = i + 1
+    else
+      table.remove(q.units, i)
+      if F.wood_unit(s, u, now) then changed = true end
+    end
+  end
+  for _, list in ipairs({q.money, q.grp}) do
+    for k = #list, 1, -1 do
+      if now - list[k].at > F.WOOD_SPAN + 2 then table.remove(list, k) end
+    end
+  end
+  if changed then F.shift_save() end
+end
+
+function F.wood_unit(s, u, now)
+  local q = F.wood_q()
+  local near = function(v) return math.abs(v.at - u.at) <= F.WOOD_SPAN end
+  if u.id == F.DVK_ID then
+    -- ДВК drops only from an own cart.
+    if not (F._wood_cart or (q.own_at and math.abs(q.own_at - u.at) <= F.WOOD_SPAN)) then return false end
+    s.dvk = s.dvk + 1
+    if u.n then
+      s.dvk_inv = s.dvk_inv + u.n
+      s.inv = 2
+    end
+    return true
+  end
+  -- A group line with the same wood, else the nearest one when the amount is unknown.
+  local g = u.n and F.wood_take(q.grp, function(v) return near(v) and v.wood == u.n end)
+  if not g and not u.n then g = F.wood_take(q.grp, near) end
+  if not g and not F._wood_cart and u.n then
+    -- No cart is waiting: it may still be a group line with a rounded amount.
+    g = F.wood_take(q.grp, near)
+  end
+  if g then
+    local n = u.n or g.wood
+    s.wood = s.wood + n
+    s.wood_inv = s.wood_inv + n
+    if u.n then s.inv = 2 end
+    if g.money > 0 then F.wood_take(q.money, function(v) return near(v) and v.n == g.money end) end
+    return true
+  end
+  local c = F._wood_cart
+  -- Wood from anywhere else (a «Ларец организации» gives 100) is not the shift's.
+  if not c or now - c.at > 900 then return false end
+  F._wood_cart = nil
+  q.own_at = u.at
+  s.n = s.n + 1
+  s.last = os.time()
+  s.wood = s.wood + (u.n or c.n)
+  if u.n then s.inv = 2 else s.guess = (s.guess or 0) + 1 end
+  -- The pay is the "+$" of this second that no group line claims.
+  local best
+  for k, v in ipairs(q.money) do
+    if near(v) and (not best or v.n > q.money[best].n) then best = k end
+  end
+  if best then
+    local m = table.remove(q.money, best)
+    F.led_add('work', m.n, 'Лесоруб: тележка', 0, '', s.vc == 1 and 'vc' or 'sa')
+    s.pay = s.pay + m.n
+  end
+  return true
+end
+
+-- The price of one piece from the player's own last sale of it, in the shift's currency.
+function F.wood_price(prefix, cur)
+  local led = F.led_state()
+  local key = prefix .. '|' .. cur .. '|' .. led.rev
+  F._wood_pc = F._wood_pc or {}
+  if F._wood_pc[key] ~= nil then return F._wood_pc[key] or nil end
+  local price = false
+  for i = #led.list, 1, -1 do
+    local r = led.list[i]
+    if r.cat == 'sell' and r.cur == cur and (r.qty or 0) > 0 and (r.text or ''):sub(1, #prefix) == prefix then
+      price = r.amount / r.qty
+      break
+    end
+  end
+  F._wood_pc[key] = price
+  return price or nil
+end
+
+-- What the wood and ДВК of a shift would bring at those prices.
+function F.wood_value(s)
+  local cur = s.vc == 1 and 'vc' or 'sa'
+  local pw, pd = F.wood_price('Дрова', cur), F.wood_price('Древесина высшего качества', cur)
+  if not pw and not pd then return nil end
+  local wood, dvk = F.wood_amounts(s)
+  local v = wood * (pw or 0) + (dvk or s.dvk) * (pd or 0)
+  if v <= 0 then return nil end
+  return v
+end
+
+-- The chat tells only the cart's base amount and that ДВК dropped, not how much: bonuses of
+-- accessories and skins come on top (in real logs the sold wood was ~2.5 times the carts).
+-- The inventory window reports the real amounts, so when it did, those are used.
+-- Returns wood, ДВК pieces (nil when only drops are known) and whether the numbers are exact.
+-- inv 2 (1.19): wood is the exact total, wood_inv the group's part of it, dvk_inv exact pieces.
+-- inv 1 was an early 1.19 build that summed the slots and counted a moved stack as new.
+function F.wood_amounts(s)
+  if s.inv == 2 then
+    return s.wood, s.dvk_inv > 0 and s.dvk_inv or nil, (s.guess or 0) == 0
+  end
+  return s.wood, nil, false
+end
+
+-- What the game itself sends about the sawmill, kept for checking (300 lines at most per run).
+function F.wood_dbg(kind, text)
+  F._wood_dbg_n = (F._wood_dbg_n or 0) + 1
+  if F._wood_dbg_n > 300 then return end
+  pcall(function()
+    local f = io.open(F.cfg_dir() .. '\\fhelp_wood_debug.txt', 'a')
+    if not f then return end
+    f:write(os.date('%Y-%m-%d %H:%M:%S'), ' ', kind, ' ', (tostring(text):sub(1, 800):gsub('[\r\n]', ' ')), '\n')
+    f:close()
+  end)
+end
+
+function F.wood_on()
+  local s = F.shift
+  return s and s.job == 'wood' and s or nil
+end
+
+-- Slots of wood and ДВК: slot -> {id, n}. Changes come even while the inventory is closed.
+-- They are kept on disk, a script restart does not bring the full list again.
+F.wood_inv = {slots = {}, loaded = false}
+-- A new slot bigger than this is a stack that moved or was never seen, not what just came.
+F.WOOD_NEW_MAX = {[566] = 5000, [4032] = 100}
+
+function F.wood_inv_load()
+  local st = F.wood_inv
+  st.loaded, st.slots = true, {}
+  for _, line in ipairs(F.read_lines('fhelp_wood_inv.txt')) do
+    local slot, id, n = line:match('^(%d+)|(%d+)|(%d+)$')
+    if slot then st.slots[tonumber(slot)] = {id = tonumber(id), n = tonumber(n)} end
+  end
+end
+
+function F.wood_inv_save()
+  local out = {}
+  for slot, v in pairs(F.wood_inv.slots) do out[#out + 1] = slot .. '|' .. v.id .. '|' .. v.n end
+  table.sort(out)
+  F.write_lines('fhelp_wood_inv.txt', out)
+end
+
+function F.wood_inv_event(v)
+  local d = v.data
+  if type(d) ~= 'table' or tonumber(d.type) ~= 1 or type(d.items) ~= 'table' then return end
+  local act = tonumber(v.action)
+  if act ~= 0 and act ~= 2 then return end
+  local st = F.wood_inv
+  if not st.loaded then F.wood_inv_load() end
+  local s = F.wood_on()
+  local touched = false
+  for _, it in pairs(d.items) do
+    local slot = type(it) == 'table' and tonumber(it.slot)
+    if slot then
+      local id = tonumber(it.item)
+      local old = st.slots[slot]
+      if id == F.WOOD_ID or id == F.DVK_ID then
+        local n = tonumber(it.amount) or tonumber(it.count) or 1
+        st.slots[slot] = {id = id, n = n}
+        touched = true
+        if s then F.wood_dbg('inv', 'act=' .. act .. ' ' .. F.json_encode_safe(it)) end
+        -- A full list is only the starting point.
+        if s and act == 2 then
+          local grew
+          if old and old.id == id then
+            if n > old.n then grew = n - old.n end
+          elseif n <= F.WOOD_NEW_MAX[id] then
+            grew = n
+          end
+          if grew then
+            local q = F.wood_q()
+            q.deltas[#q.deltas + 1] = {id = id, n = grew, at = os.clock()}
+            F.wood_match()
+          end
+        end
+      elseif old then
+        st.slots[slot] = nil
+        touched = true
+      end
+    end
+  end
+  if touched then F.wood_inv_save() end
+end
+
+function F.json_encode_safe(t)
+  local parts = {}
+  for k, v in pairs(t) do
+    if type(v) ~= 'table' then parts[#parts + 1] = tostring(k) .. '=' .. tostring(v) end
+  end
+  table.sort(parts)
+  return table.concat(parts, ' ')
+end
+
+-- event.player.addMoney is the "+$N" that pops up at the cash. Right after our own cart it is the pay
+-- for that cart; a group bonus of the same sum is already in the ledger from the chat.
+function F.wood_money(n)
+  local s = F.wood_on()
+  if not s or not n or n <= 0 then return end
+  F.wood_dbg('money', n)
+  local q = F.wood_q()
+  q.money[#q.money + 1] = {n = n, at = os.clock()}
+end
+
+function F.wood_packet(text)
+  if text:find('event.api.setToken', 1, true) then
+    -- The interface learns the server here: 201 is Vice City, 200 its test server.
+    local id = tonumber(text:match('"server"%s*:%s*"?(%d+)'))
+    if id then F.here_set(id == 201 or id == 200) end
+    return
+  end
+  if text:find('showSawmillNotification', 1, true) then
+    F.wood_dbg('note', text:match("showSawmillNotification['\"]%s*,%s*`(.-)`") or text)
+    return
+  end
+  if text:find('event.player.addMoney', 1, true) then
+    local n = tonumber(text:match("addMoney['\"]%s*,%s*`%s*%[?%s*\"?(%-?%d+)"))
+    F.wood_money(n)
+    return
+  end
+  if not text:find('playerInventory', 1, true) then return end
+  for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
+    local v = F.json_value(body, 1)
+    if type(v) == 'table' and v.action == nil then v = v[1] end
+    if type(v) == 'string' then v = F.json_value(v, 1) end
+    if type(v) == 'table' then F.wood_inv_event(v) end
+  end
+end
+
 function F.shift_feed(text)
   local raw = F.game_text(text)
   if raw == '' then return end
@@ -8731,6 +9256,7 @@ function F.shift_feed(text)
     F.shift_auto('taxi')
     return
   end
+  if F.wood_feed(raw) then return end
   local what = raw:match('Вы начали работу ([^%.!]+)')
   if what then
     F.shift_auto('any', 'Работа: ' .. F.trim(what))
@@ -8760,7 +9286,7 @@ function F.shift_tick(now)
   end
 end
 
--- /fshift: status or resume  ·  /fshift такси|рейсы|пицца|любая  ·  /fshift пауза  ·  /fshift стоп
+-- /fshift: status or resume  ·  /fshift такси|рейсы|пицца|лесоруб|любая  ·  /fshift пауза  ·  /fshift стоп
 function F.shift_cmd(arg)
   local low = F.lower_fast(F.trim(F.game_text(arg or '')))
   local s = F.shift
@@ -8777,7 +9303,7 @@ function F.shift_cmd(arg)
   end
   if low == '' then
     if not s then
-      F.chat_brand('Смена не идёт. Начать: /fshift такси, /fshift рейсы, /fshift пицца или /fshift любая')
+      F.chat_brand('Смена не идёт. Начать: /fshift такси, /fshift рейсы, /fshift пицца, /fshift лесоруб или /fshift любая')
       return
     end
     if s.pause_at > 0 then
@@ -8794,7 +9320,7 @@ function F.shift_cmd(arg)
     if low == j.key or name:find(low, 1, true) == 1 then pick = j break end
   end
   if not pick then
-    F.chat_brand('Не понял. /fshift такси|рейсы|пицца|любая, /fshift пауза, /fshift стоп')
+    F.chat_brand('Не понял. /fshift такси|рейсы|пицца|лесоруб|любая, /fshift пауза, /fshift стоп')
     return
   end
   local ok, err = F.shift_start(pick.key)
@@ -8817,26 +9343,45 @@ end
 function F.shift_rows(s, all)
   local now = os.time()
   local j = F.shift_job(s.job)
-  local m = function(n) return F.fmt_money(n) or '$0' end
+  local m = function(n) return F.shift_m(s, n) end
   local rows = {}
   local function add(bit, label, value, extra)
     if all or F.shift_field_on(bit) then rows[#rows + 1] = {label, value, extra} end
   end
   add(1, 'Время', F.dur_text(F.shift_secs(s, now)) .. (s.pause_at > 0 and '  пауза' or ''))
   add(2, 'Заработано', m(s.inc))
-  add(4, 'Расходы', F.shift_costs(s) > 0 and ('-' .. m(F.shift_costs(s))) or '$0')
-  add(8, 'Топливо', (s.fuel > 0 and ('-' .. m(s.fuel)) or '$0') .. (s.liters > 0 and string.format('  %g л', s.liters) or ''))
-  add(16, 'Чистыми', m(F.shift_net(s)), {strong = true, bad = F.shift_net(s) < 0})
+  if j.key == 'wood' then
+    local est = F.wood_value(s)
+    if est or all then add(2, 'Добыто на', est and ('~' .. m(est)) or 'нет цены') end
+  end
+  if j.key ~= 'wood' then
+    add(4, 'Расходы', F.shift_costs(s) > 0 and ('-' .. m(F.shift_costs(s))) or m(0))
+    add(8, 'Топливо', (s.fuel > 0 and ('-' .. m(s.fuel)) or m(0)) .. (s.liters > 0 and string.format('  %g л', s.liters) or ''))
+    add(16, 'Чистыми', m(F.shift_net(s)), {strong = true, bad = F.shift_net(s) < 0})
+  end
   local h = F.shift_hour(s, now)
   add(32, 'В час', h and m(h) or '—')
-  if s.n > 0 or all then
+  if j.key == 'wood' then
+    local wood, dvk, exact = F.wood_amounts(s)
+    add(64, 'Тележки', tostring(s.n) .. (s.lost > 0 and ('  ·  потеряно ' .. s.lost) or ''))
+    local grp = s.inv == 2 and s.wood_inv or 0
+    local own = wood - grp
+    add(64, 'Дрова', F.num_text(wood) .. (exact and '' or ' *'))
+    if s.n > 0 and own > 0 then add(64, 'Дров за тележку', '~' .. F.num_text(own / s.n)) end
+    if grp > 0 then add(64, 'От группы', F.num_text(grp)) end
+    if dvk then
+      add(64, 'ДВК', F.num_text(dvk))
+      if s.n > 0 then add(64, 'ДВК за тележку', string.format('~%.1f', dvk / s.n)) end
+    else add(64, 'ДВК', 'выпала ' .. s.dvk .. ' ' .. F.ru_count(s.dvk, 'раз', 'раза', 'раз')) end
+    if s.pay > 0 then add(2, 'За тележки', m(s.pay)) end
+  elseif s.n > 0 or all then
     add(64, j.rows, tostring(s.n) .. (s.n > 0 and ('  ·  ~' .. m((s.inc - s.prem) / s.n)) or ''))
   end
   if s.goal > 0 then
     local share = math.max(0, math.min(1, F.shift_net(s) / s.goal))
     add(128, 'Цель', string.format('%d%% из %s', math.floor(share * 100), m(s.goal)), {share = share})
   end
-  if s.last > 0 then add(256, 'Последний заказ', F.dur_short(now - s.last) .. ' назад') end
+  if s.last > 0 then add(256, j.key == 'wood' and 'Последняя тележка' or 'Последний заказ', F.dur_short(now - s.last) .. ' назад') end
   if s.lvl > 0 then
     add(512, 'Уровень', s.lvl .. (s.lvl0 > 0 and s.lvl > s.lvl0 and string.format(' (+%d)', s.lvl - s.lvl0) or '')
       .. (s.tariff > 0 and ('  ·  тариф ' .. m(s.tariff)) or ''))
@@ -8863,7 +9408,12 @@ function F.draw_shift_bar()
   if sw < 100 then sw = 1366 end
   if sh < 100 then sh = 768 end
   local pad, head, row = 12 * ts, 30 * ts, 22 * ts
-  local ww = math.floor(250 * ts)
+  -- Wide enough for the longest label and value side by side, they must not run into each other.
+  local need = 0
+  for _, r in ipairs(rows) do
+    need = math.max(need, (F.text_w(font_main, r[1]) + F.text_w(font_main, r[2]) + 18) * ts)
+  end
+  local ww = math.floor(math.max(250 * ts, need + pad * 2))
   local wh = head + #rows * row + pad
   local x, y = cfg.shift_x, cfg.shift_y
   if x < 0 then x = 24 end
@@ -8936,11 +9486,11 @@ function F.shift_card()
       for i, j in ipairs(F.SHIFT_JOBS) do if j.key == v then cfg.shift_job = i end end
       dirty = true
     end
-    F.hint('Считается: ' .. F.shift_job(F.shift_pick).tip .. '. Расходы: АЗС, канистры, ремонт, штрафы, аренда.')
+    F.hint('Считается: ' .. F.shift_job(F.shift_pick).tip .. (F.shift_pick == 'wood' and '.' or '. Расходы: АЗС, канистры, ремонт, штрафы, аренда.'))
     imgui.Spacing()
     if F.button('Начать смену##shiftgo', 200, 0, 'primary') then F.shift_start(F.shift_pick) end
     imgui.Spacing()
-    F.chest_flag('shiftauto', 'Начинать само', 'shift_auto', 'По строке «Вы начали работу…» в чате. Такси узнаётся отдельно')
+    F.chest_flag('shiftauto', 'Начинать само', 'shift_auto', 'По строке «Вы начали работу…» в чате. Такси и лесопилка узнаются отдельно')
     F.card_end()
     return
   end
@@ -8953,22 +9503,31 @@ function F.shift_card()
   end
   local icons = {['Время'] = 'ICON_FA_STOPWATCH', ['Заработано'] = 'ICON_FA_ARROW_DOWN', ['Расходы'] = 'ICON_FA_ARROW_UP',
     ['Топливо'] = 'ICON_FA_GAS_PUMP', ['Чистыми'] = 'ICON_FA_EQUALS', ['В час'] = 'ICON_FA_TACHOMETER_ALT',
-    ['Последний заказ'] = 'ICON_FA_HISTORY', ['Уровень'] = 'ICON_FA_LEVEL_UP_ALT'}
+    ['Последний заказ'] = 'ICON_FA_HISTORY', ['Уровень'] = 'ICON_FA_LEVEL_UP_ALT', ['Добыто на'] = 'ICON_FA_TAGS',
+    ['Тележки'] = 'ICON_FA_DOLLY', ['Дрова'] = 'ICON_FA_TREE', ['ДВК'] = 'ICON_FA_GEM', ['Последняя тележка'] = 'ICON_FA_HISTORY',
+    ['Дров за тележку'] = 'ICON_FA_TREE', ['От группы'] = 'ICON_FA_USERS', ['ДВК за тележку'] = 'ICON_FA_GEM',
+    ['За тележки'] = 'ICON_FA_DOLLY'}
   for _, t in ipairs(tiles) do t[1] = icons[t[2]] or F.shift_job(s.job).icon end
   F.tile_grid('shift', tiles, 180)
   local other = {}
   for _, c in ipairs(F.SHIFT_COST) do
-    if c.key ~= 'fuel' and s[c.key] > 0 then other[#other + 1] = c.name .. ' ' .. F.fmt_money(s[c.key]) end
+    if c.key ~= 'fuel' and s[c.key] > 0 then other[#other + 1] = c.name .. ' ' .. F.shift_m(s, s[c.key]) end
   end
-  local fuel = s.refuel > 0 and (s.refuel .. ' ' .. F.ru_count(s.refuel, 'заправка', 'заправки', 'заправок')) or 'заправок не было'
-  F.hint('Топливо: ' .. fuel .. (#other > 0 and ('. Ещё: ' .. table.concat(other, ', ')) or '') .. '.')
+  if s.job == 'wood' and s.n > 0 and not select(3, F.wood_amounts(s)) then
+    F.hint('Часть тележек посчитана по чату: там только база тележки, без бонусов аксессуаров и скинов. '
+      .. 'Если так и останется, открой инвентарь один раз: fHelper запомнит, сколько у тебя дров и ДВК, и дальше будет считать точно.')
+  end
+  if s.job ~= 'wood' then
+    local fuel = s.refuel > 0 and (s.refuel .. ' ' .. F.ru_count(s.refuel, 'заправка', 'заправки', 'заправок')) or 'заправок не было'
+    F.hint('Топливо: ' .. fuel .. (#other > 0 and ('. Ещё: ' .. table.concat(other, ', ')) or '') .. '.')
+  end
   imgui.Spacing()
   -- Goal
   local w = F.inner_w()
   if s.goal > 0 then
     local share = math.max(0, math.min(1, F.shift_net(s) / s.goal))
     local p = imgui.GetCursorScreenPos()
-    F.text_at(font_main, 16, p.x, p.y, F.col('text', 200), 'Цель: ' .. F.fmt_money(s.goal) .. (s.hit == 1 and '  ·  выполнена' or ''))
+    F.text_at(font_main, 16, p.x, p.y, F.col('text', 200), 'Цель: ' .. F.shift_m(s, s.goal) .. (s.hit == 1 and '  ·  выполнена' or ''))
     local pct = string.format('%d%%', math.floor(share * 100))
     F.text_at(font_main, 16, p.x + w - F.text_w(font_main, pct), p.y, F.col('accent_hi'), pct)
     F.round_rect(p.x, p.y + F.s(24), w, F.s(6), F.col('text', 18), nil, 3)
@@ -8999,12 +9558,15 @@ function F.shift_card()
   F.card_end()
 end
 
+-- Totals of the finished shifts in the currency Income shows.
 function F.shift_stats()
-  local key = F.shift_rev
+  local vc = F.inc_cur() == 'vc' and 1 or 0
+  local key = F.shift_rev .. '|' .. vc
   if F._shift_sk == key and F._shift_st then return F._shift_st end
-  local st = {n = 0, net = 0, secs = 0, best = nil}
+  local st = {n = 0, net = 0, secs = 0, best = nil, all = 0}
   for _, s in ipairs(F.shifts) do
-    if s.t1 > 0 then
+    if s.t1 > 0 then st.all = st.all + 1 end
+    if s.t1 > 0 and (s.vc or 0) == vc then
       st.n = st.n + 1
       st.net = st.net + F.shift_net(s)
       st.secs = st.secs + F.shift_secs(s)
@@ -9023,9 +9585,9 @@ function F.shift_row(s, i)
   local del_x = p.x + w - ib
   if i % 2 == 0 then F.round_rect(p.x - 6, p.y, w + 12, h - 4, F.col('side', 90), nil, 8) end
   local net = F.shift_net(s)
-  local money = F.fmt_money(net) or '$0'
+  local money = F.shift_m(s, net)
   local hr = F.shift_hour(s)
-  local right2 = hr and ((F.fmt_money(hr) or '') .. ' в час') or ''
+  local right2 = hr and (F.shift_m(s, hr) .. ' в час') or ''
   local mw = math.max(F.text_w(font_bold, money), F.text_w(font_main, right2))
   local rx = del_x - F.s(12) - mw
   local tw = rx - p.x - F.s(16)
@@ -9033,7 +9595,12 @@ function F.shift_row(s, i)
   F.text_at(font_main, 16, p.x + 4, p.y + F.s(4), F.col('text', 230), F.fit_text(font_main, F.faico(j.icon) .. '  ' .. F.shift_title(s), tw))
   local sub = F.short_stamp(os.date('%Y-%m-%d %H:%M:%S', s.t0)) .. '  ·  ' .. F.dur_short(F.shift_secs(s))
   if s.n > 0 then sub = sub .. '  ·  ' .. s.n .. ' ' .. F.ru_count(s.n, j.unit[1], j.unit[2], j.unit[3]) end
-  if s.fuel > 0 then sub = sub .. '  ·  топливо ' .. F.fmt_money(s.fuel) end
+  if s.job == 'wood' then
+    local wood, dvk = F.wood_amounts(s)
+    if wood > 0 then sub = sub .. '  ·  ' .. F.num_text(wood) .. ' дров' end
+    if (dvk or s.dvk) > 0 then sub = sub .. '  ·  ДВК ' .. F.num_text(dvk or s.dvk) end
+  end
+  if s.fuel > 0 and s.job ~= 'wood' then sub = sub .. '  ·  топливо ' .. F.shift_m(s, s.fuel) end
   F.text_at(font_main, 16, p.x + 4, p.y + F.s(24), F.col('text', 120), F.fit_text(font_main, sub, tw))
   F.text_at(font_bold, 18, del_x - F.s(12) - F.text_w(font_bold, money), p.y + F.s(3), net < 0 and F.col('bad') or F.col('accent_hi'), money)
   if right2 ~= '' then F.text_at(font_main, 16, del_x - F.s(12) - F.text_w(font_main, right2), p.y + F.s(24), F.col('text', 120), right2) end
@@ -9045,8 +9612,8 @@ end
 
 function F.shift_history()
   local st = F.shift_stats()
-  if st.n == 0 then return end
-  F.card_begin('История смен', nil, 'ICON_FA_HISTORY')
+  if st.all == 0 then return end
+  F.card_begin('История смен', st.n < st.all and 'Итоги — только в выбранной валюте' or nil, 'ICON_FA_HISTORY')
   F.tile_grid('shifts', {
     {'ICON_FA_LIST', 'Смен', tostring(st.n)},
     {'ICON_FA_EQUALS', 'Всего чистыми', F.fmt_money(st.net)},
@@ -9064,7 +9631,7 @@ function F.shift_history()
       if n >= 15 then break end
     end
   end
-  if st.n > 15 then F.hint('Показаны последние 15 из ' .. st.n) end
+  if st.all > 15 then F.hint('Показаны последние 15 из ' .. st.all) end
   if del then F.shift_del(del) end
   F.card_end()
 end
@@ -9127,9 +9694,10 @@ function F.period_range(key)
   return '', '9999'
 end
 
-function F.led_stats(from, to)
+function F.led_stats(from, to, cur)
   local led, pay = F.led_state(), F.pay_state()
-  local key = from .. '|' .. to .. '|' .. led.rev .. '|' .. (pay.rev or 0) .. '|' .. #pay.list
+  cur = cur or F.inc_cur()
+  local key = from .. '|' .. to .. '|' .. led.rev .. '|' .. (pay.rev or 0) .. '|' .. #pay.list .. '|' .. cur
   F._stats_c = F._stats_c or {}
   if F._stats_c[key] then return F._stats_c[key] end
   local s = {pay = 0, pay_n = 0, work = 0, sell = 0, buy = 0, spend = 0, other = 0, ops = 0, days = {}, hours = {}}
@@ -9152,7 +9720,7 @@ function F.led_stats(from, to)
   for i = 1, #pay.list do
     local r = pay.list[i]
     local d = r.t or ''
-    if d >= from and d <= to then
+    if d >= from and d <= to and (r.cur or 'sa') == cur then
       s.pay = s.pay + (r.total or 0)
       s.pay_n = s.pay_n + 1
       bucket(d, r.total or 0, 0)
@@ -9171,7 +9739,7 @@ function F.led_stats(from, to)
   for i = 1, #led.list do
     local r = led.list[i]
     local d = r.t
-    if d >= from and d <= to and r.cur == 'sa' then
+    if d >= from and d <= to and r.cur == cur then
       s[r.cat] = s[r.cat] + r.amount
       s.ops = s.ops + 1
       if r.cat == 'buy' or r.cat == 'spend' then
@@ -9200,19 +9768,20 @@ function F.led_stats(from, to)
   return s
 end
 
-function F.led_view(cat, from, to, q)
+function F.led_view(cat, from, to, q, cur)
   local led = F.led_state()
-  local key = tostring(cat) .. '|' .. from .. '|' .. to .. '|' .. q .. '|' .. led.rev
+  cur = cur or F.inc_cur()
+  local key = tostring(cat) .. '|' .. from .. '|' .. to .. '|' .. q .. '|' .. led.rev .. '|' .. cur
   if F._view_key == key then return F._view end
   local low = F.lower_fast(q)
   local out = {rows = {}, sum = 0, n = 0}
   for i = #led.list, 1, -1 do
     local r = led.list[i]
     local d = r.t
-    if (not cat or r.cat == cat) and d >= from and d <= to then
+    if (not cat or r.cat == cat) and d >= from and d <= to and r.cur == cur then
       if low == '' or F.lower_fast(r.text .. ' ' .. r.who):find(low, 1, true) then
         out.n = out.n + 1
-        if r.cur == 'sa' then out.sum = out.sum + r.amount end
+        out.sum = out.sum + r.amount
         if #out.rows < 200 then out.rows[#out.rows + 1] = r end
       end
     end
@@ -9258,11 +9827,14 @@ end
 
 function F.income_over(from, to)
   local s = F.led_stats(from, to)
-  F.card_begin('Счета сейчас', nil, 'ICON_FA_WALLET')
+  -- The other city's accounts wait in loc2_* until the next flight.
+  local here = (F.inc_cur() == 'vc') == F.here_vc()
+  F.card_begin('Счета сейчас', not here and (F.inc_cur() == 'vc' and 'Vice City: как было, когда ты там был'
+    or 'Сан-Андреас: как было перед вылетом') or nil, 'ICON_FA_WALLET')
   F.tile_grid('acc', {
-    {'ICON_FA_WALLET', 'Наличные', live.money},
-    {'ICON_FA_UNIVERSITY', 'Банк', F.fmt_saved('bank')},
-    {'ICON_FA_PIGGY_BANK', 'Депозит', F.fmt_saved('depo')},
+    {'ICON_FA_WALLET', 'Наличные', here and live.money or F.fmt_saved('loc2_money')},
+    {'ICON_FA_UNIVERSITY', 'Банк', F.fmt_saved(here and 'bank' or 'loc2_bank')},
+    {'ICON_FA_PIGGY_BANK', 'Депозит', F.fmt_saved(here and 'depo' or 'loc2_depo')},
   }, 200)
   F.card_end()
   F.card_begin('Итоги периода', nil, 'ICON_FA_CHART_LINE')
@@ -9348,12 +9920,31 @@ function F.draw_income()
   local from, to = F.period_range(F.inc_period)
   if F.inc_period == 'range' then F.rng_card()
   else F.hint(F.range_label(from, to)) end
+  if F.vc_known() and F.inc_tab ~= 'items' then
+    imgui.Spacing()
+    local here = F.here_vc() and 'vc' or 'sa'
+    local cur = F.segment('inccur', {
+      {'sa', '$  Сан-Андреас' .. (here == 'sa' and '  ·  ты здесь' or '')},
+      {'vc', 'VC$  Vice City' .. (here == 'vc' and '  ·  ты здесь' or '')},
+    }, F.inc_cur())
+    if cur then
+      cfg.inc_cur = cur == 'vc' and 1 or 0
+      dirty = true
+    end
+  end
   imgui.Spacing()
-  if F.inc_tab == 'pay' then F.income_paydays(from, to)
-  elseif F.inc_tab == 'items' then F.income_items(from, to)
-  elseif F.inc_tab == 'over' then F.income_over(from, to)
-  elseif F.inc_tab == 'work' then F.income_work(from, to)
-  else F.income_list(F.inc_tab, from, to) end
+  -- Every sum on the page is in the chosen city's currency.
+  local old = F._cur_vc
+  F._cur_vc = F.inc_cur() == 'vc'
+  local ok, err = pcall(function()
+    if F.inc_tab == 'pay' then F.income_paydays(from, to)
+    elseif F.inc_tab == 'items' then F.income_items(from, to)
+    elseif F.inc_tab == 'over' then F.income_over(from, to)
+    elseif F.inc_tab == 'work' then F.income_work(from, to)
+    else F.income_list(F.inc_tab, from, to) end
+  end)
+  F._cur_vc = old
+  if not ok then error(err, 0) end
 end
 
 -- Own range: numbers YYYYMMDDHHMM in the config.
@@ -9423,6 +10014,28 @@ function F.rng_open(which)
   local y, m, _, h, mi = F.rng_parts(which == 'from' and cfg.inc_from or cfg.inc_to)
   F.rng_view = {y, m}
   if ui.rng_h then ui.rng_h[0], ui.rng_m[0] = h, mi end
+  if ui.rng_time then F.buf_set(ui.rng_time, string.format('%02d:%02d', h, mi), 32) end
+end
+
+-- Typed time: "14:30", "1430", "9.05", "14", or with a day: "09.11 14:30", "09.11.2026 14:30".
+-- Returns the full stamp parts, the day defaults to the one picked in the calendar.
+function F.rng_parse(text, y, m, d)
+  local s = F.trim(tostring(text or '')):gsub('%s+', ' ')
+  if s == '' then return nil end
+  local dd, mm, yy, rest = s:match('^(%d%d?)[%./%-](%d%d?)[%./%-](%d%d%d%d) (.+)$')
+  if not dd then dd, mm, rest = s:match('^(%d%d?)[%./%-](%d%d?) (.+)$') end
+  if dd then
+    d, m = tonumber(dd), tonumber(mm)
+    if yy then y = tonumber(yy) end
+    s = rest
+  end
+  local h, mi = s:match('^(%d%d?)[:%.%- ]?(%d%d)$')
+  if not h then h = s:match('^(%d%d?)$') mi = h and '0' end
+  h, mi = tonumber(h), tonumber(mi)
+  if not h or h > 23 or mi > 59 then return nil end
+  local n = F.rng_make(y, m, d, h, mi)
+  if not F.rng_valid(n) then return nil end
+  return n
 end
 
 function F.rng_short(n)
@@ -9589,20 +10202,31 @@ function F.rng_calendar(which)
   end
   F.advance(p, w, head + F.s(28) + rows * ch_)
   imgui.Spacing()
-  imgui.PushItemWidth(math.floor((w - 8) / 2))
-  local hc = imgui.SliderFloat('##rngh', ui.rng_h, 0, 23, 'Час: %.0f')
+  -- The time is typed: hours and minutes, optionally with a day before them.
+  local typed = F.buf_get(ui.rng_time)
+  local enter = F.field('##rngtime', 'Время, например 14:30 или 09.11 14:30', ui.rng_time, 32,
+    math.max(F.s(160), w - F.s(130) - 8), 'rng_time', imgui.InputTextFlags.EnterReturnsTrue)
   imgui.SameLine(0, 8)
-  local mc = imgui.SliderFloat('##rngm', ui.rng_m, 0, 59, 'Минуты: %.0f')
-  imgui.PopItemWidth()
-  if hc or mc then
-    local h = math.max(0, math.min(23, math.floor(ui.rng_h[0] + 0.5)))
-    local mi = math.max(0, math.min(59, math.floor(ui.rng_m[0] + 0.5)))
-    F.rng_set(which, F.rng_make(cy, cm, cd, h, mi))
+  local put = F.button('Поставить##rngput', 130, 0, 'primary')
+  local n = F.rng_parse(typed, cy, cm, cd)
+  if F.trim(typed) ~= '' and not n then
+    F.hint('Не понял время. Пиши часы и минуты: 14:30, 1430, 9.05 — или с днём: 09.11 14:30')
+  elseif n and n ~= cur then
+    F.hint('Будет: ' .. F.rng_short(n) .. '. Нажми Enter или «Поставить»')
+  end
+  if (enter or put) and n then
+    F.rng_set(which, n)
+    local y, m, _, h, mi = F.rng_parts(n)
+    F.rng_view = {y, m}
+    ui.rng_h[0], ui.rng_m[0] = h, mi
+  elseif (enter or put) then
+    F.notify('Не понял время, пример: 14:30', true)
   end
   imgui.Spacing()
   local function at(h, mi)
     F.rng_set(which, F.rng_make(cy, cm, cd, h, mi))
     ui.rng_h[0], ui.rng_m[0] = h, mi
+    F.buf_set(ui.rng_time, string.format('%02d:%02d', h, mi), 32)
   end
   if F.button('Начало дня##rng0', 140, 0) then at(0, 0) end
   imgui.SameLine(0, 8)
@@ -9847,6 +10471,10 @@ function F.item_got(id, qty, src, name)
       f:close()
     end
   end)
+  if src == 'inv' then
+    local ok, err = pcall(F.wood_item, id)
+    if not ok then F.feed_err('смена', err) end
+  end
   F.toast('item', {
     key = 'item' .. (id > 0 and tostring(id) or r.name), item = id > 0 and id or nil,
     icon = 'ICON_FA_BOX_OPEN', title = F.ITL_SRC[src] or 'Предмет', text = r.name, qty = qty,
@@ -9940,9 +10568,11 @@ function F.item_row(name, id, sub, right, i, tip, fn)
   F.text_at(font_main, 16, tx, p.y + F.s(4), F.col('text', 230), F.fit_text(font_main, name, tw))
   F.text_at(font_main, 16, tx, p.y + F.s(24), F.col('text', 120), F.fit_text(font_main, sub, tw))
   F.text_at(font_bold, 18, p.x + w - rw - 4, p.y + (h - 4 - F.s(18)) / 2 - 1, F.col('accent_hi'), right)
-  if hovered then F.tip(tip or (id > 0 and 'Нажми, чтобы скопировать код предмета для чата' or 'Нажми, чтобы скопировать название')) end
+  if hovered then F.tip(tip or (id > 0 and 'Нажми, чтобы открыть карточку предмета' or 'Нажми, чтобы скопировать название')) end
   if clicked then
-    if fn then fn() else F.note_copy(id > 0 and (':item' .. id .. ':') or name) end
+    if fn then fn()
+    elseif id > 0 then F.item_open(id)
+    else F.note_copy(name) end
   end
   F.advance(p, w, h)
 end
@@ -10456,17 +11086,18 @@ function F.toast_pay(rec, extra, why)
   local st = F.pay_state()
   local today = os.date('%Y-%m-%d')
   local sum, n = 0, 0
+  local cur = rec.cur or 'sa'
   for i = 1, #st.list do
     local r = st.list[i]
-    if (r.t or ''):sub(1, 10) == today then
+    if (r.t or ''):sub(1, 10) == today and (r.cur or 'sa') == cur then
       sum, n = sum + (r.total or 0), n + 1
     end
   end
-  local text = 'Сегодня ' .. n .. ' ' .. F.ru_count(n, 'пейдей', 'пейдея', 'пейдеев') .. ': ' .. (F.fmt_money(sum) or '—')
+  local text = 'Сегодня ' .. n .. ' ' .. F.ru_count(n, 'пейдей', 'пейдея', 'пейдеев') .. ': ' .. (F.fmt_cur(sum, cur == 'vc') or '—')
   if (rec.az or 0) ~= 0 then text = text .. '  ·  ' .. (rec.az > 0 and '+' or '') .. rec.az .. ' AZ' end
   F.toast('pay', {
     key = 'pay' .. tostring(rec.t), icon = 'ICON_FA_COINS', title = extra and ('Пейдей, доплата: ' .. tostring(why or '')) or 'Пейдей',
-    text = text, amount = extra or rec.total,
+    text = text, amount = extra or rec.total, vc = cur == 'vc',
   })
 end
 
@@ -10859,7 +11490,7 @@ function F.chat_tab_send()
   imgui.SameLine()
   if F.icon_btn('ICON_FA_LINK', 'cint', 'Вставить интеграцию') then
     F.int_pick = 'chat'
-    F.chat_tab = 'lib'
+    page = 'items'
   end
   imgui.SameLine()
   if F.icon_btn('ICON_FA_COMMENT_DOTS', 'cgame', 'Подставить в чат игры, не отправляя') then
@@ -10933,7 +11564,7 @@ function F.chat_tab_favs()
   imgui.SameLine()
   if F.icon_btn('ICON_FA_LINK', 'fint', 'Вставить интеграцию') then
     F.int_pick = 'fav'
-    F.chat_tab = 'lib'
+    page = 'items'
   end
   F.int_preview(F.buf_get(ui.fav_text))
   local half = math.floor((w - 8) / 2)
@@ -11055,8 +11686,8 @@ function F.int_pick_bar()
     F.int_pick = nil
     if back == 'note' then page = 'notes'
     elseif back == 'bind' then page = 'binds'
-    elseif back == 'fav' then F.chat_tab = 'favs'
-    else F.chat_tab = 'send' end
+    elseif back == 'fav' then F.chat_tab, page = 'favs', 'chat'
+    else F.chat_tab, page = 'send', 'chat' end
   end
   F.card_end()
 end
@@ -11460,20 +12091,32 @@ end
 function F.lib_view(cat, q)
   local ints = F.ints or {}
   local last = ints[#ints]
-  local stamp = #ints .. (last and last.token or '')
+  local mk = F.lib_marks()
+  local stamp = #ints .. (last and last.token or '') .. '|' .. mk.rev
   local v = F._lib_view
   if v and v.cat == cat and v.q == q and v.stamp == stamp then return v end
-  v = {cat = cat, q = q, stamp = stamp, fresh = true}
+  v = {cat = cat, q = q, stamp = stamp, fresh = not v or v.cat ~= cat or v.q ~= q}
   F._lib_view = v
-  local list = F.lib_db().list
+  local db = F.lib_db()
+  local list = db.list
+  local any = cat == 'all' or cat == 'chat' or cat == 'mark' or cat == 'fav' or cat == 'seen'
   if cat == 'chat' then list = F.lib_chat_cards()
-  elseif cat == 'mark' then list = F.LIB_MARKS end
+  elseif cat == 'mark' then list = F.LIB_MARKS
+  elseif cat == 'fav' then
+    list = {}
+    for i = 1, #db.list do
+      if mk.fav[db.list[i].id] then list[#list + 1] = db.list[i] end
+    end
+  elseif cat == 'seen' then
+    list = {}
+    for _, id in ipairs(mk.seen) do list[#list + 1] = F.car_lib(id) end
+  end
   local low = F.lower_fast(q)
   low = low:match('^:item(%d+):$') or low
   local id = tonumber(low)
   for i = 1, #list do
     local it = list[i]
-    if (cat == 'all' or cat == 'chat' or cat == 'mark' or it.cat == cat)
+    if (any or it.cat == cat)
       and (low == '' or (id and it.id == id) or (it.low or F.lower_fast(it.name)):find(low, 1, true)) then
       if it.id and it.id == id then table.insert(v, 1, it)
       else v[#v + 1] = it end
@@ -11482,13 +12125,145 @@ function F.lib_view(cat, q)
   return v
 end
 
+-- Buffs: what an item gives to a job or to the player. A part of the description counts when it
+-- names the job and has a bonus mark (+N, N%, процент, больше, зарплата), so "можно выбить из
+-- ларца дальнобойщика" is not a trucker's buff while "+25% к зарплате дальнобойщика" is.
+F.LIB_BUFFS = {
+  {'wood', 'Лесоруб', {'лесоруб', 'лесопил', 'древесин', 'дров'}},
+  {'truck', 'Дальнобойщик', {'дальнобой', 'фур'}},
+  {'taxi', 'Такси', {'такси'}},
+  {'bus', 'Автобус', {'автобус'}},
+  {'pilot', 'Пилот', {'пилот'}},
+  {'road', 'Ремонтник дорог', {'ремонтник'}},
+  {'food', 'Развозчик продуктов', {'развозчик', 'продуктов'}},
+  {'cash', 'Инкассатор', {'инкассатор'}},
+  {'mech', 'Механик', {'механик'}},
+  {'farm', 'Фермер', {'ферм', 'урожа'}},
+  {'mine', 'Шахтёр', {'шахт', 'руд'}},
+  {'fish', 'Рыбалка', {'рыб'}},
+  {'oil', 'Нефть', {'нефт'}},
+  {'hunt', 'Охота', {'охот'}},
+  {'pizza', 'Пицца', {'пицц'}},
+  {'trash', 'Мусорщик', {'мусор'}},
+  {'frac', 'Фракция', {'фракци', 'организаци'}},
+  {'depo', 'Депозит, PayDay', {'депозит', 'payday', 'пейде'}},
+  {'exp', 'Опыт', {' опыт', 'exp'}},
+  {'hp', 'Здоровье, броня', {'hp', 'здоров', 'брон'}},
+  {'dmg', 'Урон', {'урон'}},
+  {'run', 'Бег', {'бег cj', 'бегом cj', 'выносливост'}},
+  {'luck', 'Удача', {'удач'}},
+}
+
+function F.lib_buff_marked(seg)
+  return seg:find('%+%s*%d') or seg:find('%d%s*%%') or seg:find('процент', 1, true) or seg:find('больше', 1, true)
+    or seg:find('зарплат', 1, true) or seg:find('х2', 1, true) or seg:find('x2', 1, true)
+end
+
+-- Parts of a description: split at "|", ";", " - ", "—", ". ", line ends and emoji codes.
+function F.lib_segments(desc)
+  local low = F.lower_fast(desc)
+  local marked = low:gsub(':u%x+:', function(m) return ('\1'):rep(#m) end):gsub('[|;\n]', '\1'):gsub(' %- ', '\1\1\1'):gsub('—', '\1\1\1')
+    :gsub('•', '\1\1\1'):gsub('%.%s', '\1\1')
+  local out = {}
+  -- The marked copy keeps byte positions, so the original text is cut at the same places.
+  for a, part, b in marked:gmatch('()([^\1]+)()') do
+    local l = F.trim(part)
+    if #l > 3 then out[#out + 1] = {low = l, text = F.trim(desc:sub(a, b - 1))} end
+  end
+  return out
+end
+
+-- What one item gives: its marked parts and the buff keys they name.
+function F.lib_buff_scan(it, desc)
+  local segs, keys, any = {}, {}, false
+  for _, sg in ipairs(F.lib_segments(desc)) do
+    if F.lib_buff_marked(sg.low) then
+      segs[#segs + 1] = sg
+      for _, b in ipairs(F.LIB_BUFFS) do
+        if not keys[b[1]] then
+          for _, w in ipairs(b[3]) do
+            if sg.low:find(w, 1, true) then
+              keys[b[1]] = sg.text
+              any = true
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+  it.bsegs = #segs > 0 and segs or nil
+  it.bkeys = any and keys or nil
+end
+
+-- Reading all descriptions (about 5 MB) takes a moment, so it goes in small portions per frame.
+function F.lib_buff_build()
+  local db = F.lib_db()
+  if db.buff_state then return end
+  db.buff_state = 'run'
+  db.buff_done, db.buff_n = 0, {}
+  lua_thread.create(function()
+    local ok, err = pcall(function()
+      local list = db.list
+      for i = 1, #list do
+        local it = list[i]
+        if (it.desc_n or 0) > 0 then
+          local desc = F.lib_read(it.desc_at, it.desc_n)
+          if desc and desc ~= '' then F.lib_buff_scan(it, desc) end
+          if it.bkeys then
+            for k in pairs(it.bkeys) do db.buff_n[k] = (db.buff_n[k] or 0) + 1 end
+            db.buff_n.all = (db.buff_n.all or 0) + 1
+          end
+        end
+        db.buff_done = i
+        if i % 120 == 0 then wait(0) end
+      end
+    end)
+    db.buff_state = ok and 'ready' or 'fail'
+    F._lib_view = nil
+    if not ok then F.log_line('Библиотека: бафы не прочитались: ' .. tostring(err)) end
+  end)
+end
+
+function F.lib_buff_view(key, q)
+  local db = F.lib_db()
+  local stamp = (db.buff_state or '') .. (db.buff_done or 0)
+  local v = F._lib_view
+  if v and v.buff == key and v.q == q and v.stamp == stamp then return v end
+  v = {buff = key, q = q, stamp = stamp, fresh = not v or v.buff ~= key or v.q ~= q}
+  F._lib_view = v
+  if db.buff_state ~= 'ready' then return v end
+  local low = F.lower_fast(q)
+  for _, it in ipairs(db.list) do
+    local keys = it.bkeys
+    if it.bsegs and (key == 'all' and keys or keys and keys[key]) then
+      local hit = low == '' or (it.low or ''):find(low, 1, true)
+      if not hit then
+        for _, sg in ipairs(it.bsegs) do
+          if sg.low:find(low, 1, true) then hit = true break end
+        end
+      end
+      if hit then v[#v + 1] = it end
+    end
+  end
+  -- The text a card shows on hover: the buff of the chosen job, or the first one.
+  for _, it in ipairs(v) do
+    it.btip = key ~= 'all' and it.bkeys[key] or it.bsegs[1].text
+  end
+  return v
+end
+
+-- A click on a card: while a field waits for an integration it goes there, an item opens its
+-- card, and other integrations (a stall, a phone, a mark) are copied as before.
 function F.lib_pick(it)
   if F.int_pick then
     F.int_put(F.int_pick, it.token)
     return
   end
   F.lib_sel = it
-  F.note_copy(it.token)
+  local id = tonumber(tostring(it.token or ''):match('^:item(%d+):$'))
+  if id then F.item_open(id, F._lib_view)
+  else F.note_copy(it.token) end
 end
 
 function F.lib_card(it, x, y, w, h, hovered)
@@ -11497,12 +12272,18 @@ function F.lib_card(it, x, y, w, h, hovered)
     picked and F.col('accent', 150) or F.col('text', hovered and 34 or 14), 10)
   local sz = F.s(56)
   F.lib_pic(it, x + (w - sz) / 2, y + F.s(6), sz)
+  if it.id and F.lib_marks().fav[it.id] then
+    local star = F.faico('ICON_FA_STAR')
+    if star ~= '' then F.text_at(font_main, 14, x + F.s(7), y + F.s(5), F.col('accent_hi'), star) end
+  end
   local one, two = F.lib_lines(it, w - F.s(10))
   local ty = y + F.s(66)
   F.text_at(font_main, 14, x + (w - F.text_w(font_main, one) * 0.875) / 2, ty, F.col('text'), one)
   F.text_at(font_main, 14, x + (w - F.text_w(font_main, two) * 0.875) / 2, ty + F.s(16), F.col('text', 170), two)
   if hovered then
-    if it.cut then F.tip(it.name) end
+    if F.lib_mode == 'buff' and it.btip then F.tip(it.name .. '\n' .. it.btip)
+    elseif F.int_pick then F.tip(it.name .. '\nНажми, чтобы вставить')
+    elseif it.cut then F.tip(it.name) end
     if imgui.IsMouseClicked(0) then F.lib_pick(it) end
   end
 end
@@ -11538,40 +12319,463 @@ function F.lib_grid(v, w, h)
   imgui.EndChild()
 end
 
-function F.lib_info(w)
-  local p = imgui.GetCursorScreenPos()
-  local h = F.s(90)
-  local it = F.lib_sel
-  F.round_rect(p.x, p.y, w, h, F.col('panel'), F.col('text', 20), 14)
-  if not it then
-    F.text_at(font_main, 16, p.x + F.s(14), p.y + (h - F.s(16)) / 2 - 1, F.col('text', 130),
-      F.fit_text(font_main, 'Нажми на карточку: код скопируется, а здесь появится описание.', w - F.s(28)))
-    F.advance(p, w, h)
+-- Favourite and recently opened items: F|id and R|id lines, the newest R first.
+F.LIB_SEEN_MAX = 40
+
+function F.lib_marks()
+  if F._libm then return F._libm end
+  local m = {fav = {}, seen = {}, rev = 0}
+  F._libm = m
+  for _, line in ipairs(F.read_lines('fhelp_lib.txt')) do
+    local k, id = line:match('^([FR])|(%d+)$')
+    id = tonumber(id)
+    if k == 'F' then m.fav[id] = true
+    elseif k == 'R' and #m.seen < F.LIB_SEEN_MAX then m.seen[#m.seen + 1] = id end
+  end
+  return m
+end
+
+function F.lib_marks_save()
+  local m = F.lib_marks()
+  local ids, out = {}, {}
+  for id in pairs(m.fav) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do out[#out + 1] = 'F|' .. id end
+  for _, id in ipairs(m.seen) do out[#out + 1] = 'R|' .. id end
+  F.write_lines('fhelp_lib.txt', out)
+  m.rev = m.rev + 1
+end
+
+function F.lib_fav_toggle(id)
+  local m = F.lib_marks()
+  m.fav[id] = (not m.fav[id]) or nil
+  F.lib_marks_save()
+  F.notify(m.fav[id] and 'Добавил в избранное' or 'Убрал из избранного', true)
+end
+
+function F.lib_seen_add(id)
+  local m = F.lib_marks()
+  if m.seen[1] == id then return end
+  for i = #m.seen, 1, -1 do
+    if m.seen[i] == id then table.remove(m.seen, i) end
+  end
+  table.insert(m.seen, 1, id)
+  while #m.seen > F.LIB_SEEN_MAX do table.remove(m.seen) end
+  F.lib_marks_save()
+end
+
+function F.lib_cat_name(cat)
+  for _, row in ipairs(F.LIB_CATS) do
+    if row[1] == cat then return row[2] end
+  end
+  return 'Разное'
+end
+
+-- The game keeps some items under several IDs with the same name and picture. Chat, stalls and
+-- trades may name any of them, so the card counts them all.
+function F.lib_same(it)
+  if not it.pic_at or not it.name then return {it.id} end
+  local db = F.lib_db()
+  if not db.same then
+    db.same = {}
+    for id, x in pairs(db.by_id) do
+      if x.pic_at and x.name then
+        local k = x.name .. '|' .. x.pic_at
+        local l = db.same[k]
+        if not l then
+          l = {}
+          db.same[k] = l
+        end
+        l[#l + 1] = id
+      end
+    end
+    for _, l in pairs(db.same) do table.sort(l) end
+  end
+  return db.same[it.name .. '|' .. it.pic_at] or {it.id}
+end
+
+function F.lib_desc(it)
+  if it.desc == nil then
+    it.desc = (it.desc_n or 0) > 0 and F.lib_read(it.desc_at, it.desc_n) or ''
+  end
+  return it.desc
+end
+
+function F.lib_clean(s)
+  s = tostring(s or ''):gsub('{%x%x%x%x%x%x}', ''):gsub(':u%x+:', ''):gsub('\r', '')
+  return F.trim(s)
+end
+
+-- Opens the card of an item. list is the grid it came from, for the arrows; src is its entry there.
+function F.item_open(id, list, src)
+  local it = F.car_lib(tonumber(id) or 0)
+  if it.cat == 'twin' then
+    local db = F.lib_db()
+    for _, sid in ipairs(F.lib_same(it)) do
+      local x = db.by_id[sid]
+      if x and x.cat ~= 'twin' then
+        it = x
+        break
+      end
+    end
+  end
+  local ok, frame = pcall(imgui.GetFrameCount)
+  modal = {kind = 'item', it = it, title = it.name, list = list, src = src or it, frame = ok and frame or 0}
+  F.buf_set(ui.item_price, '', 32)
+  pcall(F.lib_seen_add, it.id)
+  return it
+end
+
+-- The neighbour in the grid; entries that are no items (a stall, a phone, a mark) are passed.
+function F.item_step(m, d)
+  local list = m.list
+  if not list or #list < 2 then return end
+  local idx = m.idx
+  if not idx or list[idx] ~= m.src then
+    idx = nil
+    for i = 1, #list do
+      if list[i] == m.src then
+        idx = i
+        break
+      end
+    end
+  end
+  if not idx then return end
+  local i = idx
+  for _ = 1, #list do
+    i = i + d
+    if i < 1 then i = #list elseif i > #list then i = 1 end
+    local e = list[i]
+    local id = e and (e.id or tonumber(tostring(e.token or ''):match('^:item(%d+):$')))
+    if e and not e.mark and id then
+      F.item_open(id, list, e)
+      modal.idx = i
+      return
+    end
+  end
+end
+
+-- What fHelper has seen of the item: stalls, own trades, drops, chat and wishes.
+function F.item_facts(it)
+  local led, itl = F.led_state(), F.itl_state()
+  local ints = F.ints or {}
+  local key = table.concat({F.shop_rev, led.rev, itl.rev, #ints, F.want_rev, #F.wants}, '|')
+  if it._fk == key then return it._facts end
+  local same = F.lib_same(it)
+  local ids = {[it.id] = true}
+  for _, id in ipairs(same) do ids[id] = true end
+  local f = {sell = {}, buy = {}, deals = {}, got = {n = 0, qty = 0, src = {}}, same = same, wants = {}}
+  for _, s in ipairs(F.shops) do
+    for _, r in ipairs(s.items) do
+      if ids[r.id] and f[r.k] then table.insert(f[r.k], {shop = s, r = r}) end
+    end
+  end
+  local function order(kind)
+    return function(a, b)
+      local pa, pb = a.r.price, b.r.price
+      if pa and pb and pa ~= pb then
+        if kind == 'sell' then return pa < pb end
+        return pa > pb
+      end
+      if (pa == nil) ~= (pb == nil) then return pa ~= nil end
+      return a.shop.t > b.shop.t
+    end
+  end
+  table.sort(f.sell, order('sell'))
+  table.sort(f.buy, order('buy'))
+  -- Trades and drops by name keep only the name; the length check spares most lower-casing.
+  local low = it.low or F.lower_fast(it.name)
+  local n = #it.name
+  for i = #led.list, 1, -1 do
+    local r = led.list[i]
+    local t = r.text or ''
+    if (r.cat == 'sell' or r.cat == 'buy') and (r.qty or 0) > 0 and #t == n and F.lower_fast(t) == low then
+      f.deals[#f.deals + 1] = r
+      if #f.deals >= 40 then break end
+    end
+  end
+  local g = f.got
+  for i = #itl.list, 1, -1 do
+    local r = itl.list[i]
+    if ids[r.id] or ((r.id or 0) == 0 and #(r.name or '') == n and F.lower_fast(r.name) == low) then
+      g.n, g.qty = g.n + 1, g.qty + (r.qty or 1)
+      g.last = g.last or r.t
+      g.src[r.src or 'inv'] = (g.src[r.src or 'inv'] or 0) + (r.qty or 1)
+    end
+  end
+  for i = #ints, 1, -1 do
+    local r = ints[i]
+    if r.kind == 'item' and ids[tonumber(r.id)] then
+      f.chat = r
+      break
+    end
+  end
+  for _, w in ipairs(F.wants) do
+    if ids[w.item] then f.wants[#f.wants + 1] = w end
+  end
+  it._fk, it._facts = key, f
+  return f
+end
+
+function F.item_want(it, mode)
+  local price = F.calc_eval(F.buf_get(ui.item_price))
+  if not price or price <= 0 then
+    F.notify('Укажи цену, например 1.5кк', true)
     return
   end
-  local sz = F.s(72)
-  F.lib_pic(it, p.x + F.s(9), p.y + (h - sz) / 2, sz)
-  local ib = F.s(30)
-  local tx = p.x + sz + F.s(20)
-  local bx = p.x + w - F.s(8) - ib
-  local tw = bx - (ib + 2) * 4 - tx
-  F.text_at(font_main, 16, tx, p.y + F.s(7), F.col('accent_hi'), F.fit_text(font_main, it.name, tw))
-  local src = it.pic or it
-  if it.desc == nil then
-    it.desc = src.desc_n and src.desc_n > 0 and F.lib_read(src.desc_at, src.desc_n) or ''
+  local ok, err = F.want_add(it.id, mode, price)
+  if ok then F.buf_set(ui.item_price, '', 32)
+  else F.notify('Не добавил: ' .. tostring(err), true) end
+end
+
+function F.ic_title(icon, title, first)
+  if not first then imgui.Dummy(imgui.ImVec2(1, F.s(12))) end
+  local p = imgui.GetCursorScreenPos()
+  local g = F.faico(icon)
+  local x = p.x
+  if g ~= '' then
+    F.text_at(font_main, 16, x, p.y + 2, F.col('accent_hi'), g)
+    x = x + F.s(26)
   end
-  local text = it.desc ~= '' and it.desc or (it.sub or it.token)
-  imgui.PushClipRect(imgui.ImVec2(tx, p.y), imgui.ImVec2(p.x + w - F.s(10), p.y + h - F.s(6)), true)
-  F.text_at(font_main, 14, tx, p.y + F.s(31), F.col('text', 150), text, p.x + w - F.s(12) - tx)
-  imgui.PopClipRect()
+  F.text_at(font_bold, 18, x, p.y, F.col('text'), title)
+  F.advance(p, 1, F.s(28))
+end
+
+function F.ic_text(text, col)
+  imgui.PushTextWrapPos(0)
+  if col then imgui.TextColored(col, '%s', text)
+  else imgui.TextUnformatted(text) end
+  imgui.PopTextWrapPos()
+end
+
+function F.ic_shop_row(i, h)
+  local p = imgui.GetCursorScreenPos()
+  local w = imgui.GetContentRegionAvail().x - 4
+  local rh = F.s(40)
+  local s, r = h.shop, h.r
+  local clicked, hovered = F.hotspot('##icsh' .. i, p.x, p.y, w, rh - 4)
+  F.round_rect(p.x, p.y, w, rh - 4, hovered and F.col('raised') or F.col('side', 120), nil, 10)
+  local price = F.shop_price_text(r)
+  local pw = F.text_w(font_bold, price)
+  local dist = F.shop_dist(s)
+  local left = F.shop_name(s) .. '  ·  ' .. F.shop_qty_text(r) .. '  ·  ' .. F.ago(s.t) .. (dist ~= '' and ('  ·  ' .. dist) or '')
+  F.text_at(font_main, 16, p.x + 12, p.y + (rh - 4 - F.s(16)) / 2 - 1, F.col('text', 200), F.fit_text(font_main, left, w - pw - 36))
+  F.text_at(font_bold, 18, p.x + w - pw - 12, p.y + (rh - 4 - F.s(18)) / 2 - 1, F.col('accent_hi'), price)
+  if hovered then F.tip(s.num and ('Проложить маршрут: /findilavka ' .. s.num) or 'У этой лавки нет номера') end
+  if clicked then F.shop_route(s) end
+  F.advance(p, w, rh)
+end
+
+function F.ic_shops(f, kind)
+  local list = f[kind]
+  if #list == 0 then return end
+  local best = list[1].r.price
+  local head = (kind == 'sell' and 'Продают в ' or 'Скупают в ') .. #list .. ' ' .. F.ru_count(#list, 'лавке', 'лавках', 'лавках')
+  if best then head = head .. (kind == 'sell' and ', дешевле всего ' or ', дороже всего ') .. F.fmt_money(best) end
+  F.ic_text(head, F.cvec('text', 0.75))
+  for i = 1, math.min(#list, 4) do F.ic_shop_row(kind .. i, list[i]) end
+  if #list > 4 then F.hint('И ещё ' .. (#list - 4) .. '. Все — в Эксперимент → Лавки, поиск по названию.') end
+end
+
+function F.item_body(it)
+  local desc = F.lib_clean(F.lib_desc(it))
+  if it.bsegs == nil and not it._bscan and desc ~= '' then
+    it._bscan = true
+    pcall(F.lib_buff_scan, it, F.lib_desc(it))
+  end
+  local f = F.item_facts(it)
+  F.ic_title('ICON_FA_ALIGN_LEFT', 'Описание', true)
+  if desc ~= '' then F.ic_text(desc)
+  else F.ic_text('В файлах игры у этого предмета нет описания.', F.cvec('text', 0.55)) end
+  if it.bsegs then
+    F.ic_title('ICON_FA_BOLT', 'Бафы')
+    for _, sg in ipairs(it.bsegs) do F.ic_text('•  ' .. F.lib_clean(sg.text), F.cvec('accent_hi')) end
+  end
+  F.ic_title('ICON_FA_STORE', 'В лавках')
+  if #f.sell + #f.buy == 0 then
+    F.hint(cfg.shop_on == 1 and ('В открытых тобой лавках не встречался. Лавки записываются сами, когда ты их открываешь, и хранятся ' .. F.SHOP_DAYS .. ' дня.')
+      or 'Запись лавок выключена: Эксперимент → Лавки.')
+  else
+    F.ic_shops(f, 'sell')
+    if #f.sell > 0 and #f.buy > 0 then imgui.Spacing() end
+    F.ic_shops(f, 'buy')
+  end
+  F.ic_title('ICON_FA_SEARCH_DOLLAR', 'Хочу найти')
+  local del
+  for _, w in ipairs(f.wants) do
+    local text = (w.mode == 'buy' and 'Куплю не дороже ' or 'Продам не дешевле ') .. F.fmt_money(w.price) .. (w.on and '' or '  ·  выключено')
+    if imgui.AlignTextToFramePadding then imgui.AlignTextToFramePadding() end
+    imgui.TextUnformatted(text)
+    imgui.SameLine(0, 12)
+    if F.button('Убрать##icw' .. w.id, 100, 0) then del = w.id end
+  end
+  if del then F.want_del(del) end
+  local aw = imgui.GetContentRegionAvail().x
+  local fw = math.max(F.s(120), math.min(F.s(200), aw - F.s(316) - 16))
+  F.field('##icwp', 'Цена, например 1.5кк', ui.item_price, 32, fw, 'item_price')
+  imgui.SameLine(0, 8)
+  if F.button('Хочу купить##icwb', 150, 0, 'primary') then F.item_want(it, 'buy') end
+  imgui.SameLine(0, 8)
+  if F.button('Хочу продать##icws', 150, 0) then F.item_want(it, 'sell') end
+  F.hint('Открывай лавки как обычно: когда цена подойдёт, fHelper скажет.')
+  if #f.deals > 0 then
+    F.ic_title('ICON_FA_HANDSHAKE', 'Твои сделки')
+    for i = 1, math.min(#f.deals, 6) do
+      local r = f.deals[i]
+      local per = F.fmt_cur(r.amount / r.qty, r.cur == 'vc')
+      local who = (r.who or '') ~= '' and ((r.cat == 'sell' and ' игроку ' or ' у ') .. r.who) or ''
+      F.ic_text(F.ago(r.t) .. ':  ' .. (r.cat == 'sell' and 'продал ' or 'купил ') .. F.num_text(r.qty) .. ' шт.' .. who
+        .. '  ·  ' .. per .. ' за штуку')
+    end
+    if #f.deals > 6 then F.hint('Всего сделок: ' .. #f.deals .. (#f.deals >= 40 and '+' or '') .. '. Все — в Доходы → Сделки.') end
+  end
+  if f.got.n > 0 then
+    local g = f.got
+    F.ic_title('ICON_FA_BOX_OPEN', 'Получено')
+    F.ic_text(g.n .. ' ' .. F.ru_count(g.n, 'раз', 'раза', 'раз') .. ', всего ' .. F.num_text(g.qty) .. ' шт. Последний раз ' .. F.ago(g.last) .. '.')
+    local parts = {}
+    for _, k in ipairs({'inv', 'store', 'prize', 'box'}) do
+      if g.src[k] then parts[#parts + 1] = F.ITL_SRC[k] .. ': ' .. F.num_text(g.src[k]) end
+    end
+    if #parts > 1 then F.hint(table.concat(parts, '  ·  ')) end
+  end
+  if f.chat then
+    F.ic_title('ICON_FA_COMMENTS', 'В чате')
+    F.ic_text('Последний раз ' .. tostring(f.chat.t) .. ((f.chat.from or '') ~= '' and ('  ·  ' .. f.chat.from) or ''))
+  end
+  if #f.same > 1 then
+    F.ic_title('ICON_FA_CLONE', 'Другие ID')
+    local ids = {}
+    for _, id in ipairs(f.same) do ids[#ids + 1] = tostring(id) end
+    F.hint('В игре этот предмет записан под ID ' .. table.concat(ids, ', ') .. '. Лавки и находки считаются по всем.')
+  end
+  imgui.Dummy(imgui.ImVec2(1, 6))
+end
+
+function F.item_card(m, ww, wh, wp)
+  local it = m.it
+  local pad = 22
+  local mw = math.floor(math.min(F.s(780), ww - 40))
+  local mh = math.floor(math.min(F.s(700), wh - 40))
+  local x = math.floor(wp.x + (ww - mw) / 2)
+  local y = math.floor(wp.y + (wh - mh) / 2)
+  local ok_f, frame = pcall(imgui.GetFrameCount)
+  -- A click on the dark part around closes the card, but not the click that opened it.
+  if imgui.IsMouseClicked(0) and (not ok_f or frame ~= m.frame) then
+    local mp = imgui.GetMousePos()
+    if mp.x < x or mp.x > x + mw or mp.y < y or mp.y > y + mh then
+      modal = nil
+      return
+    end
+  end
+  if not F.ui_typing() then
+    local okl, left = pcall(wasKeyPressed, 0x25)
+    local okr, right = pcall(wasKeyPressed, 0x27)
+    if okl and left then F.item_step(m, -1)
+    elseif okr and right then F.item_step(m, 1) end
+    if modal ~= m then return end
+  end
+  F.round_rect(x, y + 4, mw, mh, F.col('side', 120), nil, 20)
+  F.round_rect(x, y, mw, mh, F.col('panel'), F.col('accent', 110), 20)
+  local sz = math.floor(F.s(96))
+  F.round_rect(x + pad, y + pad, sz, sz, F.col('side', 160), nil, 16)
+  F.lib_pic(it, x + pad + 8, y + pad + 8, sz - 16)
+  local ib = F.s(30)
+  local hy = y + pad - 4
+  local hx = x + mw - pad - ib + 4
+  if F.ghost_icon('##icx', hx, hy, 'ICON_FA_TIMES', 'Закрыть (Esc)') then
+    modal = nil
+    return
+  end
+  local many = m.list and #m.list > 1
+  if many then
+    hx = hx - ib - 2
+    if F.ghost_icon('##icn', hx, hy, 'ICON_FA_CHEVRON_RIGHT', 'Следующий (стрелка вправо)') then F.item_step(m, 1) end
+    hx = hx - ib - 2
+    if F.ghost_icon('##icp', hx, hy, 'ICON_FA_CHEVRON_LEFT', 'Предыдущий (стрелка влево)') then F.item_step(m, -1) end
+    if modal ~= m then return end
+  end
+  hx = hx - ib - 2
+  local fav = F.lib_marks().fav[it.id]
+  if F.ghost_icon('##icf', hx, hy, 'ICON_FA_STAR', fav and 'Убрать из избранного' or 'В избранное') then F.lib_fav_toggle(it.id) end
+  if fav then
+    local star = F.faico('ICON_FA_STAR')
+    if star ~= '' then F.text_at(font_main, 16, hx + (ib - F.text_w(font_main, star)) / 2, hy + (ib - F.s(16)) / 2 - 1, F.col('accent_hi'), star) end
+  end
+  local tx = x + pad + sz + 18
+  local tw = hx - 8 - tx
+  local name_hit, name_hov = F.hotspot('##icname', tx, y + pad, math.min(tw, F.text_w(font_bold, it.name)), F.s(22))
+  F.text_at(font_bold, 18, tx, y + pad + 2, name_hov and F.col('accent_hi') or F.col('text'), F.fit_text(font_bold, it.name, tw))
+  if name_hov then F.tip(it.name .. '\nНажми, чтобы скопировать название') end
+  if name_hit then F.note_copy(it.name) end
+  local sub = 'ID ' .. it.id .. '  ·  ' .. F.lib_cat_name(it.cat) .. '  ·  ' .. it.token
+  F.text_at(font_main, 16, tx, y + pad + F.s(28), F.col('text', 140), F.fit_text(font_main, sub, x + mw - pad - tx))
+  -- Chips: the jobs its buffs name, else the best stall price.
+  local cx, cy = tx, y + pad + F.s(58)
+  local chips = {}
+  if it.bkeys then
+    for _, b in ipairs(F.LIB_BUFFS) do
+      if it.bkeys[b[1]] then chips[#chips + 1] = {b[2], 'on'} end
+    end
+  end
+  local f = it._facts
+  if f and f.sell[1] and f.sell[1].r.price then chips[#chips + 1] = {'в лавках от ' .. F.fmt_money(f.sell[1].r.price), 'muted'} end
+  if fav then chips[#chips + 1] = {'в избранном', 'muted'} end
+  for _, c in ipairs(chips) do
+    local cw = F.chip_w(c[1])
+    if cx + cw > x + mw - pad then break end
+    cx = cx + F.chip(cx, cy, c[1], c[2]) + 6
+  end
+  local top = y + pad + sz + 16
+  local btn_h = F.s(36)
+  local foot = y + mh - pad - btn_h
+  imgui.SetCursorScreenPos(imgui.ImVec2(x + pad, top))
+  imgui.BeginChild('##itemcard', imgui.ImVec2(mw - pad * 2 + 8, math.max(F.s(80), foot - 14 - top)), false)
+  if m.scrolled ~= it then
+    imgui.SetScrollY(0)
+    m.scrolled = it
+  end
+  F.item_body(it)
+  imgui.EndChild()
+  if modal ~= m then return end
   local token = it.token
-  local iy = p.y + F.s(2)
-  if F.ghost_icon('##lcopy', bx, iy, 'ICON_FA_COPY', 'Копировать ' .. token) then F.note_copy(token) end
-  if F.ghost_icon('##lbind', bx - ib - 2, iy, 'ICON_FA_BOLT', 'В бинд') then F.int_put('bind', token) end
-  if F.ghost_icon('##lnote', bx - (ib + 2) * 2, iy, 'ICON_FA_STICKY_NOTE', 'В заметку') then F.int_put('note', token) end
-  if F.ghost_icon('##lchat', bx - (ib + 2) * 3, iy, 'ICON_FA_PAPER_PLANE', 'В поле отправки') then F.int_put('chat', token) end
-  if F.ghost_icon('##lgame', bx - (ib + 2) * 4, iy, 'ICON_FA_COMMENT_DOTS', 'В чат игры') then F.int_put('game', token) end
-  F.advance(p, w, h)
+  local acts = {
+    {'ICON_FA_COPY', 'Код', function() F.note_copy(token) end, 'Скопировать ' .. token},
+    {'ICON_FA_PAPER_PLANE', 'В отправку', function() modal = nil F.int_put('chat', token) end, 'В поле отправки сообщения'},
+    {'ICON_FA_COMMENT_DOTS', 'В чат игры', function() modal = nil F.int_put('game', token) end, 'Открыть чат игры с кодом'},
+    {'ICON_FA_BOLT', 'В бинд', function() modal = nil F.int_put('bind', token) end},
+    {'ICON_FA_STICKY_NOTE', 'В заметку', function() modal = nil F.int_put('note', token) end},
+  }
+  local right = x + mw - pad
+  local close_w = F.s(110)
+  local bx = x + pad
+  for i, a in ipairs(acts) do
+    local label = F.icon_label(a[1], a[2])
+    local bw = F.text_w(font_main, label) + F.s(28)
+    if bx + bw > right - close_w - 8 then break end
+    imgui.SetCursorScreenPos(imgui.ImVec2(bx, foot))
+    if F.button(label .. '##ica' .. i, 0, 36) then a[3]() end
+    if a[4] and imgui.IsItemHovered() then F.tip(a[4]) end
+    bx = bx + bw + 8
+  end
+  imgui.SetCursorScreenPos(imgui.ImVec2(right - close_w, foot))
+  if F.accent_button('Закрыть##icclose', 110, 36) then modal = nil end
+end
+
+-- /fitem <название или ID>: the item's card in the menu.
+function F.item_cmd(arg)
+  arg = F.trim(F.game_text(arg or ''))
+  page = 'items'
+  if not show then F.toggle() end
+  if arg == '' then return end
+  local it = F.want_lookup(arg:match('^:item(%d+):$') or arg)
+  if not it then
+    F.notify('Не нашёл предмет «' .. arg .. '»', true)
+    F.buf_set(ui.lib_q, arg, 80)
+    F.lib_mode = 'name'
+    return
+  end
+  F.item_open(it.id)
 end
 
 function F.lib_stale(db)
@@ -11583,7 +12787,8 @@ function F.lib_stale(db)
   return db.stale
 end
 
-function F.chat_tab_lib()
+function F.draw_items()
+  F.page_head('Предметы', 'Все предметы игры: поиск по названию и бафам, карточка с описанием, ценами и твоими сделками')
   F.int_pick_bar()
   local db = F.lib_db()
   local w = F.inner_w()
@@ -11593,23 +12798,62 @@ function F.chat_tab_lib()
     F.hint('Игра обновила предметы: новые могут быть без картинок.')
   end
   F.lib_cat = F.lib_cat or 'all'
-  F.field('##libq', 'Поиск по названию или ID', ui.lib_q, 80, w, 'lib_q')
+  F.lib_mode = F.lib_mode or 'name'
+  F.lib_buff = F.lib_buff or 'all'
+  local mode = F.segment('libmode', {{'name', 'Поиск по названию'}, {'buff', 'Поиск по бафам'}}, F.lib_mode)
+  if mode then F.lib_mode = mode end
   imgui.Spacing()
-  local cats = {}
-  for i = 1, #F.LIB_CATS do
-    local row = F.LIB_CATS[i]
-    if row[1] ~= 'frame' or not F.is_rod() then cats[#cats + 1] = row end
+  local buff = F.lib_mode == 'buff' and db.packed
+  if F.lib_mode == 'buff' and not db.packed then F.hint('Бафы берутся из описаний, а файлов библиотеки нет.') end
+  F.field('##libq', buff and 'Что в бафе: зарплата, дрова, шанс… или название предмета' or 'Поиск по названию или ID',
+    ui.lib_q, 80, w, 'lib_q')
+  imgui.Spacing()
+  if buff then
+    F.lib_buff_build()
+    if db.buff_state == 'run' then
+      F.hint(string.format('Читаю описания предметов: %d из %d…', db.buff_done or 0, #db.list))
+    elseif db.buff_state == 'fail' then
+      F.hint('Не получилось прочитать описания, подробности в журнале fHelper.')
+    end
+    local n = db.buff_n or {}
+    local pills = {{'all', 'Все бафы' .. (n.all and (' · ' .. n.all) or '')}}
+    for _, b in ipairs(F.LIB_BUFFS) do
+      if db.buff_state ~= 'ready' or (n[b[1]] or 0) > 0 then
+        pills[#pills + 1] = {b[1], b[2] .. (n[b[1]] and (' · ' .. n[b[1]]) or '')}
+      end
+    end
+    local pick = F.pill_row('##libb', pills, F.lib_buff)
+    if pick then F.lib_buff = pick end
+  else
+    local mk = F.lib_marks()
+    local nf = 0
+    for _ in pairs(mk.fav) do nf = nf + 1 end
+    local cats = {}
+    for i = 1, #F.LIB_CATS do
+      local row = F.LIB_CATS[i]
+      if row[1] ~= 'frame' or not F.is_rod() then cats[#cats + 1] = row end
+      if row[1] == 'all' then
+        cats[#cats + 1] = {'fav', 'Избранное' .. (nf > 0 and (' · ' .. nf) or '')}
+        cats[#cats + 1] = {'seen', 'Недавние'}
+      end
+    end
+    local cat = F.pill_row('##libc', cats, F.lib_cat)
+    if cat then F.lib_cat = cat end
   end
-  local cat = F.pill_row('##libc', cats, F.lib_cat)
-  if cat then F.lib_cat = cat end
   imgui.Spacing()
-  F.lib_info(w)
-  imgui.Spacing()
-  local v = F.lib_view(F.lib_cat, F.trim(F.buf_get(ui.lib_q)))
+  local q = F.trim(F.buf_get(ui.lib_q))
+  local v = buff and F.lib_buff_view(F.lib_buff, q) or F.lib_view(F.lib_cat, q)
   if #v == 0 then
-    F.hint(F.lib_cat == 'chat' and v.q == '' and 'Здесь пока пусто. Интеграции появятся, когда пройдут в чате.' or 'Ничего не найдено.')
+    if buff then
+      if db.buff_state == 'ready' then F.hint('С таким бафом ничего не найдено.') end
+    elseif v.q == '' and F.lib_cat == 'chat' then F.hint('Здесь пока пусто. Интеграции появятся, когда пройдут в чате.')
+    elseif v.q == '' and F.lib_cat == 'fav' then F.hint('Здесь пока пусто. Открой предмет и нажми звёздочку в его карточке.')
+    elseif v.q == '' and F.lib_cat == 'seen' then F.hint('Здесь будут предметы, карточки которых ты открывал.')
+    else F.hint('Ничего не найдено.') end
     return
   end
+  if buff then F.hint('Найдено: ' .. #v .. '. Наведи на карточку — покажу баф, нажми — откроется карточка предмета.')
+  elseif not F.int_pick then F.hint('Нажми на предмет: описание, бафы, цены в лавках, твои сделки и сколько выпадало. Стрелки листают.') end
   local avail = imgui.GetContentRegionAvail()
   F.lib_grid(v, w, math.max(F.s(250), avail.y - 10))
 end
@@ -11646,10 +12890,15 @@ function F.chat_tab_opts()
 end
 
 function F.draw_chat()
-  F.page_head('Чат', 'Команды и сообщения, избранное, интеграции, библиотека и лог всего чата')
+  F.page_head('Чат', 'Команды и сообщения, избранное, интеграции и лог всего чата')
+  -- The library moved to its own page; an old link to the tab leads there.
+  if F.chat_tab == 'lib' then
+    F.chat_tab = 'send'
+    page = 'items'
+  end
   F.chat_tab = F.chat_tab or 'send'
   local tab = F.segment('chat', {
-    {'send', 'Отправка'}, {'favs', 'Избранное'}, {'ints', 'Интеграции'}, {'lib', 'Библиотека'}, {'log', 'Лог'}, {'opts', 'Настройки'},
+    {'send', 'Отправка'}, {'favs', 'Избранное'}, {'ints', 'Интеграции'}, {'log', 'Лог'}, {'opts', 'Настройки'},
   }, F.chat_tab)
   if tab then
     F.chat_tab = tab
@@ -11658,7 +12907,6 @@ function F.draw_chat()
   imgui.Spacing()
   if F.chat_tab == 'favs' then F.chat_tab_favs()
   elseif F.chat_tab == 'ints' then F.chat_tab_ints()
-  elseif F.chat_tab == 'lib' then F.chat_tab_lib()
   elseif F.chat_tab == 'log' then F.chat_tab_log()
   elseif F.chat_tab == 'opts' then F.chat_tab_opts()
   else F.chat_tab_send() end
@@ -12224,8 +13472,7 @@ function F.notes_right()
   imgui.SameLine()
   if F.icon_btn('ICON_FA_LINK', 'nint', 'Вставить интеграцию') then
     F.int_pick = 'note'
-    F.chat_tab = 'lib'
-    page = 'chat'
+    page = 'items'
   end
   imgui.SameLine()
   if F.icon_btn('ICON_FA_COMMENT_DOTS', 'ngame', 'Подставить первую строку в чат игры') then F.to_game_chat(F.buf_get(ui_ntext)) end
@@ -13160,6 +14407,12 @@ function F.draw_overlay(ww, wh, wp)
   if imgui.SetItemAllowOverlap then imgui.SetItemAllowOverlap() end
   local dl = imgui.GetWindowDrawList()
   F.round_rect(wp.x, wp.y, ww, wh, F.col('side', 170), nil, 18)
+  if m.kind == 'item' then
+    F.item_card(m, ww, wh, wp)
+    imgui.End()
+    imgui.PopStyleColor()
+    return
+  end
   local ask = m.kind == 'ask'
   local patch = m.kind == 'patch'
   local pad = 24
@@ -13312,6 +14565,7 @@ function F.draw_contents(ww, wh)
   if page == 'income' then draw_id, draw_fn = '##income', F.draw_income
   elseif page == 'chests' then draw_id, draw_fn = '##chests', F.draw_chests
   elseif page == 'chat' then draw_id, draw_fn = '##chat', F.draw_chat
+  elseif page == 'items' then draw_id, draw_fn = '##items', F.draw_items
   elseif page == 'scripts' then draw_id, draw_fn = '##scripts', F.draw_scripts_page
   elseif page == 'binds' then draw_id, draw_fn = '##binds', F.draw_binds
   elseif page == 'notes' then draw_id, draw_fn = '##notes', F.draw_notes
@@ -13435,6 +14689,7 @@ function F.toggle()
     hidden = false
     placed = false
   else
+    if modal and modal.kind == 'item' then modal = nil end
     F.note_flush()
     dirty = true
   end
@@ -13464,6 +14719,8 @@ function F.ui_typing()
 end
 
 function F.close_menu()
+  -- The card lives over the menu; left open it would keep taking Esc from the game.
+  if modal and modal.kind == 'item' then modal = nil end
   F.note_flush()
   show = false
   capture = false
@@ -13556,7 +14813,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 26
+F.BUILD = 27
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -13977,6 +15234,7 @@ function main()
   sampRegisterChatCommand('fupdate', F.upd_cmd)
   sampRegisterChatCommand('fchest', F.chest_cmd)
   sampRegisterChatCommand('fmem', F.mem_cmd)
+  sampRegisterChatCommand('fitem', function(arg) pcall(F.item_cmd, arg) end)
   sampRegisterChatCommand('fwant', function(arg) pcall(F.want_cmd, arg) end)
   sampRegisterChatCommand('fshift', function(arg) pcall(F.shift_cmd, arg) end)
   local int_mark = 0
@@ -14011,6 +15269,7 @@ function main()
     pcall(F.upd_tick, now)
     pcall(F.shop_tick)
     pcall(F.chest_tick)
+    pcall(F.wood_tick)
     if not F._restoring then pcall(F.shift_tick, now) end
     F.watch_self()
     if frame then
