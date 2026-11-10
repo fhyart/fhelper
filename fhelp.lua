@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.1'
+local VER = '1.19.2'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(28)
+script_version_number(29)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -7570,6 +7570,11 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.2', '10.11.2026', {
+    {'add', 'Предметы и их картинки берутся прямо из игры (items.zip): ничего докачивать и собирать не нужно'},
+    {'add', 'Картинка готовится при первом показе и дальше открывается сразу'},
+    {'add', 'Когда игра обновит предметы, список сам перечитается, новые предметы появятся с картинками'},
+  }},
   {'1.19.1', '10.11.2026', {
     {'fix', 'Обновления проверяются каждые полчаса, а не раз в три часа; если GitHub не ответил — снова через 5 минут'},
     {'fix', 'Сообщение о новой версии приходит, когда ты уже на сервере, а не теряется на экране загрузки'},
@@ -11750,8 +11755,7 @@ end
 
 -- Library
 
--- config\fhelp_lib.* holds every item of the game with its picture as PNG,
--- tools\build_lib.py makes them from arizona\items.zip.
+-- Everything comes from the game's own items.zip, see F.lib_build_idx below.
 
 F.LIB_CATS = {
   {'all', 'Все'}, {'chat', 'Из чата'}, {'acs', 'Аксессуары'}, {'skin', 'Одежда'}, {'car', 'Транспорт'},
@@ -11772,11 +11776,699 @@ F.LIB_MARKS = {
   {token = ':CASHV:', name = 'Вайс-доллары', mark = 'VC$', low = 'вайс-доллары cash vc'},
 }
 
+do
+-- Item icons in the game are WebP, DirectX cannot read them. Windows can (WIC with the
+-- WebP extension): it decodes, shrinks to the card size and writes a PNG for imgui.
+F.WIC_SIZE = 64
+
+function F.wic()
+  if F._wic ~= nil then return F._wic or nil end
+  F._wic = false
+  if not ffi_ok then return nil end
+  local ok = pcall(ffi.cdef, [[
+    typedef struct { unsigned long d1; unsigned short d2, d3; unsigned char d4[8]; } FH_GUID;
+    typedef struct { void** vt; } FH_COM;
+    long __stdcall CoInitializeEx(void* r, unsigned long mode);
+    long __stdcall CoCreateInstance(const FH_GUID* clsid, void* outer, unsigned long ctx, const FH_GUID* iid, FH_COM** out);
+    FH_COM* __stdcall SHCreateMemStream(const unsigned char* data, unsigned int n);
+    typedef unsigned long (__stdcall *FH_REL)(FH_COM*);
+    typedef long (__stdcall *FH_DEC_STREAM)(FH_COM*, FH_COM*, const FH_GUID*, unsigned long, FH_COM**);
+    typedef long (__stdcall *FH_MAKE)(FH_COM*, FH_COM**);
+    typedef long (__stdcall *FH_FRAME)(FH_COM*, unsigned int, FH_COM**);
+    typedef long (__stdcall *FH_SIZE)(FH_COM*, unsigned int*, unsigned int*);
+    typedef long (__stdcall *FH_SCALE)(FH_COM*, FH_COM*, unsigned int, unsigned int, int);
+    typedef long (__stdcall *FH_CONV)(FH_COM*, FH_COM*, const FH_GUID*, int, void*, double, int);
+    typedef long (__stdcall *FH_ENC_MAKE)(FH_COM*, const FH_GUID*, const FH_GUID*, FH_COM**);
+    typedef long (__stdcall *FH_ENC_INIT)(FH_COM*, FH_COM*, int);
+    typedef long (__stdcall *FH_NEW_FRAME)(FH_COM*, FH_COM**, FH_COM**);
+    typedef long (__stdcall *FH_FR_INIT)(FH_COM*, FH_COM*);
+    typedef long (__stdcall *FH_FR_SIZE)(FH_COM*, unsigned int, unsigned int);
+    typedef long (__stdcall *FH_FR_FMT)(FH_COM*, FH_GUID*);
+    typedef long (__stdcall *FH_FR_SRC)(FH_COM*, FH_COM*, void*);
+    typedef long (__stdcall *FH_DONE)(FH_COM*);
+    typedef long (__stdcall *FH_SEEK)(FH_COM*, long long, unsigned long, unsigned long long*);
+    typedef long (__stdcall *FH_READ)(FH_COM*, void*, unsigned long, unsigned long*);
+  ]])
+  if not ok then return nil end
+  local function guid(s)
+    local g = ffi.new('FH_GUID')
+    local a, b, c, d, e = s:match('^(%x+)%-(%x+)%-(%x+)%-(%x%x)(%x%x)%-')
+    g.d1, g.d2, g.d3 = tonumber(a, 16), tonumber(b, 16), tonumber(c, 16)
+    g.d4[0], g.d4[1] = tonumber(d, 16), tonumber(e, 16)
+    local tail = s:match('%-(%x+)$')
+    for i = 0, 5 do g.d4[2 + i] = tonumber(tail:sub(i * 2 + 1, i * 2 + 2), 16) end
+    return g
+  end
+  local okl, ole = pcall(ffi.load, 'ole32')
+  local oks, shl = pcall(ffi.load, 'shlwapi')
+  if not (okl and oks) then return nil end
+  pcall(ole.CoInitializeEx, nil, 2)
+  local fac = ffi.new('FH_COM*[1]')
+  local hr = ole.CoCreateInstance(guid('cacaf262-9370-4615-a13b-9f5539da4c0a'), nil, 1,
+    guid('ec5ec8a9-c395-4314-9c77-54d7a935ff70'), fac)
+  if hr < 0 or fac[0] == nil then return nil end
+  F._wic = {fac = fac[0], shl = shl, bgra = guid('6fddc324-4e03-4bfe-b185-3d77768dc90f'),
+    png = guid('1b7cfaf4-713f-473c-bbcd-6137425faeaf')}
+  return F._wic
+end
+
+local function com(o, i, t) return ffi.cast(t, o.vt[i]) end
+local function release(o) if o ~= nil then com(o, 2, 'FH_REL')(o) end end
+
+-- WebP bytes in, PNG bytes out; or nil and the reason.
+function F.wic_png(data, size)
+  local w = F.wic()
+  if not w then return nil, 'nowic' end
+  size = size or F.WIC_SIZE
+  local stream = w.shl.SHCreateMemStream(data, #data)
+  local ostream = w.shl.SHCreateMemStream(nil, 0)
+  if stream == nil or ostream == nil then
+    release(stream); release(ostream)
+    return nil, 'stream'
+  end
+  local p = {}
+  for _, k in ipairs({'dec', 'frame', 'scaler', 'conv', 'enc', 'ofr', 'bag'}) do p[k] = ffi.new('FH_COM*[1]') end
+  local out, why
+  local hr = com(w.fac, 4, 'FH_DEC_STREAM')(w.fac, stream, nil, 0, p.dec)
+  if hr < 0 then why = 'nocodec' end
+  if not why and com(p.dec[0], 13, 'FH_FRAME')(p.dec[0], 0, p.frame) < 0 then why = 'frame' end
+  local src
+  if not why then
+    local pw, ph = ffi.new('unsigned int[1]'), ffi.new('unsigned int[1]')
+    com(p.frame[0], 3, 'FH_SIZE')(p.frame[0], pw, ph)
+    src = p.frame[0]
+    if pw[0] ~= size or ph[0] ~= size then
+      hr = com(w.fac, 11, 'FH_MAKE')(w.fac, p.scaler)
+      if hr >= 0 then hr = com(p.scaler[0], 8, 'FH_SCALE')(p.scaler[0], src, size, size, 3) end
+      if hr < 0 then why = 'scale' else src = p.scaler[0] end
+    end
+  end
+  if not why then
+    hr = com(w.fac, 10, 'FH_MAKE')(w.fac, p.conv)
+    if hr >= 0 then hr = com(p.conv[0], 8, 'FH_CONV')(p.conv[0], src, w.bgra, 0, nil, 0, 0) end
+    if hr < 0 then why = 'convert' end
+  end
+  if not why then
+    hr = com(w.fac, 8, 'FH_ENC_MAKE')(w.fac, w.png, nil, p.enc)
+    if hr >= 0 then hr = com(p.enc[0], 3, 'FH_ENC_INIT')(p.enc[0], ostream, 2) end
+    if hr >= 0 then hr = com(p.enc[0], 10, 'FH_NEW_FRAME')(p.enc[0], p.ofr, p.bag) end
+    if hr >= 0 then hr = com(p.ofr[0], 3, 'FH_FR_INIT')(p.ofr[0], p.bag[0]) end
+    if hr >= 0 then hr = com(p.ofr[0], 4, 'FH_FR_SIZE')(p.ofr[0], size, size) end
+    if hr >= 0 then
+      local fmt = ffi.new('FH_GUID', w.bgra)
+      hr = com(p.ofr[0], 6, 'FH_FR_FMT')(p.ofr[0], fmt)
+    end
+    if hr >= 0 then hr = com(p.ofr[0], 11, 'FH_FR_SRC')(p.ofr[0], p.conv[0], nil) end
+    if hr >= 0 then hr = com(p.ofr[0], 12, 'FH_DONE')(p.ofr[0]) end
+    if hr >= 0 then hr = com(p.enc[0], 11, 'FH_DONE')(p.enc[0]) end
+    if hr < 0 then why = 'encode' end
+  end
+  if not why then
+    local pos = ffi.new('unsigned long long[1]')
+    com(ostream, 5, 'FH_SEEK')(ostream, 0, 2, pos)
+    local n = tonumber(pos[0])
+    com(ostream, 5, 'FH_SEEK')(ostream, 0, 0, nil)
+    local buf = ffi.new('unsigned char[?]', math.max(1, n))
+    local got = ffi.new('unsigned long[1]')
+    if n > 0 and com(ostream, 3, 'FH_READ')(ostream, buf, n, got) >= 0 and got[0] == n then
+      out = ffi.string(buf, n)
+    else
+      why = 'read'
+    end
+  end
+  for _, k in ipairs({'bag', 'ofr', 'enc', 'conv', 'scaler', 'frame', 'dec'}) do release(p[k][0]) end
+  release(ostream); release(stream)
+  return out, why
+end
+end
+
+do
+-- The library is read straight from the game's <folder>\items.zip: names, descriptions and icons.
+-- The list is parsed once into config\<pack>_z.idx (offsets into items.zip) and again after the
+-- game changes the file. Icons are WebP: each one is turned into a PNG the first time it is
+-- shown and kept in config\<pack>_pics.bin, so later it opens at once.
+
+local function u16(s, i) local a, b = s:byte(i, i + 1) return a + b * 256 end
+local function u32(s, i) local a, b, c, d = s:byte(i, i + 3) return a + b * 256 + c * 65536 + d * 16777216 end
+
+function F.lib_zip_path()
+  return F.wd() .. '\\..\\' .. F.proj().folder .. '\\items.zip'
+end
+
+function F.lib_zip_size()
+  local f = io.open(F.lib_zip_path(), 'rb')
+  if not f then return nil end
+  local n = f:seek('end')
+  f:close()
+  return n
+end
+
+-- Only the central directory is read: name -> where the entry is and how it is stored.
+function F.zip_open(path)
+  local f = io.open(path, 'rb')
+  if not f then return nil, 'нет файла ' .. path end
+  local size = f:seek('end')
+  local tn = math.min(size, 65557)
+  f:seek('set', size - tn)
+  local tail = f:read(tn) or ''
+  local e
+  for i = #tail - 21, 1, -1 do
+    if tail:byte(i) == 0x50 and tail:sub(i, i + 3) == 'PK\5\6' then e = i break end
+  end
+  if not e then f:close() return nil, 'items.zip повреждён' end
+  local count, cd_size, cd_off = u16(tail, e + 10), u32(tail, e + 12), u32(tail, e + 16)
+  f:seek('set', cd_off)
+  local cd = f:read(cd_size) or ''
+  local list, p = {}, 1
+  for _ = 1, count do
+    if cd:sub(p, p + 3) ~= 'PK\1\2' then break end
+    local nl, xl, cl = u16(cd, p + 28), u16(cd, p + 30), u16(cd, p + 32)
+    list[cd:sub(p + 46, p + 45 + nl)] = {method = u16(cd, p + 10), csize = u32(cd, p + 20), loc = u32(cd, p + 42)}
+    p = p + 46 + nl + xl + cl
+  end
+  return {f = f, size = size, list = list}
+end
+
+function F.zip_at(z, e)
+  if not e.at then
+    z.f:seek('set', e.loc)
+    local h = z.f:read(30) or ''
+    if #h < 30 or h:sub(1, 4) ~= 'PK\3\4' then return nil end
+    e.at = e.loc + 30 + u16(h, 27) + u16(h, 29)
+  end
+  return e.at
+end
+
+function F.zip_read(z, e)
+  local at = F.zip_at(z, e)
+  if not at then return nil end
+  z.f:seek('set', at)
+  local d = z.f:read(e.csize)
+  if e.method == 8 then return F.inflate(d) end
+  return e.method == 0 and d or nil
+end
+
+-- Raw deflate, for the few icons Rodina keeps compressed.
+local INF_LBASE = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258}
+local INF_LEXT = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0}
+local INF_DBASE = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577}
+local INF_DEXT = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13}
+local INF_ORDER = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15}
+
+function F.inflate(s)
+  if not s then return nil end
+  local band, bor, lshift, rshift = bit.band, bit.bor, bit.lshift, bit.rshift
+  local byte = string.byte
+  local pos, buf, cnt = 1, 0, 0
+  local out, on = {}, 0
+  local function bits(n)
+    while cnt < n do
+      local b = byte(s, pos)
+      if not b then error('inflate: eof') end
+      pos = pos + 1
+      buf = bor(buf, lshift(b, cnt))
+      cnt = cnt + 8
+    end
+    local v = band(buf, lshift(1, n) - 1)
+    buf = rshift(buf, n)
+    cnt = cnt - n
+    return v
+  end
+  local function build(len, n)
+    local count, offs, sym = {}, {}, {}
+    for l = 0, 15 do count[l] = 0 end
+    for i = 0, n - 1 do count[len[i] or 0] = count[len[i] or 0] + 1 end
+    offs[1] = 0
+    for l = 1, 14 do offs[l + 1] = offs[l] + count[l] end
+    for i = 0, n - 1 do
+      local l = len[i] or 0
+      if l ~= 0 then sym[offs[l]] = i offs[l] = offs[l] + 1 end
+    end
+    return {count = count, sym = sym}
+  end
+  local function decode(h)
+    local code, first, index = 0, 0, 0
+    for l = 1, 15 do
+      code = code + bits(1)
+      local c = h.count[l]
+      if code - c < first then return h.sym[index + code - first] end
+      index = index + c
+      first = (first + c) * 2
+      code = code * 2
+    end
+    error('inflate: bad code')
+  end
+  local function codes(lit, dist)
+    while true do
+      local sym = decode(lit)
+      if sym < 256 then
+        on = on + 1
+        out[on] = sym
+      elseif sym == 256 then
+        return
+      else
+        sym = sym - 256
+        if sym > 29 then error('inflate: bad length') end
+        local n = INF_LBASE[sym] + bits(INF_LEXT[sym])
+        local d = decode(dist) + 1
+        if d > 30 then error('inflate: bad distance') end
+        local back = INF_DBASE[d] + bits(INF_DEXT[d])
+        if back > on then error('inflate: too far') end
+        for _ = 1, n do
+          on = on + 1
+          out[on] = out[on - back]
+        end
+      end
+    end
+  end
+  local fixed_l, fixed_d
+  repeat
+    local last = bits(1)
+    local kind = bits(2)
+    if kind == 0 then
+      buf, cnt = 0, 0
+      local n = byte(s, pos) + byte(s, pos + 1) * 256
+      pos = pos + 4
+      for i = 0, n - 1 do
+        on = on + 1
+        out[on] = byte(s, pos + i)
+      end
+      pos = pos + n
+    elseif kind == 1 then
+      if not fixed_l then
+        local l, d = {}, {}
+        for i = 0, 287 do l[i] = i < 144 and 8 or i < 256 and 9 or i < 280 and 7 or 8 end
+        for i = 0, 29 do d[i] = 5 end
+        fixed_l, fixed_d = build(l, 288), build(d, 30)
+      end
+      codes(fixed_l, fixed_d)
+    elseif kind == 2 then
+      local nlen, ndist, ncode = bits(5) + 257, bits(5) + 1, bits(4) + 4
+      local cl = {}
+      for i = 0, 18 do cl[i] = 0 end
+      for i = 1, ncode do cl[INF_ORDER[i]] = bits(3) end
+      local ch = build(cl, 19)
+      local len, i = {}, 0
+      while i < nlen + ndist do
+        local sym = decode(ch)
+        if sym < 16 then
+          len[i] = sym
+          i = i + 1
+        else
+          local v, rep = 0, 0
+          if sym == 16 then
+            if i == 0 then error('inflate: no previous length') end
+            v, rep = len[i - 1], 3 + bits(2)
+          elseif sym == 17 then rep = 3 + bits(3)
+          else rep = 11 + bits(7) end
+          for _ = 1, rep do
+            len[i] = v
+            i = i + 1
+          end
+        end
+      end
+      local ll, dl = {}, {}
+      for k = 0, nlen - 1 do ll[k] = len[k] end
+      for k = 0, ndist - 1 do dl[k] = len[nlen + k] end
+      codes(build(ll, nlen), build(dl, ndist))
+    else
+      error('inflate: bad block')
+    end
+  until last == 1
+  local parts = {}
+  for i = 1, on, 4096 do parts[#parts + 1] = string.char(unpack(out, i, math.min(on, i + 4095))) end
+  return table.concat(parts)
+end
+
+-- items.bin: a header, then records id, icon, name, description and a block of varying length,
+-- so the next record is found by looking for something that reads like one.
+local function utf8_ok(s, i, j)
+  local k = i
+  while k <= j do
+    local c = s:byte(k)
+    local n
+    if c < 0x80 then n = 0
+    elseif c >= 0xC2 and c <= 0xDF then n = 1
+    elseif c >= 0xE0 and c <= 0xEF then n = 2
+    elseif c >= 0xF0 and c <= 0xF4 then n = 3
+    else return false end
+    if k + n > j then return false end
+    for m = 1, n do
+      local x = s:byte(k + m)
+      if x < 0x80 or x > 0xBF then return false end
+    end
+    if n == 2 then
+      local x = s:byte(k + 1)
+      if (c == 0xE0 and x < 0xA0) or (c == 0xED and x > 0x9F) then return false end
+    elseif n == 3 then
+      local x = s:byte(k + 1)
+      if (c == 0xF0 and x < 0x90) or (c == 0xF4 and x > 0x8F) then return false end
+    end
+    k = k + n + 1
+  end
+  return true
+end
+
+local function lib_head(b, p, prev, top, len)
+  if p + 5 > len then return nil end
+  local rid = u16(b, p)
+  if not (prev < rid and rid <= top) then return nil end
+  local q = p + 4
+  if q + 1 > len then return nil end
+  local n = u16(b, q)
+  if n > 200 then return nil end
+  local ns, ne = q + 2, math.min(len, q + 1 + n)
+  if ns > ne then return nil end
+  for k = ns, ne do
+    if b:byte(k) < 32 then return nil end
+  end
+  if not utf8_ok(b, ns, ne) then return nil end
+  q = q + 2 + n
+  if q + 1 > len then return nil end
+  local dn = u16(b, q)
+  local ds, de = q + 2, math.min(len, q + 1 + dn)
+  if not utf8_ok(b, ds, de) then return nil end
+  return rid, u16(b, p + 2), b:sub(ns, ne), ds, de - ds + 1, q + 2 + dn
+end
+
+function F.lib_parse_items(b, step)
+  local len = #b
+  local p
+  if b:sub(1, 4) == 'ITM2' then
+    p = 6
+    for _ = 1, b:byte(5) do p = p + 1 + b:byte(p) end
+  elseif b:sub(1, 4) == 'ITM1' then
+    p = 7
+  else
+    return nil, 'неизвестный формат items.bin'
+  end
+  local count, top = u16(b, p), u16(b, p + 2)
+  p = p + 4
+  local out, prev = {}, 0
+  while #out < count do
+    local rid, icon, name, ds, dn, q = lib_head(b, p, prev, top, len)
+    if not rid then break end
+    local tail = len + 1 - q
+    for t = 0, 3999 do
+      local nx = lib_head(b, q + t, rid, top, len)
+      if nx and nx - rid < 400 then
+        tail = t
+        break
+      end
+    end
+    out[#out + 1] = {rid, icon, name, ds, dn, q <= len and b:byte(q) or -1}
+    prev, p = rid, q + tail
+    if step and #out % 300 == 0 then step(#out, count) end
+  end
+  if #out < count - 1 then return nil, 'прочитано ' .. #out .. ' из ' .. count end
+  return out
+end
+
+F.LIB_KINDS = {
+  arizona = {acs = {3, 22, 75, 6, 38, 59, 65}, skin = {10, 12, 71}, car = {2, 24, 49, 57, 68},
+    tune = {4, 23, 25}, gun = {8, 9, 44, 78, 79}, obj = {21}, box = {0, 1, 27, 33}},
+  rodina = {acs = {2, 3, 53}, skin = {4}, car = {22, 23, 41, 44}, tune = {14, 15, 16, 28},
+    gun = {5, 43}, obj = {24}, box = {18, 34, 35, 47, 49, 51, 55}},
+}
+
+-- Builds the text of <pack>_z.idx; step(n, total) is called now and then to give the frame back.
+function F.lib_build_idx(path, folder, step)
+  local z, err = F.zip_open(path)
+  if not z then return nil, err end
+  local ok, res, why = pcall(function()
+    local ib = z.list['items.bin']
+    if not ib or ib.method ~= 0 then return nil, 'в items.zip нет items.bin' end
+    local b = F.zip_read(z, ib)
+    if not b then return nil, 'items.bin не читается' end
+    local items, e = F.lib_parse_items(b, step and function(n, c) step(n, c * 2) end)
+    if not items then return nil, e end
+    local base = F.zip_at(z, ib) - 1
+    local aliases = {}
+    if z.list['icons/aliases.json'] then
+      local okj, v = pcall(F.json_value, F.zip_read(z, z.list['icons/aliases.json']) or '', 1)
+      if okj and type(v) == 'table' then
+        for k, x in pairs(v) do
+          if tonumber(k) and tonumber(x) then aliases[tonumber(k)] = tonumber(x) end
+        end
+      end
+    end
+    local kinds = {}
+    for cat, list in pairs(F.LIB_KINDS[folder] or F.LIB_KINDS.arizona) do
+      for _, k in ipairs(list) do kinds[k] = cat end
+    end
+    local rows, seen, icons = {'#' .. z.size}, {}, {}
+    for i, r in ipairs(items) do
+      local rid, icon, name, ds, dn, kind = r[1], r[2], r[3], r[4], r[5], r[6]
+      name = F.trim(name:gsub('\t', ' '))
+      if name ~= '' and name ~= 'DELETED' then
+        icon = aliases[rid] or icon
+        local key = name .. '\0' .. icon
+        local twin = seen[key]
+        seen[key] = true
+        if not icons[icon] then
+          local ent = z.list['icons/256/' .. icon .. '.webp'] or z.list[icon .. '.webp']
+          local at = ent and F.zip_at(z, ent)
+          icons[icon] = at and {at, ent.csize} or {0, 0}
+        end
+        local cat = twin and 'twin' or (name:find('^Номерная рамка') and 'frame') or kinds[kind] or 'etc'
+        rows[#rows + 1] = rid .. '\t' .. cat .. '\t' .. icons[icon][1] .. '\t' .. icons[icon][2] .. '\t' ..
+          (base + ds) .. '\t' .. dn .. '\t' .. name
+      end
+      if step and i % 500 == 0 then step(#items + i, #items * 2) end
+    end
+    return table.concat(rows, '\n') .. '\n'
+  end)
+  z.f:close()
+  if not ok then return nil, tostring(res) end
+  return res, why
+end
+
+function F.lib_idx_path() return F.cfg_dir() .. '\\' .. F.proj().pack .. '_z.idx' end
+
+-- Runs once per session when the list is missing or older than items.zip.
+function F.lib_build_start()
+  local st = F._libb
+  if st and (st.state == 'run' or st.zip == F.lib_zip_size()) then return end
+  st = {state = 'run', done = 0, total = 0, zip = F.lib_zip_size()}
+  F._libb = st
+  local folder = F.proj().folder
+  lua_thread.create(function()
+    local t0 = os.clock()
+    local text, err = F.lib_build_idx(F.lib_zip_path(), folder, function(n, total)
+      st.done, st.total = n, total
+      wait(0)
+    end)
+    if not text then
+      st.state, st.err = 'fail', err
+      F.log_line('Библиотека: не прочитал предметы из игры: ' .. tostring(err))
+      return
+    end
+    F.mkdir(F.cfg_dir())
+    local f = io.open(F.lib_idx_path(), 'wb')
+    if not f then
+      st.state, st.err = 'fail', 'нет доступа к папке config'
+      return
+    end
+    f:write(text)
+    f:close()
+    while F._lib and F._lib.buff_state == 'run' do wait(100) end
+    F.lib_reset()
+    st.state = 'done'
+    F.log_line(string.format('Библиотека: предметы прочитаны из игры за %.1f с', os.clock() - t0))
+  end)
+end
+
+-- Drops the loaded library: pictures go back to the game, files are closed.
+function F.lib_reset()
+  local db = F._lib
+  if db then
+    F.lib_free()
+    if db.fh then db.fh:close() end
+    local pc = db.pics
+    if pc then
+      if pc.rf then pc.rf:close() end
+      if pc.af then pc.af:close() end
+      if pc.xf then pc.xf:close() end
+    end
+  end
+  F._lib, F._lib_view = nil, nil
+end
+
+-- Converted icons: <pack>_pics.idx has "zip offset, offset in .bin, length" per line.
+function F.lib_pics(db)
+  if db.pics then return db.pics end
+  local pc = {map = {}}
+  db.pics = pc
+  local base = F.cfg_dir() .. '\\' .. F.proj().pack .. '_pics'
+  pc.bin, pc.idx = base .. '.bin', base .. '.idx'
+  local f = io.open(pc.idx, 'rb')
+  local data = f and f:read('*a') or ''
+  if f then f:close() end
+  if tonumber(data:match('^#(%d+)')) ~= db.stamp then
+    os.remove(pc.bin)
+    os.remove(pc.idx)
+    data = ''
+  end
+  for zat, at, n in data:gmatch('(%d+)\t(%d+)\t(%d+)') do pc.map[tonumber(zat)] = {tonumber(at), tonumber(n)} end
+  pc.fresh = data == ''
+  return pc
+end
+
+function F.lib_pic_read(pc, e)
+  if pc.rf == nil then pc.rf = io.open(pc.bin, 'rb') or false end
+  if not pc.rf or not pc.rf:seek('set', e[1]) then return nil end
+  return pc.rf:read(e[2])
+end
+
+function F.lib_pic_save(db, zat, png)
+  local pc = F.lib_pics(db)
+  F.mkdir(F.cfg_dir())
+  if not pc.af then
+    pc.af = io.open(pc.bin, 'ab')
+    pc.xf = io.open(pc.idx, 'ab')
+    if not (pc.af and pc.xf) then return end
+    if pc.fresh then
+      pc.xf:write('#' .. tostring(db.stamp) .. '\n')
+      pc.fresh = false
+    end
+  end
+  local at = pc.af:seek('end')
+  pc.af:write(png)
+  pc.af:flush()
+  pc.xf:write(zat .. '\t' .. at .. '\t' .. #png .. '\n')
+  pc.xf:flush()
+  pc.map[zat] = {at, #png}
+  if pc.rf then
+    pc.rf:close()
+    pc.rf = nil
+  end
+end
+
+-- The PNG of an icon from the cache. A missing one is asked for: F.lib_pic_tick makes it
+-- in the main loop, not while the menu is being drawn (the second true says "not yet").
+function F.lib_png(db, it, frame)
+  local pc = F.lib_pics(db)
+  local e = pc.map[it.pic_at]
+  if e then return F.lib_pic_read(pc, e) end
+  if e == false or db.nowic then return nil end
+  db.want = db.want or {}
+  db.want[it.pic_at] = {it = it, frame = frame}
+  return nil, true
+end
+
+-- If the game went down while a picture was being made, the lock file is still there:
+-- pictures stay off until the player turns them on again.
+function F.lib_lock_path() return F.cfg_dir() .. '\\fhelp_pics.lock' end
+
+function F.lib_pic_tick()
+  local db = F._lib
+  if not db or not db.want or db.nowic then return end
+  if db.lock_seen == nil then
+    local f = io.open(F.lib_lock_path(), 'rb')
+    db.lock_seen = f ~= nil
+    if f then
+      f:close()
+      db.nowic = 'crash'
+      F.log_line('Библиотека: картинки выключены, игра закрылась, пока готовилась картинка')
+      return
+    end
+  end
+  local best, at
+  for zat, w in pairs(db.want) do
+    if not best or w.frame > best.frame then best, at = w, zat end
+  end
+  if not best then return end
+  db.want[at] = nil
+  if F.lib_pics(db).map[at] ~= nil then return end
+  local lock = io.open(F.lib_lock_path(), 'wb')
+  if lock then
+    lock:write(tostring(at))
+    lock:close()
+  end
+  local ok, err = pcall(F.lib_pic_make, db, best.it)
+  os.remove(F.lib_lock_path())
+  if not ok then
+    F.lib_pics(db).map[at] = false
+    F.log_line('Библиотека: картинка не сделалась: ' .. tostring(err))
+  end
+  -- Requests from frames long gone are for cards no longer on screen.
+  for zat, w in pairs(db.want) do
+    if best.frame - w.frame > 30 then db.want[zat] = nil end
+  end
+end
+
+function F.lib_pic_make(db, it)
+  local pc = F.lib_pics(db)
+  local data = F.lib_read(it.pic_at, it.pic_n)
+  if data and not (data:sub(1, 4) == 'RIFF' and data:sub(9, 12) == 'WEBP') then
+    local ok, raw = pcall(F.inflate, data)
+    data = ok and raw or nil
+  end
+  if not data then
+    pc.map[it.pic_at] = false
+    return nil
+  end
+  local png, why = F.wic_png(data)
+  if not png then
+    pc.map[it.pic_at] = false
+    db.wic_bad = (db.wic_bad or 0) + 1
+    if why == 'nowic' or (not db.wic_good and db.wic_bad >= 3) then
+      db.nowic = why == 'nowic' and 'nowic' or 'nocodec'
+      F.log_line('Библиотека: Windows не открывает WebP (' .. tostring(why) .. ')')
+    end
+    return nil
+  end
+  db.wic_good = true
+  pcall(F.lib_pic_save, db, it.pic_at, png)
+  return png
+end
+
+-- Windows calls go through the interpreter only: a JIT trace around them broke the game.
+if jit and jit.off then
+  for _, fn in ipairs({F.wic, F.wic_png, F.lib_pic_make, F.lib_pic_tick}) do jit.off(fn, true) end
+end
+
+-- Descriptions in items.bin keep colours and line breaks; the card shows them as one text.
+function F.lib_dtext(at, n)
+  local s = F.lib_read(at, n)
+  if not s then return nil end
+  s = s:gsub('{%x%x%x%x%x%x}', ''):gsub('\r', ''):gsub('[ \t]*\n[ \t]*', ' '):gsub('  +', ' ')
+  return F.trim(s)
+end
+
+F.WEBP_STORE = 'ms-windows-store://pdp/?ProductId=9PG2DK419DRG'
+
+-- What the Items page says above the grid while the library is not ready.
+function F.lib_state_bar(db)
+  local st = F._libb
+  if st and st.state == 'run' then
+    local pct = st.total > 0 and math.floor(st.done / st.total * 100) or 0
+    F.hint('Читаю предметы из игры… ' .. pct .. '%', F.cvec('accent_hi'))
+  elseif st and st.state == 'fail' and not db.packed then
+    F.hint('Не получилось прочитать предметы из игры: ' .. tostring(st.err), F.cvec('accent_hi'))
+  elseif not db.packed and not F.lib_zip_size() then
+    F.hint('Не нашёл ' .. F.proj().folder .. '\\items.zip в папке игры, картинок не будет.', F.cvec('accent_hi'))
+  end
+  if db.nowic == 'crash' then
+    F.hint('Картинки выключены: в прошлый раз игра закрылась, пока готовилась картинка. Названия и описания работают.', F.cvec('accent_hi'))
+    if F.button('Включить картинки снова##webpon', 240, 0) then
+      os.remove(F.lib_lock_path())
+      db.nowic, db.lock_seen = nil, false
+    end
+    imgui.Spacing()
+  elseif db.nowic then
+    F.hint('Картинки не показываются: Windows не умеет открывать WebP. Поставь бесплатное «Расширения для изображений WebP» из Microsoft Store и перезапусти игру.', F.cvec('accent_hi'))
+    if F.button('Открыть Microsoft Store##webp', 240, 0, 'primary') then F.shell_open('open', F.WEBP_STORE) end
+    imgui.Spacing()
+  end
+end
+end
+
 function F.lib_db()
   if F._lib then return F._lib end
   local db = {list = {}, by_id = {}, cache = {}, cached = 0}
   F._lib = db
-  local f = io.open(F.cfg_dir() .. '\\' .. F.proj().pack .. '.idx', 'rb')
+  local f = io.open(F.lib_idx_path(), 'rb')
   local data = f and f:read('*a') or ''
   if f then f:close() end
   db.stamp = tonumber(data:match('^#(%d+)'))
@@ -11792,6 +12484,12 @@ function F.lib_db()
     end
   end
   db.packed = #db.list > 0
+  local zip = F.lib_zip_size()
+  if zip and zip ~= db.stamp then
+    F.lib_build_start()
+    -- The build can finish at once (no wait in it) and leave a fresh library.
+    if F._lib ~= db then return F.lib_db() end
+  end
   if not db.packed and not F.is_rod() then
     local list = F.item_db().list
     for i = 1, #list do
@@ -11806,7 +12504,7 @@ end
 
 function F.lib_read(at, n)
   local db = F.lib_db()
-  if db.fh == nil then db.fh = io.open(F.cfg_dir() .. '\\' .. F.proj().pack .. '.bin', 'rb') or false end
+  if db.fh == nil then db.fh = io.open(F.lib_zip_path(), 'rb') or false end
   if not db.fh or n <= 0 or not db.fh:seek('set', at) then return nil end
   return db.fh:read(n)
 end
@@ -12024,7 +12722,11 @@ function F.lib_tex(it)
   if db.frame ~= frame then db.frame, db.budget = frame, 8 end
   if db.budget <= 0 then return nil end
   db.budget = db.budget - 1
-  local png = F.lib_read(it.pic_at, it.pic_n)
+  local png, busy = F.lib_png(db, it, frame)
+  if busy then
+    db.budget = db.budget + 1
+    return nil
+  end
   local ok, tex = false, nil
   if png then ok, tex = pcall(imgui.CreateTextureFromFileInMemory, png, #png) end
   if not (ok and tex) and not db.pic_failed then
@@ -12212,7 +12914,7 @@ function F.lib_buff_build()
       for i = 1, #list do
         local it = list[i]
         if (it.desc_n or 0) > 0 then
-          local desc = F.lib_read(it.desc_at, it.desc_n)
+          local desc = F.lib_dtext(it.desc_at, it.desc_n)
           if desc and desc ~= '' then F.lib_buff_scan(it, desc) end
           if it.bkeys then
             for k in pairs(it.bkeys) do db.buff_n[k] = (db.buff_n[k] or 0) + 1 end
@@ -12400,7 +13102,7 @@ end
 
 function F.lib_desc(it)
   if it.desc == nil then
-    it.desc = (it.desc_n or 0) > 0 and F.lib_read(it.desc_at, it.desc_n) or ''
+    it.desc = (it.desc_n or 0) > 0 and F.lib_dtext(it.desc_at, it.desc_n) or ''
   end
   return it.desc
 end
@@ -12782,25 +13484,12 @@ function F.item_cmd(arg)
   F.item_open(it.id)
 end
 
-function F.lib_stale(db)
-  if db.stale == nil then
-    local path = F.wd() .. '\\..\\' .. F.proj().folder .. '\\items.zip'
-    local size = lfs_ok and lfs.attributes(path, 'size')
-    db.stale = (size and db.stamp and size ~= db.stamp) or false
-  end
-  return db.stale
-end
-
 function F.draw_items()
   F.page_head('Предметы', 'Все предметы игры: поиск по названию и бафам, карточка с описанием, ценами и твоими сделками')
   F.int_pick_bar()
   local db = F.lib_db()
   local w = F.inner_w()
-  if not db.packed then
-    F.hint('Файлы с картинками не найдены: нужны config\\' .. F.proj().pack .. '.idx и .bin.', F.cvec('accent_hi'))
-  elseif F.lib_stale(db) then
-    F.hint('Игра обновила предметы: новые могут быть без картинок.')
-  end
+  F.lib_state_bar(db)
   F.lib_cat = F.lib_cat or 'all'
   F.lib_mode = F.lib_mode or 'name'
   F.lib_buff = F.lib_buff or 'all'
@@ -14817,7 +15506,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 28
+F.BUILD = 29
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -14838,19 +15527,22 @@ function F.upd_read(path)
 end
 
 -- downloadUrlToFile reports many steps; the last one says the file is complete.
--- A dead connection never reports, so there is a timeout as well.
-function F.fetch(url, path, done)
+-- A dead connection never reports, so a download quiet for `quiet` seconds counts as failed.
+function F.fetch(url, path, done, quiet, progress)
   local okm, ml = pcall(require, 'moonloader')
   local st = okm and type(ml) == 'table' and ml.download_status or {}
   os.remove(path)
   local fin = false
+  local last = os.clock()
   local function finish(ok)
     if fin then return end
     fin = true
     local ok2, err = pcall(done, ok)
-    if not ok2 then F.log_line('Обновление: ' .. tostring(err)) end
+    if not ok2 then F.log_line('Загрузка: ' .. tostring(err)) end
   end
-  local ok = pcall(downloadUrlToFile, url, path, function(_, status)
+  local ok = pcall(downloadUrlToFile, url, path, function(_, status, p1, p2)
+    last = os.clock()
+    if progress and status == st.STATUS_DOWNLOADINGDATA then pcall(progress, tonumber(p1) or 0, tonumber(p2) or 0) end
     if status == st.STATUSEX_ENDDOWNLOAD then finish(doesFileExist(path)) end
   end)
   if not ok then
@@ -14858,8 +15550,7 @@ function F.fetch(url, path, done)
     return
   end
   lua_thread.create(function()
-    local t0 = os.clock()
-    while not fin and os.clock() - t0 < 25 do wait(250) end
+    while not fin and os.clock() - last < (quiet or 25) do wait(250) end
     finish(false)
   end)
 end
@@ -15292,6 +15983,7 @@ function main()
     pcall(F.mem_tick, now)
     if not F._restoring then pcall(F.bak_tick, now) end
     pcall(F.upd_tick, now)
+    pcall(F.lib_pic_tick)
     pcall(F.shop_tick)
     pcall(F.chest_tick)
     pcall(F.wood_tick)
