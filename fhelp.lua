@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.3'
+local VER = '1.19.4'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(30)
+script_version_number(31)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -7570,6 +7570,10 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.4', '10.11.2026', {
+    {'fix', 'Проверка обновления снова доходит до GitHub: в 1.19.3 она всегда писала «нет связи с GitHub»'},
+    {'fix', 'Если файл из последнего коммита не скачался, версия берётся с ветки, как раньше'},
+  }},
   {'1.19.3', '10.11.2026', {
     {'fix', 'Кнопка «Проверить обновление» каждый раз заново сверяется с GitHub, даже если версия уже была найдена'},
     {'fix', 'Версия и файл берутся из последнего коммита на GitHub, поэтому старая копия из кэша не подсовывается'},
@@ -15511,7 +15515,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 30
+F.BUILD = 31
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -15533,31 +15537,46 @@ end
 
 -- downloadUrlToFile reports many steps; the last one says the file is complete.
 -- A dead connection never reports, so a download quiet for `quiet` seconds counts as failed.
+-- MoonLoader keeps the Lua thread that started a download and calls back into it, even
+-- after the file is done. A short-lived thread is gone by then and the game crashes, so
+-- every download starts from one thread that lives as long as the script.
+F._fq = F._fq or {}
+
 function F.fetch(url, path, done, quiet, progress)
+  local job = {url = url, path = path, done = done, quiet = quiet or 25, progress = progress}
+  if F.FETCH_SYNC then return F.fetch_run(job) end
+  F._fq[#F._fq + 1] = job
+  if not F._fw then
+    F._fw = lua_thread.create(function()
+      while true do
+        local j = table.remove(F._fq, 1)
+        if j then F.fetch_run(j) else wait(50) end
+      end
+    end)
+  end
+end
+
+-- Runs inside the download thread and waits there until the file is complete or quiet too long.
+function F.fetch_run(job)
   local okm, ml = pcall(require, 'moonloader')
   local st = okm and type(ml) == 'table' and ml.download_status or {}
-  os.remove(path)
-  local fin = false
-  local last = os.clock()
-  local function finish(ok)
-    if fin then return end
-    fin = true
-    local ok2, err = pcall(done, ok)
-    if not ok2 then F.log_line('Загрузка: ' .. tostring(err)) end
-  end
-  local ok = pcall(downloadUrlToFile, url, path, function(_, status, p1, p2)
-    last = os.clock()
-    if progress and status == st.STATUS_DOWNLOADINGDATA then pcall(progress, tonumber(p1) or 0, tonumber(p2) or 0) end
-    if status == st.STATUSEX_ENDDOWNLOAD then finish(doesFileExist(path)) end
+  os.remove(job.path)
+  local s = {fin = false, ok = false, last = os.clock()}
+  local ok, err = pcall(downloadUrlToFile, job.url, job.path, function(_, status, p1, p2)
+    s.last = os.clock()
+    if job.progress and status == st.STATUS_DOWNLOADINGDATA then pcall(job.progress, tonumber(p1) or 0, tonumber(p2) or 0) end
+    if status == st.STATUSEX_ENDDOWNLOAD and not s.fin then
+      s.fin = true
+      s.ok = doesFileExist(job.path)
+    end
   end)
   if not ok then
-    finish(false)
-    return
+    F.log_line('Загрузка не началась: ' .. tostring(err))
+    s.fin = true
   end
-  lua_thread.create(function()
-    while not fin and os.clock() - last < (quiet or 25) do wait(250) end
-    finish(false)
-  end)
+  while not s.fin and os.clock() - s.last < job.quiet do wait(50) end
+  local ok2, err2 = pcall(job.done, s.fin and s.ok)
+  if not ok2 then F.log_line('Загрузка: ' .. tostring(err2)) end
 end
 
 function F.upd_parse(s)
@@ -15607,11 +15626,7 @@ function F.upd_check(manual, want)
   u.state = 'checking'
   F.mkdir(F.cfg_dir())
   local path = F.cfg_dir() .. '\\fhelp_upd.json'
-  F.upd_sha(function(sha)
-    local src = sha and (base:gsub('/' .. F.UPD.branch .. '/$', '/' .. sha .. '/')) or base
-    F.fetch(src .. 'version.json?t=' .. os.time(), path, function(ok)
-      local info = ok and F.upd_parse(F.upd_read(path))
-      os.remove(path)
+  local function got(info, src, sha)
       want = u.want
       u.want = nil
       if not info then
@@ -15630,7 +15645,24 @@ function F.upd_check(manual, want)
       if want == 'install' then F.upd_install_now()
       elseif want then F.upd_offer()
       elseif manual or (cfg.upd_skip ~= info.build and u.told ~= info.build) then F.upd_announce(info) end
+  end
+  -- version.json from the newest commit; if that fails, from the branch as before.
+  local function load(src, sha, last)
+    F.fetch(src .. 'version.json?t=' .. os.time(), path, function(ok)
+      local body = ok and F.upd_read(path)
+      local info = F.upd_parse(body)
+      os.remove(path)
+      if not info then
+        F.log_line(string.format('Обновление: %s, version.json %s, %d байт', src, ok and 'скачан' or 'не скачан', body and #body or 0))
+        if not last then return load(base, nil, true) end
+      end
+      got(info, src, sha)
     end)
+  end
+  F.upd_sha(function(sha)
+    if not sha then F.log_line('Обновление: GitHub не назвал последний коммит, беру ветку') end
+    local src = sha and (base:gsub('/' .. F.UPD.branch .. '/$', '/' .. sha .. '/')) or base
+    load(src, sha, src == base)
   end)
 end
 
