@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.2'
+local VER = '1.19.3'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(29)
+script_version_number(30)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -7570,6 +7570,11 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.3', '10.11.2026', {
+    {'fix', 'Кнопка «Проверить обновление» каждый раз заново сверяется с GitHub, даже если версия уже была найдена'},
+    {'fix', 'Версия и файл берутся из последнего коммита на GitHub, поэтому старая копия из кэша не подсовывается'},
+    {'add', 'В настройках видно, какая версия на GitHub и когда была проверка'},
+  }},
   {'1.19.2', '10.11.2026', {
     {'add', 'Предметы и их картинки берутся прямо из игры (items.zip): ничего докачивать и собирать не нужно'},
     {'add', 'Картинка готовится при первом показе и дальше открывается сразу'},
@@ -15506,7 +15511,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 29
+F.BUILD = 30
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -15571,38 +15576,61 @@ function F.upd_parse(s)
   return {build = build, version = F.utf_cut(v.version, 20), notes = notes, size = tonumber(v.size), file = file}
 end
 
-function F.upd_check(manual)
+-- The newest commit of the branch, from the GitHub API. Files are then taken from that exact
+-- commit: version.json and fhelp.lua always match, and no cache can hand out an old copy.
+function F.upd_api()
+  return 'https://api.github.com/repos/' .. F.UPD.user .. '/' .. F.UPD.repo .. '/commits/' .. F.UPD.branch
+end
+
+function F.upd_sha(done)
+  local path = F.cfg_dir() .. '\\fhelp_upd_sha.json'
+  F.fetch(F.upd_api() .. '?t=' .. os.time(), path, function(ok)
+    local s = ok and F.upd_read(path) or ''
+    os.remove(path)
+    done(s:match('^%s*{%s*"sha"%s*:%s*"(%x+)"'))
+  end)
+end
+
+-- want: true shows the offer after the check, 'install' installs right away.
+function F.upd_check(manual, want)
   local u = F.upd_state()
+  if want then u.want = want end
   if u.state == 'checking' or u.state == 'loading' or u.state == 'done' then return end
   u.at = os.time()
   local base = F.upd_base()
   if not base then
     u.state = 'off'
+    u.want = nil
     if manual then F.notify('Адрес обновлений ещё не настроен') end
     return
   end
   u.state = 'checking'
   F.mkdir(F.cfg_dir())
   local path = F.cfg_dir() .. '\\fhelp_upd.json'
-  F.fetch(base .. 'version.json?t=' .. os.time(), path, function(ok)
-    local info = ok and F.upd_parse(F.upd_read(path))
-    os.remove(path)
-    local want = u.want
-    u.want = nil
-    if not info then
-      u.state = 'fail'
-      if manual then F.notify('Не удалось проверить обновление, нет связи с GitHub') end
-      return
-    end
-    u.info = info
-    if info.build <= F.BUILD then
-      u.state = 'none'
-      if manual then F.notify('У тебя последняя версия: ' .. VER) end
-      return
-    end
-    u.state = 'new'
-    if want then F.upd_offer()
-    elseif manual or (cfg.upd_skip ~= info.build and u.told ~= info.build) then F.upd_announce(info) end
+  F.upd_sha(function(sha)
+    local src = sha and (base:gsub('/' .. F.UPD.branch .. '/$', '/' .. sha .. '/')) or base
+    F.fetch(src .. 'version.json?t=' .. os.time(), path, function(ok)
+      local info = ok and F.upd_parse(F.upd_read(path))
+      os.remove(path)
+      want = u.want
+      u.want = nil
+      if not info then
+        u.state = 'fail'
+        if manual then F.notify('Не удалось проверить обновление, нет связи с GitHub') end
+        return
+      end
+      info.src, info.sha = src, sha
+      u.info, u.checked = info, os.time()
+      if info.build <= F.BUILD then
+        u.state = 'none'
+        if manual then F.notify('На GitHub версия ' .. info.version .. ', у тебя ' .. VER .. ': обновлять нечего') end
+        return
+      end
+      u.state = 'new'
+      if want == 'install' then F.upd_install_now()
+      elseif want then F.upd_offer()
+      elseif manual or (cfg.upd_skip ~= info.build and u.told ~= info.build) then F.upd_announce(info) end
+    end)
   end)
 end
 
@@ -15669,19 +15697,21 @@ function F.upd_apply(data)
   return true
 end
 
+-- Installing always asks GitHub again first, so the newest version is the one installed.
 function F.upd_install()
+  F.upd_check(true, 'install')
+end
+
+function F.upd_install_now()
   local u = F.upd_state()
-  if u.state ~= 'new' or not u.info then
-    F.upd_check(true)
-    return
-  end
+  if u.state ~= 'new' or not u.info then return end
   local base = F.upd_base()
   if not base then return end
   u.state, u.err = 'loading', nil
   local info = u.info
   local tmp = F.cfg_dir() .. '\\fhelp_upd.lua'
   F.notify('Скачиваю версию ' .. info.version)
-  F.fetch(base .. info.file .. '?t=' .. os.time(), tmp, function(ok)
+  F.fetch((info.src or base) .. info.file .. '?t=' .. os.time(), tmp, function(ok)
     local data = ok and F.upd_read(tmp)
     os.remove(tmp)
     local why = F.upd_verify(data, info)
@@ -15724,17 +15754,13 @@ function F.upd_button()
     F.notify('Адрес обновлений ещё не настроен', true)
     return
   end
-  if u.state == 'new' and u.info then
-    F.upd_offer()
-    return
-  end
   if u.state == 'checking' or u.state == 'loading' or u.state == 'done' then
-    if u.state == 'checking' then u.want = true end
+    if u.state == 'checking' and not u.want then u.want = true end
     F.notify(F.UPD_TEXT[u.state], true)
     return
   end
-  u.want = true
-  F.upd_check(true)
+  -- Even with a version already found, ask GitHub again: a newer one may be out.
+  F.upd_check(true, true)
 end
 
 function F.upd_tip()
@@ -15746,8 +15772,7 @@ function F.upd_tip()
 end
 
 function F.upd_cmd()
-  local u = F.upd_state()
-  if u.state == 'new' then F.upd_install() else F.upd_check(true) end
+  F.upd_install()
 end
 
 -- First check a little after the start, then every half hour; a failed check is retried in five minutes.
@@ -15785,7 +15810,8 @@ function F.upd_card()
   local p = imgui.GetCursorScreenPos()
   local x = p.x
   x = x + F.chip(x, p.y, 'у тебя ' .. VER, 'muted') + 8
-  if u.info and u.state ~= 'none' then F.chip(x, p.y, 'на GitHub ' .. u.info.version, u.state == 'new' and 'on' or 'muted') end
+  if u.info then x = x + F.chip(x, p.y, 'на GitHub ' .. u.info.version, u.state == 'new' and 'on' or 'muted') + 8 end
+  if u.checked then F.chip(x, p.y, 'проверено в ' .. os.date('%H:%M', u.checked), 'muted') end
   F.advance(p, 1, F.s(24))
   if u.state == 'new' and u.info then
     F.hint('Вышла версия ' .. u.info.version .. '. Что нового:', F.cvec('accent_hi'))
@@ -15800,6 +15826,8 @@ function F.upd_card()
       dirty = true
     end
     if imgui.IsItemHovered() then F.tip('Не напоминать о ней при входе. Обновить можно в любой момент здесь') end
+    imgui.SameLine(0, 8)
+    if F.button('Проверить сейчас##updchk2', 190, 0) then F.upd_check(true) end
   else
     F.hint(F.UPD_TEXT[u.state] or '')
     imgui.Spacing()
