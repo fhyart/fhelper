@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.4'
+local VER = '1.19.5'
 script_name('fHelper')
-script_author('fhelp')
+script_author('fhyart')
 script_version(VER)
-script_version_number(31)
+script_version_number(32)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -179,6 +179,10 @@ local cfg = {
   loc2_bank = -1,
   loc2_depo = -1,
   inc_cur = 0,
+  wood_pw = 0,
+  wood_pd = 0,
+  wood_pw_vc = 0,
+  wood_pd_vc = 0,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -202,6 +206,7 @@ local CFG_NUM = {
   {'shift_auto', 0, 1}, {'shift_bar', 0, 1}, {'shift_x', -1, 10000}, {'shift_y', -1, 10000}, {'shift_scale', 0.6, 2},
   {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 5}, {'shift_chat', 0, 1},
   {'vc_here', 0, 1}, {'loc2_money', -1, 1e15}, {'loc2_bank', -1, 1e15}, {'loc2_depo', -1, 1e15}, {'inc_cur', 0, 1},
+  {'wood_pw', 0, 1e9}, {'wood_pd', 0, 1e12}, {'wood_pw_vc', 0, 1e9}, {'wood_pd_vc', 0, 1e12},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -296,6 +301,8 @@ if imgui_ok then
   ui.want_price = imgui.new.char[32]()
   ui.shift_goal = imgui.new.char[32]()  ui.shift_scale = imgui.new.float(100)
   ui.shift_alpha = imgui.new.float(90)
+  ui.wood_pw = imgui.new.char[32]()
+  ui.wood_pd = imgui.new.char[32]()
   ui.rng_h = imgui.new.float(0)
   ui.rng_m = imgui.new.float(0)
   ui.rng_time = imgui.new.char[32]()
@@ -1194,6 +1201,8 @@ function F.perform(j)
     F.shell_open('explore', F.wd())
   elseif j.op == 'log' then
     F.shell_open('open', F.log_path())
+  elseif j.op == 'url' then
+    if j.url and j.url:find('^https://') then F.shell_open('open', j.url) end
   elseif j.op == 'copy' then
     if not j.text or j.text == '' then
       F.notify('Нечего копировать')
@@ -7506,6 +7515,15 @@ function F.bak_preview()
   if F.button('Отмена##bakno', 160, 0) then F.bak_in = nil end
 end
 
+F.ABOUT_AUTHOR = 'fhyart'
+F.ABOUT_TEXT = 'fHelper собирает в одном окне всё, что нужно в игре: доходы и расходы, смены на работах, '
+  .. 'пейдеи, бинды, заметки, библиотеку предметов, управление скриптами MoonLoader и обновляется сам с GitHub. '
+  .. 'Открыть меню: /fhelp.'
+
+function F.about_url()
+  return 'https://github.com/' .. F.UPD.user .. '/' .. F.UPD.repo
+end
+
 function F.draw_settings_page()
   F.page_head('Настройки', 'Вид окна, сообщения и данные fHelper')
   F.card_begin('Окно', nil, 'ICON_FA_WINDOW_MAXIMIZE')
@@ -7556,12 +7574,25 @@ function F.draw_settings_page()
     F.ask('Сбросить время в игре и трафик? Пейдеи, бинды и заметки останутся.', 'Сбросить', 'fn', {fn = F.reset_stats})
   end
   F.card_end()
-  F.card_begin('О fHelper', nil, 'ICON_FA_INFO_CIRCLE')
+  F.card_begin('О fHelper', 'Помощник для Arizona RP и Rodina RP', 'ICON_FA_INFO_CIRCLE')
   local p = imgui.GetCursorScreenPos()
   local x = p.x
   x = x + F.chip(x, p.y, 'версия ' .. VER, 'on') + 8
+  x = x + F.chip(x, p.y, 'сборка ' .. tostring(F.BUILD), 'muted') + 8
   F.chip(x, p.y, F.proj().name, 'muted')
   F.advance(p, 1, F.s(24))
+  F.hint(F.ABOUT_TEXT)
+  imgui.Spacing()
+  F.hint('Автор: ' .. F.ABOUT_AUTHOR)
+  local url = F.about_url()
+  F.hint('GitHub: ' .. url)
+  imgui.Spacing()
+  if F.button(F.icon_label('ICON_FA_EXTERNAL_LINK_ALT', 'Открыть GitHub') .. '##aboutgh', 210, 0, 'primary') then
+    F.queue('url', {url = url})
+  end
+  F.same_if_fit(F.s(230))
+  if F.button(F.icon_label('ICON_FA_COPY', 'Скопировать ссылку') .. '##aboutcp', 230, 0) then F.queue('copy', {text = url}) end
+  imgui.Spacing()
   F.hint('fHelper не включает читы, обход античита, скрытые автоматические действия и эксплуатацию уязвимостей.')
   F.hint('Команды уходят в чат только когда ты сам нажал отправить или свой бинд.')
   F.card_end()
@@ -7570,6 +7601,13 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.5', '10.11.2026', {
+    {'fix', 'Лесоруб: «Заработано» и «В час» считают деньги за тележки и группу плюс стоимость добытых дров и ДВК, продажа склада больше не задваивает доход'},
+    {'fix', 'Лесоруб: если скрипт был выключен, пришедшие разом дрова и ДВК не портят «за тележку», они видны отдельно'},
+    {'add', 'Лесоруб: свои цены полена и ДВК в карточке смены, продажа обновляет их сама'},
+    {'add', 'Лесоруб: бонус аксессуаров к дровам, последнее дерево, доля группы и из чего складывается доход'},
+    {'add', 'Настройки → «О fHelper»: описание, версия, автор и кнопка перехода на GitHub'},
+  }},
   {'1.19.4', '10.11.2026', {
     {'fix', 'Проверка обновления снова доходит до GitHub: в 1.19.3 она всегда писала «нет связи с GitHub»'},
     {'fix', 'Если файл из последнего коммита не скачался, версия берётся с ветки, как раньше'},
@@ -8595,9 +8633,9 @@ F.SHIFT_COST = {
 }
 F.SHIFT_NUM = {'id', 't0', 't1', 'pause', 'pause_at', 'beat', 'inc', 'n', 'prem', 'fuel', 'liters', 'refuel',
   'repair', 'fine', 'rent', 'goal', 'lvl0', 'lvl', 'tariff', 'last', 'hit', 'auto', 'vc', 'wood', 'dvk', 'lost', 'sold',
-  'wood_inv', 'dvk_inv', 'inv', 'pay'}
--- Shorter lines from older versions: 22 fields before 1.19, 27 in the first 1.19 build.
-F.SHIFT_NUM_OLD = {27, 22}
+  'wood_inv', 'dvk_inv', 'inv', 'pay', 'miss', 'dvk_miss', 'base', 'base_got', 'tree', 'tree_k'}
+-- Shorter lines from older versions: 22 fields before 1.19, 27 in the first 1.19 build, 31 before 1.19.5.
+F.SHIFT_NUM_OLD = {31, 27, 22}
 F.SHIFT_MAX = 300
 -- Bits of cfg.shift_fields: what the on-screen bar shows.
 F.SHIFT_FIELDS = {
@@ -8718,8 +8756,16 @@ function F.shift_costs(s)
   return s.fuel + s.repair + s.fine + s.rent
 end
 
+-- A lumberjack earns wood and ДВК, not only money: the shift is worth the money that came
+-- (cart pay and group bonuses) plus what the mined wood and ДВК cost. A sale of the stock is
+-- not added again: it may hold wood from before the shift, and its value is already counted.
+function F.shift_earn(s)
+  if s.job ~= 'wood' then return s.inc end
+  return (s.inc - s.sold) + (F.wood_value(s) or 0)
+end
+
 function F.shift_net(s)
-  return s.inc - F.shift_costs(s)
+  return F.shift_earn(s) - F.shift_costs(s)
 end
 
 -- Below five minutes an hourly rate says nothing.
@@ -8775,7 +8821,7 @@ end
 function F.shift_report(s)
   local m = function(n) return F.shift_m(s, n) end
   local j = F.shift_job(s.job)
-  local parts = {F.shift_title(s) .. ': ' .. F.dur_text(F.shift_secs(s)), 'заработано ' .. m(s.inc)}
+  local parts = {F.shift_title(s) .. ': ' .. F.dur_text(F.shift_secs(s)), 'заработано ' .. m(F.shift_earn(s))}
   if s.n > 0 then parts[#parts + 1] = s.n .. ' ' .. F.ru_count(s.n, j.unit[1], j.unit[2], j.unit[3]) end
   if j.key == 'wood' then
     local wood, dvk, exact = F.wood_amounts(s)
@@ -8788,6 +8834,8 @@ function F.shift_report(s)
     elseif s.dvk > 0 then parts[#parts + 1] = 'ДВК выпала ' .. s.dvk .. ' ' .. F.ru_count(s.dvk, 'раз', 'раза', 'раз') end
     local est = F.wood_value(s)
     if est then parts[#parts + 1] = 'добыто примерно на ' .. m(est) end
+    if s.inc - s.sold > 0 then parts[#parts + 1] = 'деньгами ' .. m(s.inc - s.sold) end
+    if s.sold > 0 then parts[#parts + 1] = 'продано за ' .. m(s.sold) end
   end
   if j.key ~= 'wood' then
     if s.fuel > 0 then parts[#parts + 1] = 'топливо ' .. m(s.fuel) end
@@ -8847,7 +8895,24 @@ function F.shift_goal_check(s)
 end
 
 -- Every ledger record passes here; the running shift takes its job's pay and the car's costs.
+-- Any sale of wood or ДВК, in a shift or not, becomes the price the shift values them at.
+function F.wood_sale_price(r)
+  if r.cat ~= 'sell' or (tonumber(r.qty) or 0) <= 0 or (tonumber(r.amount) or 0) <= 0 then return end
+  local key = F.wood_price_key(r.text or '')
+  if not key then return end
+  if r.cur == 'vc' then key = key .. '_vc' end
+  cfg[key] = r.amount / r.qty
+  dirty = true
+  F.shift_rev = F.shift_rev + 1
+end
+
+function F.wood_price_key(text)
+  if F.has_pre(text, {'Древесина высшего качества'}) then return 'wood_pd' end
+  if F.has_pre(text, {'Дрова'}) then return 'wood_pw' end
+end
+
 function F.shift_led(r)
+  pcall(F.wood_sale_price, r)
   local s = F.shift
   if not s or r.cur ~= (s.vc == 1 and 'vc' or 'sa') then return end
   local text = r.text or ''
@@ -9044,6 +9109,12 @@ function F.wood_unit(s, u, now)
     if not (F._wood_cart or (q.own_at and math.abs(q.own_at - u.at) <= F.WOOD_SPAN)) then return false end
     s.dvk = s.dvk + 1
     if u.n then
+      -- A cart drops 2–6 pieces; far more means drops the script missed while it was off.
+      local done = math.max(0, s.n - 1)
+      local avg = done > 0 and (s.dvk_inv - s.dvk_miss) / done or 0
+      if u.n > math.max(F.WOOD_DVK_MAX, avg * 3) then
+        s.dvk_miss = s.dvk_miss + u.n - math.min(u.n, avg > 0 and math.floor(avg + 0.5) or 5)
+      end
       s.dvk_inv = s.dvk_inv + u.n
       s.inv = 2
     end
@@ -9069,6 +9140,20 @@ function F.wood_unit(s, u, now)
   if not c or now - c.at > 900 then return false end
   F._wood_cart = nil
   q.own_at = u.at
+  if u.n then
+    -- A cart brings 500–1300 wood. A jump far above that is carts the script missed while it
+    -- was off (a reload, a relog): the wood is the shift's, the per-cart numbers skip it.
+    local avg = F.wood_own_avg(s)
+    if u.n > math.max(F.WOOD_CART_MAX, avg * 3, c.n * 4) then
+      local typ = avg > 0 and avg or (c.n > 0 and math.min(u.n, c.n * F.wood_bonus_k(s)) or 0)
+      s.miss = s.miss + u.n - math.floor(typ + 0.5)
+    else
+      if c.n > 0 then
+        s.base, s.base_got = s.base + c.n, s.base_got + u.n
+      end
+      if s.tree == u.n and s.tree_k > 0 then s.tree_k = s.tree_k + 1 else s.tree, s.tree_k = u.n, 1 end
+    end
+  end
   s.n = s.n + 1
   s.last = os.time()
   s.wood = s.wood + (u.n or c.n)
@@ -9086,8 +9171,24 @@ function F.wood_unit(s, u, now)
   return true
 end
 
--- The price of one piece from the player's own last sale of it, in the shift's currency.
+F.WOOD_CART_MAX, F.WOOD_DVK_MAX = 2500, 12
+
+-- Own wood per cart, without the group's part and without what came in a missed jump.
+function F.wood_own_avg(s)
+  if s.n <= 0 or s.inv ~= 2 then return 0 end
+  return math.max(0, s.wood - s.wood_inv - s.miss) / s.n
+end
+
+-- How much more than the chat's cart amount lands in the inventory: accessories and skins.
+function F.wood_bonus_k(s)
+  if s.base > 0 and s.base_got > 0 then return s.base_got / s.base end
+  return 1
+end
+
+-- The price of one piece: the player's own one, else the last sale of it, in the shift's currency.
 function F.wood_price(prefix, cur)
+  local own = tonumber(cfg[F.wood_price_key(prefix) .. (cur == 'vc' and '_vc' or '')]) or 0
+  if own > 0 then return own end
   local led = F.led_state()
   local key = prefix .. '|' .. cur .. '|' .. led.rev
   F._wood_pc = F._wood_pc or {}
@@ -9102,6 +9203,24 @@ function F.wood_price(prefix, cur)
   end
   F._wood_pc[key] = price
   return price or nil
+end
+
+-- «ДВК 52% · дрова 45% · деньги 3%»: which part of the shift brings what.
+function F.wood_split(s)
+  local cur = s.vc == 1 and 'vc' or 'sa'
+  local pw, pd = F.wood_price('Дрова', cur) or 0, F.wood_price('Древесина высшего качества', cur) or 0
+  local wood, dvk = F.wood_amounts(s)
+  local parts = {{'ДВК', (dvk or 0) * pd}, {'дрова', wood * pw}, {'деньги', math.max(0, s.inc - s.sold)}}
+  local total = parts[1][2] + parts[2][2] + parts[3][2]
+  if total <= 0 or (pw <= 0 and pd <= 0) then return nil end
+  table.sort(parts, function(a, b) return a[2] > b[2] end)
+  local out = {}
+  for i, p in ipairs(parts) do
+    local pct = math.floor(p[2] * 100 / total + 0.5)
+    -- The tile is narrow: a small third part is left out, the rest says enough.
+    if pct > 0 and (i < 3 or pct >= 10) then out[#out + 1] = p[1] .. ' ' .. pct .. '%' end
+  end
+  return table.concat(out, ' · ')
 end
 
 -- What the wood and ДВК of a shift would bring at those prices.
@@ -9367,10 +9486,14 @@ function F.shift_rows(s, all)
     if all or F.shift_field_on(bit) then rows[#rows + 1] = {label, value, extra} end
   end
   add(1, 'Время', F.dur_text(F.shift_secs(s, now)) .. (s.pause_at > 0 and '  пауза' or ''))
-  add(2, 'Заработано', m(s.inc))
+  add(2, 'Заработано', m(F.shift_earn(s)))
   if j.key == 'wood' then
     local est = F.wood_value(s)
     if est or all then add(2, 'Добыто на', est and ('~' .. m(est)) or 'нет цены') end
+    local grp_m = s.inc - s.sold - s.pay
+    if s.pay > 0 then add(2, 'За тележки', m(s.pay)) end
+    if grp_m > 0 then add(2, 'Бонусы группы', m(grp_m)) end
+    if s.sold > 0 then add(2, 'Продано', m(s.sold)) end
   end
   if j.key ~= 'wood' then
     add(4, 'Расходы', F.shift_costs(s) > 0 and ('-' .. m(F.shift_costs(s))) or m(0))
@@ -9383,15 +9506,23 @@ function F.shift_rows(s, all)
     local wood, dvk, exact = F.wood_amounts(s)
     add(64, 'Тележки', tostring(s.n) .. (s.lost > 0 and ('  ·  потеряно ' .. s.lost) or ''))
     local grp = s.inv == 2 and s.wood_inv or 0
-    local own = wood - grp
+    local own = s.inv == 2 and F.wood_own_avg(s) or (s.n > 0 and (wood - grp) / s.n or 0)
     add(64, 'Дрова', F.num_text(wood) .. (exact and '' or ' *'))
-    if s.n > 0 and own > 0 then add(64, 'Дров за тележку', '~' .. F.num_text(own / s.n)) end
-    if grp > 0 then add(64, 'От группы', F.num_text(grp)) end
+    if own > 0 then add(64, 'Дров за тележку', '~' .. F.num_text(own)) end
+    if grp > 0 then add(64, 'От группы', F.num_text(grp) .. string.format('  ·  %d%%', math.floor(grp * 100 / wood + 0.5))) end
     if dvk then
       add(64, 'ДВК', F.num_text(dvk))
-      if s.n > 0 then add(64, 'ДВК за тележку', string.format('~%.1f', dvk / s.n)) end
+      if s.n > 0 then add(64, 'ДВК за тележку', string.format('~%.1f', math.max(0, dvk - s.dvk_miss) / s.n)) end
     else add(64, 'ДВК', 'выпала ' .. s.dvk .. ' ' .. F.ru_count(s.dvk, 'раз', 'раза', 'раз')) end
-    if s.pay > 0 then add(2, 'За тележки', m(s.pay)) end
+    if s.base > 0 and s.base_got > 0 then
+      add(64, 'Бонус к дровам', string.format('%+d%%', math.floor((s.base_got / s.base - 1) * 100 + 0.5)))
+    end
+    if s.tree > 0 then add(64, 'Последнее дерево', (s.tree_k >= 2 and '2 × ' or '') .. F.num_text(s.tree)) end
+    if s.miss > 0 or s.dvk_miss > 0 then
+      add(64, 'Без скрипта', F.num_text(s.miss) .. ' дров' .. (s.dvk_miss > 0 and ('  ·  ДВК ' .. F.num_text(s.dvk_miss)) or ''))
+    end
+    local split = all and F.wood_split(s)
+    if split then add(64, 'Из чего доход', split) end
   elseif s.n > 0 or all then
     add(64, j.rows, tostring(s.n) .. (s.n > 0 and ('  ·  ~' .. m((s.inc - s.prem) / s.n)) or ''))
   end
@@ -9490,6 +9621,40 @@ function F.draw_shift_bar()
   imgui.PopStyleColor(2)
 end
 
+-- Prices the lumberjack's wood and ДВК are valued at. A sale sets them by itself.
+function F.wood_price_edit(s)
+  local cur = s.vc == 1 and 'vc' or 'sa'
+  local sfx = cur == 'vc' and '_vc' or ''
+  local m = function(n) return F.shift_m(s, n) end
+  local pw, pd = F.wood_price('Дрова', cur), F.wood_price('Древесина высшего качества', cur)
+  F.hint('Цены для подсчёта: полено ' .. (pw and m(pw) or 'не задана') .. ', ДВК ' .. (pd and m(pd) or 'не задана')
+    .. '. Когда продаёшь дрова или ДВК, цена обновляется сама.')
+  local w = F.inner_w()
+  local fw = math.max(F.s(120), (w - F.s(130) - 16) / 2)
+  F.field('##woodpw', 'Цена полена, например 1274', ui.wood_pw, 32, fw, 'wood_pw')
+  imgui.SameLine(0, 8)
+  F.field('##woodpd', 'Цена ДВК, например 320к', ui.wood_pd, 32, fw, 'wood_pd')
+  imgui.SameLine(0, 8)
+  if F.button('Задать##woodpset', 130, 0) then
+    local set = 0
+    for _, row in ipairs({{ui.wood_pw, 'wood_pw'}, {ui.wood_pd, 'wood_pd'}}) do
+      local text = F.trim(F.buf_get(row[1]))
+      if text ~= '' then
+        local n = F.calc_eval(text)
+        if n and n > 0 then
+          cfg[row[2] .. sfx] = n
+          F.buf_set(row[1], '', 32)
+          set = set + 1
+        else set = -100 end
+      end
+    end
+    if set > 0 then
+      dirty = true
+      F.shift_rev = F.shift_rev + 1
+    else F.notify('Укажи цену числом, например 1274 или 320к', true) end
+  end
+end
+
 -- The card on top of Income → Work: start, the running shift, its goal, the bar's look.
 function F.shift_card()
   local s = F.shift
@@ -9524,7 +9689,9 @@ function F.shift_card()
     ['Последний заказ'] = 'ICON_FA_HISTORY', ['Уровень'] = 'ICON_FA_LEVEL_UP_ALT', ['Добыто на'] = 'ICON_FA_TAGS',
     ['Тележки'] = 'ICON_FA_DOLLY', ['Дрова'] = 'ICON_FA_TREE', ['ДВК'] = 'ICON_FA_GEM', ['Последняя тележка'] = 'ICON_FA_HISTORY',
     ['Дров за тележку'] = 'ICON_FA_TREE', ['От группы'] = 'ICON_FA_USERS', ['ДВК за тележку'] = 'ICON_FA_GEM',
-    ['За тележки'] = 'ICON_FA_DOLLY'}
+    ['За тележки'] = 'ICON_FA_DOLLY', ['Бонусы группы'] = 'ICON_FA_USERS', ['Продано'] = 'ICON_FA_HANDSHAKE',
+    ['Бонус к дровам'] = 'ICON_FA_PERCENT', ['Последнее дерево'] = 'ICON_FA_TREE', ['Без скрипта'] = 'ICON_FA_EXCLAMATION_TRIANGLE',
+    ['Из чего доход'] = 'ICON_FA_CHART_PIE'}
   for _, t in ipairs(tiles) do t[1] = icons[t[2]] or F.shift_job(s.job).icon end
   F.tile_grid('shift', tiles, 180)
   local other = {}
@@ -9535,6 +9702,7 @@ function F.shift_card()
     F.hint('Часть тележек посчитана по чату: там только база тележки, без бонусов аксессуаров и скинов. '
       .. 'Если так и останется, открой инвентарь один раз: fHelper запомнит, сколько у тебя дров и ДВК, и дальше будет считать точно.')
   end
+  if s.job == 'wood' then F.wood_price_edit(s) end
   if s.job ~= 'wood' then
     local fuel = s.refuel > 0 and (s.refuel .. ' ' .. F.ru_count(s.refuel, 'заправка', 'заправки', 'заправок')) or 'заправок не было'
     F.hint('Топливо: ' .. fuel .. (#other > 0 and ('. Ещё: ' .. table.concat(other, ', ')) or '') .. '.')
@@ -15515,7 +15683,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 31
+F.BUILD = 32
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
