@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.0'
+local VER = '1.19.1'
 script_name('fHelper')
 script_author('fhelp')
 script_version(VER)
-script_version_number(27)
+script_version_number(28)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -7570,6 +7570,10 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.1', '10.11.2026', {
+    {'fix', 'Обновления проверяются каждые полчаса, а не раз в три часа; если GitHub не ответил — снова через 5 минут'},
+    {'fix', 'Сообщение о новой версии приходит, когда ты уже на сервере, а не теряется на экране загрузки'},
+  }},
   {'1.19.0', '10.11.2026', {
     {'add', 'Vice City: доходы, расходы, пейдеи и смены считаются в VC$ отдельно от долларов'},
     {'add', 'В Доходах переключатель $ / VC$; при перелёте он сам переключается на валюту города'},
@@ -14813,7 +14817,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 27
+F.BUILD = 28
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -14907,11 +14911,25 @@ function F.upd_check(manual)
     end
     u.state = 'new'
     if want then F.upd_offer()
-    elseif manual or cfg.upd_skip ~= info.build then F.upd_announce(info) end
+    elseif manual or (cfg.upd_skip ~= info.build and u.told ~= info.build) then F.upd_announce(info) end
   end)
 end
 
+-- On the loading screen a chat line is lost, so the news waits for the spawn.
+function F.upd_on_server()
+  if not isSampAvailable() then return false end
+  local ok, spawned = pcall(sampIsLocalPlayerSpawned)
+  return ok and spawned == true
+end
+
 function F.upd_announce(info)
+  local u = F.upd_state()
+  u.told = info.build
+  if not F.upd_on_server() then
+    u.pend = info
+    return
+  end
+  u.pend = nil
   local msg = 'Вышла версия ' .. info.version .. '. Обновить: /fupdate или меню → Настройки → Обновление'
   F.log_line('Найдено обновление ' .. info.version)
   F.chat_brand(msg)
@@ -15041,13 +15059,20 @@ function F.upd_cmd()
   if u.state == 'new' then F.upd_install() else F.upd_check(true) end
 end
 
--- First check a little after the start, then every three hours.
+-- First check a little after the start, then every half hour; a failed check is retried in five minutes.
+F.UPD_EVERY, F.UPD_RETRY = 30 * 60, 5 * 60
+
 function F.upd_tick(now)
   if cfg.upd_on ~= 1 or not F.upd_base() then return end
   F._upd_t0 = F._upd_t0 or now
   if now - F._upd_t0 < 10 then return end
   local u = F.upd_state()
-  if u.at and os.time() - u.at < 3 * 3600 then return end
+  if u.pend and u.state == 'new' and (F._upd_pt or 0) <= now then
+    F._upd_pt = now + 2
+    if F.upd_on_server() then F.upd_announce(u.pend) end
+  end
+  local gap = u.state == 'fail' and F.UPD_RETRY or F.UPD_EVERY
+  if u.at and os.time() - u.at < gap then return end
   F.upd_check(false)
 end
 
