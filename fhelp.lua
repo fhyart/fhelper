@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.5'
+local VER = '1.19.6'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(32)
+script_version_number(33)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -159,6 +159,10 @@ local cfg = {
   ui_font = 0,
   win_w = 1080,
   mem_auto = 0,
+  mem_world = 0,
+  news_on = 1,
+  wel_on = 1,
+  wel_at = 0,
   want_pin = 1,
   want_sound = 1,
   want_x = -1,
@@ -201,7 +205,7 @@ local CFG_NUM = {
   {'upd_on', 0, 1}, {'upd_skip', 0, 1e9}, {'shop_on', 0, 1},
   {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},  {'toast_chest', 0, 1},
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
-  {'mem_auto', 0, 1},
+  {'mem_auto', 0, 1}, {'mem_world', 0, 4096}, {'news_on', 0, 1}, {'wel_on', 0, 1}, {'wel_at', 0, 1e11},
   {'want_pin', 0, 1}, {'want_sound', 0, 1}, {'want_x', -1, 10000}, {'want_y', -1, 10000}, {'bak_auto', 0, 1},
   {'shift_auto', 0, 1}, {'shift_bar', 0, 1}, {'shift_x', -1, 10000}, {'shift_y', -1, 10000}, {'shift_scale', 0.6, 2},
   {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 5}, {'shift_chat', 0, 1},
@@ -973,6 +977,7 @@ function F.sc_start(path, op)
     return
   end
   local name = F.rel_path(path)
+  F.sc_off_set(path, false)
   F.sc_set(path, {state = 'wait', at = os.time()})
   lua_thread.create(function()
     local off = F.ml_log_size()
@@ -1077,7 +1082,9 @@ function F.scan_files()
   end
   local root = F.wd()
   local function add_file(dir, name, prefix)
-    if name:sub(1, 1) == '.' or name:sub(1, 1) == '#' then return end
+    -- MoonLoader runs files that start with «#» or «.» like any other («#ArzMarket[3_57].lua»
+    -- is Arizona Market itself), so they are listed too.
+    if name == '.' or name == '..' then return end
     if name:lower() == 'fhelp_boot.lua' then return end
     if not name:lower():match('%.lua$') then return end
     local full = dir .. '\\' .. name
@@ -1102,18 +1109,21 @@ function F.scan_files()
       desc = F.game_text(meta.desc),
       category = F.guess_category(name .. ' ' .. prefix, F.game_text(meta.desc)),
       warn = warn,
+      dir = dir:lower(),
+      off = F.sc_off_has(full),
     }
   end
   local lok, list = pcall(script.list)
   F._scan_list = lok and list or nil
   local ok, err = pcall(function()
     for name in lfs.dir(root) do
-      if name ~= '.' and name ~= '..' and name:sub(1, 1) ~= '#' and name:sub(1, 1) ~= '.' then
+      if name ~= '.' and name ~= '..' then
         local full = root .. '\\' .. name
         local mode = lfs.attributes(full, 'mode')
+        local plain = name:sub(1, 1) ~= '#' and name:sub(1, 1) ~= '.'
         if mode == 'file' then
           add_file(root, name, '')
-        elseif mode == 'directory' and not skip_dir[name:lower()] then
+        elseif mode == 'directory' and plain and not skip_dir[name:lower()] then
           for sub in lfs.dir(full) do
             add_file(full, sub, name .. '\\')
           end
@@ -1126,7 +1136,135 @@ function F.scan_files()
     F.log_line('Список скриптов: ' .. tostring(err))
   end
   table.sort(file_list, function(a, b) return a.rel:lower() < b.rel:lower() end)
+  F.sc_pairs(file_list)
   need_scan = false
+end
+
+-- A loader and what it runs: «ArzMarket_Loader.lua» only updates and starts
+-- «#ArzMarket[3_57].lua». Turning the loader off or on does the same to its script,
+-- otherwise the switch says «off» while the script itself keeps working.
+function F.sc_pairs(list)
+  local function stem(name)
+    return (name:lower():gsub('%.lua$', ''):gsub('^[#%.]+', ''):gsub('[%s_%-]*%b[]', ''):gsub('[%s_%-]+$', ''))
+  end
+  for _, it in ipairs(list) do it.kids, it.parent = nil, nil end
+  for _, it in ipairs(list) do
+    local base = stem(it.name):match('^(.-)[%s_%-]*loader$')
+    if base and #base >= 3 then
+      for _, other in ipairs(list) do
+        if other ~= it and other.dir == it.dir and not other.self and stem(other.name) == base then
+          it.kids = it.kids or {}
+          it.kids[#it.kids + 1] = other.path
+          other.parent = it.path
+          other.parent_name = it.name
+        end
+      end
+      if it.kids then
+        local names = {}
+        for _, k in ipairs(it.kids) do names[#names + 1] = k:match('[^\\]+$') end
+        it.kid_names = table.concat(names, ', ')
+      end
+    end
+  end
+end
+
+-- Scripts the player turned off. MoonLoader starts every file again with the game, so
+-- fHelper unloads these right after the start: «off» stays off until it is turned on here.
+function F.sc_off_list()
+  if not F._sc_off then
+    F._sc_off = {}
+    for _, line in ipairs(F.read_lines('fhelp_scripts_off.txt')) do
+      local rel = F.trim(line)
+      if rel ~= '' then F._sc_off[rel:lower()] = rel end
+    end
+  end
+  return F._sc_off
+end
+
+function F.sc_off_has(path)
+  return F.sc_off_list()[F.rel_path(path):lower()] ~= nil
+end
+
+function F.sc_off_set(path, off)
+  if F.is_self_path(path) then return end
+  local list = F.sc_off_list()
+  local rel = F.rel_path(path)
+  if (list[rel:lower()] ~= nil) == (off and true or false) then return end
+  list[rel:lower()] = off and rel or nil
+  local out = {}
+  for _, v in pairs(list) do out[#out + 1] = v end
+  table.sort(out)
+  F.write_lines('fhelp_scripts_off.txt', out)
+end
+
+-- Once after the start: what is marked «off» and runs anyway is unloaded.
+function F.sc_off_apply()
+  local list = F.sc_off_list()
+  if next(list) == nil then return end
+  lua_thread.create(function()
+    wait(1500)
+    local lok, all = pcall(script.list)
+    F._scan_list = lok and all or nil
+    local found = {}
+    for _, rel in pairs(list) do
+      local path = rel:find('^%a:\\') and rel or (F.wd() .. '\\' .. rel)
+      local ok, s = pcall(F.find_loaded, path)
+      if ok and s then found[#found + 1] = {path, s, rel} end
+    end
+    F._scan_list = nil
+    for _, v in ipairs(found) do
+      F.sc_quiet(v[1])
+      if pcall(function() v[2]:unload() end) then F.log_line('Скрипт ' .. v[3] .. ' выключен в fHelper: выгружен при запуске') end
+    end
+    if #found > 0 then need_scan = true end
+  end)
+end
+
+-- Turns a script off and checks that it is really gone.
+function F.sc_stop(path, quiet)
+  local cur = F.sc_get(path)
+  if cur and cur.state == 'wait' then
+    F.notify('Скрипт ещё запускается или выключается, подожди пару секунд')
+    return
+  end
+  local name = F.rel_path(path)
+  F.sc_off_set(path, true)
+  local s = F.find_loaded(path, true)
+  if not s then
+    F.sc_set(path, nil)
+    need_scan = true
+    if not quiet then F.notify(name .. ' уже не запущен') end
+    return
+  end
+  local function sid(x)
+    local ok, id = pcall(function() return x.id end)
+    return ok and id or nil
+  end
+  local old_id = sid(s)
+  F.sc_set(path, {state = 'wait', at = os.time(), stop = true})
+  lua_thread.create(function()
+    F.sc_quiet(path)
+    local ok, err = pcall(function() s:unload() end)
+    local t0 = os.clock()
+    local now_s
+    repeat
+      wait(100)
+      now_s = F.find_loaded(path)
+    until not now_s or os.clock() - t0 > 2.5
+    if not now_s then
+      F.sc_set(path, nil)
+      if not quiet then F.notify('Выключен ' .. name) end
+    else
+      local new_id = sid(now_s)
+      local why = (not ok and tostring(err))
+        or (old_id and new_id and new_id ~= old_id and 'его сразу запустил снова другой скрипт')
+        or 'MoonLoader его не выгрузил'
+      F.sc_set(path, {state = 'fail', at = os.time(), err = 'Не выключился: ' .. why, stuck = true})
+      F.log_line('Скрипт ' .. name .. ' не выключился: ' .. why)
+      F.notify(name .. ' не выключился: ' .. why)
+    end
+    need_scan = true
+  end)
 end
 
 function F.remember(path)
@@ -1159,29 +1297,39 @@ function F.perform(j)
       F.perform({op = 'reload_self'})
       return
     end
+    -- Turned on by hand: it is no longer kept off, and neither is what it runs.
+    F.sc_off_set(j.path, false)
+    for _, k in ipairs(j.kids or {}) do F.sc_off_set(k, false) end
     F.sc_start(j.path, j.op)
-  elseif j.op == 'unload' then
-    local s = F.find_loaded(j.path, true)
-    if not s then
-      F.notify('Скрипт не запущен')
-      F.sc_set(j.path, nil)
-      need_scan = true
-      return
+    if j.op == 'load' and j.kids and #j.kids > 0 then
+      local kids = j.kids
+      lua_thread.create(function()
+        -- The loader may start its script by itself: only what is still off is started here.
+        local t0 = os.clock()
+        repeat wait(250) until (F.sc_get(j.path) or {}).state ~= 'wait' or os.clock() - t0 > 8
+        wait(1000)
+        for _, k in ipairs(kids) do
+          if not F.find_loaded(k) then
+            F.sc_start(k, 'load')
+            wait(300)
+          end
+        end
+      end)
     end
-    local self = F.is_self_path(j.path)
-    if self then
+  elseif j.op == 'unload' then
+    if F.is_self_path(j.path) then
+      local s = F.find_loaded(j.path, true)
+      if not s then return end
       -- fhelp_boot reads off=1 and does not start the helper again.
       cfg.open = 0
       cfg.off = 1
       F.save_cfg()
+      F.sc_quiet(j.path)
+      s:unload()
+      return
     end
-    F.sc_quiet(j.path)
-    s:unload()
-    if not self then
-      F.sc_set(j.path, nil)
-      F.notify('Выгружен ' .. F.rel_path(j.path))
-      need_scan = true
-    end
+    for _, k in ipairs(j.kids or {}) do F.sc_stop(k, true) end
+    F.sc_stop(j.path)
   elseif j.op == 'last' then
     if cfg.last == '' then
       F.notify('Сначала запустите скрипт из списка')
@@ -3452,7 +3600,8 @@ function F.switch(id, label, on, sub)
   return clicked
 end
 
-function F.segment(id, items, cur, w)
+-- dots: keys of the tabs that carry a pulsing «new here» dot.
+function F.segment(id, items, cur, w, dots)
   local p = imgui.GetCursorScreenPos()
   w = w or F.inner_w()
   local h = imgui.GetFrameHeight()
@@ -3473,6 +3622,7 @@ function F.segment(id, items, cur, w)
     local tw = F.text_w(font_main, label)
     local col = active and F.col('ink') or F.col('text', hovered and 255 or 180)
     F.text_at(font_main, 16, x + (cw - tw) / 2, p.y + (h - F.s(16)) / 2 - 1, col, label)
+    if dots and dots[items[i][1]] then F.pulse_dot(x + cw - F.s(8), p.y + 4 + F.s(6), F.s(3)) end
     if clicked then pick = items[i][1] end
   end
   F.advance(p, w, h)
@@ -3627,9 +3777,11 @@ end
 function F.toggle_script(item)
   if item.loaded then
     local text = item.self and 'Выключить fHelper? Меню закроется.' or ('Выключить скрипт ' .. item.name .. '?')
-    F.ask(text, 'Выключить', 'unload', {path = item.path})
+    if item.kids then text = text .. ' Вместе с ним выключится ' .. item.kid_names .. '.' end
+    if not item.self then text = text .. ' Он останется выключенным и после перезапуска игры.' end
+    F.ask(text, 'Выключить', 'unload', {path = item.path, kids = item.kids})
   else
-    F.queue('load', {path = item.path})
+    F.queue('load', {path = item.path, kids = item.kids})
   end
 end
 
@@ -3668,10 +3820,7 @@ function F.header_icon(id, x, y, glyph, tip, action)
     elseif action == 'settings' then page = 'settings'
     elseif action == 'reload' then F.queue('reload_self')
     elseif action == 'upd' then F.upd_button()
-    elseif action == 'patch' then
-      modal = {kind = 'patch', title = 'Что нового'}
-      cfg.seen_ver = VER
-      dirty = true
+    elseif action == 'patch' then F.patch_open()
     end
   end
   return hovered
@@ -3753,7 +3902,10 @@ function F.paint_top(ww, wp, side_w)
   bx = bx - 34
   F.header_icon('##patch', bx, iy, glyph('ICON_FA_BULLHORN', '!'), 'Что нового в версии ' .. VER, 'patch')
   if cfg.seen_ver ~= VER then
-    -- A dot until the notes of this version were opened.
+    -- A pulsing dot until the notes of this version were opened.
+    F.pulse_dot(bx + 25, iy + 7, 4)
+  elseif cfg.news_on == 1 and F.news_map().n > 0 then
+    -- Opened, but some sections with changes were not visited yet.
     dl:AddCircleFilled(imgui.ImVec2(bx + 25, iy + 7), 4, F.col('accent'), 12)
   end
 end
@@ -3789,6 +3941,11 @@ function F.paint_side(h, wide)
     else
       F.text_at(font_main, 16, x + (bw - gw) / 2, ty, icol, glyph)
       if hovered then F.tip(item[3]) end
+    end
+    if F.news_page(item[1]) then
+      if wide then F.pulse_dot(x + bw - F.s(14), y + ih / 2, F.s(4))
+      else F.pulse_dot(x + bw - F.s(7), y + F.s(7), F.s(3)) end
+      if hovered and wide then F.tip('Здесь есть изменения: открой, чтобы посмотреть') end
     end
     if clicked then
       if page == 'notes' and item[1] ~= 'notes' then F.note_flush() end
@@ -3908,7 +4065,8 @@ function F.script_row(item, w)
   local waiting = sc and sc.state == 'wait'
   local stripe = (item.warn or failed) and F.col('bad') or (item.loaded and F.col('accent') or F.col('text', 46))
   dl:AddRectFilled(imgui.ImVec2(p.x + 10, p.y + F.s(15)), imgui.ImVec2(p.x + 13, p.y + h - F.s(15)), stripe, 2)
-  local status = waiting and 'запуск…' or (failed and (sc.crashed and 'упал' or 'ошибка'))
+  local status = waiting and (sc.stop and 'выключаю…' or 'запуск…')
+    or (failed and (sc.stuck and 'не выключился' or (sc.crashed and 'упал' or 'ошибка')))
     or (item.warn and 'проверить' or (item.loaded and 'включен' or 'выключен'))
   local tone = waiting and 'muted' or ((failed or item.warn) and 'bad' or (item.loaded and 'on' or 'muted'))
   local text_end = sw_x - F.s(14)
@@ -3929,12 +4087,22 @@ function F.script_row(item, w)
   end
   local sub = item.desc ~= '' and item.desc or (item.author ~= '' and ('автор: ' .. item.author) or item.rel)
   local sub_col = F.col('text', 135)
+  if item.kids then sub = 'Загрузчик: запускает и обновляет ' .. item.kid_names
+  elseif item.parent then sub = (item.desc ~= '' and (item.desc .. '  ·  ') or '') .. 'сам скрипт, его запускает ' .. item.parent_name end
   if failed then
     sub, sub_col = sc.err or 'не запустился', F.col('bad')
   end
   F.text_at(font_main, 16, tx, p.y + F.s(32), sub_col, F.fit_text(font_main, sub, text_end - tx))
   if failed and hovered then
-    F.tip((sc.crashed and 'Скрипт упал: ' or 'Не запустился: ') .. (sc.err or '?') .. '\nПереключатель или ↻ запустят его заново.')
+    if sc.stuck then
+      F.tip((sc.err or 'Не выключился') .. '\nТакой скрипт выключится только с перезапуском игры: fHelper выгрузит его при старте.')
+    else
+      F.tip((sc.crashed and 'Скрипт упал: ' or 'Не запустился: ') .. (sc.err or '?') .. '\nПереключатель или ↻ запустят его заново.')
+    end
+  elseif hovered and item.kids then
+    F.tip('Переключатель включает и выключает загрузчик вместе с ' .. item.kid_names .. '.')
+  elseif hovered and item.off and not item.loaded then
+    F.tip('Выключен тобой: fHelper не даёт ему запускаться вместе с игрой.')
   end
   local sw_hit, sw_hover = F.hotspot('##sw' .. item.path, sw_x, p.y + (h - F.s(22)) / 2, F.s(40), F.s(22))
   F.knob('row' .. item.path, sw_x, p.y + (h - F.s(22)) / 2, item.loaded, sw_hover)
@@ -3942,7 +4110,7 @@ function F.script_row(item, w)
   if sw_hit then F.toggle_script(item) end
   local iy = p.y + (h - ib) / 2
   if (item.loaded or failed) and F.ghost_icon('##rl' .. item.path, rel_x, iy, 'ICON_FA_REDO', item.loaded and 'Перезагрузить' or 'Запустить заново') then
-    F.queue(item.loaded and 'reload' or 'load', {path = item.path})
+    F.queue(item.loaded and 'reload' or 'load', {path = item.path, kids = not item.loaded and item.kids or nil})
   end
   if F.ghost_icon('##in' .. item.path, info_x, iy, 'ICON_FA_INFO_CIRCLE', 'Подробнее') then
     local lines = {
@@ -3951,10 +4119,13 @@ function F.script_row(item, w)
       'Автор: ' .. (item.author ~= '' and item.author or '—'),
       'Категория: ' .. (item.category or '—'),
       item.warn and 'В файле есть запуск программ или библиотек. Открой его и проверь сам.' or 'Замечаний по запуску программ нет.',
-      failed and ((sc.crashed and 'Упал: ' or 'Ошибка запуска: ') .. (sc.err or '?')) or 'Ошибок запуска не было.',
+      failed and (sc.stuck and (sc.err or 'Не выключился') or ((sc.crashed and 'Упал: ' or 'Ошибка запуска: ') .. (sc.err or '?'))) or 'Ошибок запуска не было.',
+      item.kids and ('Это загрузчик: он запускает и обновляет ' .. item.kid_names .. '. Включается и выключается вместе с ним.')
+        or (item.parent and ('Сам скрипт. Его запускает и обновляет ' .. item.parent_name .. '.') or 'Работает сам по себе.'),
+      item.off and 'Выключен тобой: fHelper выгружает его при каждом запуске игры.' or 'Запускается вместе с игрой.',
       'Папка: ' .. item.path,
     }
-    modal = {kind = 'script', title = item.name, lines = lines, path = item.path}
+    modal = {kind = 'script', title = item.name, lines = lines, path = item.path, body_h = 220}
   end
   F.advance(p, w, h)
 end
@@ -4010,6 +4181,10 @@ function F.draw_scripts_page()
   if shown == 0 then
     if #file_list == 0 then F.empty('ICON_FA_CODE', 'Список пуст', 'Нажми «Обновить список»')
     else F.empty('ICON_FA_SEARCH', 'Ничего не найдено', 'Попробуй другой запрос или фильтр') end
+  else
+    imgui.Spacing()
+    F.hint('Выключенный скрипт остаётся выключенным и после перезапуска игры: fHelper выгружает его при старте. Включи переключателем, и он снова будет запускаться сам.')
+    F.hint('Если скрипт успел поменять что-то в игре (свои окна, перехваты), это может остаться до перезапуска игры: так устроен MoonLoader.')
   end
 end
 
@@ -6689,7 +6864,7 @@ end
 
 function F.draw_exp()
   F.page_head('Экспериментальный режим', 'Функции, которые ещё обкатываются')
-  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'shops', 'Лавки'}, {'mem', 'Память'}}, F.exp_tab or 'proj') or F.exp_tab or 'proj'
+  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'shops', 'Лавки'}, {'mem', 'Память'}}, F.exp_tab or 'proj', nil, F.news_tabs('exp')) or F.exp_tab or 'proj'
   imgui.Spacing()
   if F.exp_tab == 'cars' then F.draw_cars()
   elseif F.exp_tab == 'shops' then F.draw_shops()
@@ -7557,6 +7732,15 @@ function F.draw_settings_page()
     cfg.bg = cfg.bg == 1 and 0 or 1
     dirty = true
   end
+  if F.switch('newson', 'Показывать, что изменилось в разделе', cfg.news_on == 1,
+    'После обновления разделы с изменениями отмечены пульсирующей точкой, а при первом заходе видно, что там нового') then
+    cfg.news_on = cfg.news_on == 1 and 0 or 1
+    dirty = true
+  end
+  if F.switch('welon', 'Приветствие', cfg.wel_on == 1, 'Окно «Добро пожаловать» при первом открытии меню после перерыва больше часа') then
+    cfg.wel_on = cfg.wel_on == 1 and 0 or 1
+    dirty = true
+  end
   F.card_end()
   F.toast_settings()
   F.upd_card()
@@ -7601,6 +7785,23 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.6', '11.11.2026', {
+    {'add', 'Лесоруб: цены полена и ДВК видны плитками и задаются ещё до начала смены; отдельно видно, на сколько добыто дров и на сколько ДВК'},
+    {'add', 'Лесоруб: сверка со складом — счёт смены сравнивается с инвентарём, а всё, что пришло мимо тележек, показано отдельно'},
+    {'add', 'Лесоруб: что лежит на складе и сколько это стоит, тележек, дров и ДВК в час, средняя оплата тележки, сколько штук продано'},
+    {'fix', 'Лесоруб: дрова, пришедшие при открытом инвентаре, больше не теряются'},
+    {'add', 'После обновления разделы и вкладки с изменениями отмечены пульсирующей точкой, а при первом заходе окно показывает, что там нового', 'home'},
+    {'add', 'Окно «Добро пожаловать» с твоим ником при первом открытии меню после перерыва', 'home'},
+    {'add', 'Настройки: переключатели приветствия и показа изменений по разделам'},
+    {'fix', 'Скрипты: в списке видны файлы на «#» и «.» — сам Arizona Market (#ArzMarket) теперь можно включить и выключить'},
+    {'fix', 'Скрипты: загрузчик включается и выключается вместе со своим скриптом, а не оставляет его работать'},
+    {'fix', 'Скрипты: после выключения fHelper проверяет, что скрипт действительно остановился, и говорит, если нет'},
+    {'add', 'Скрипты: выключенный скрипт остаётся выключенным и после перезапуска игры'},
+    {'add', 'Память: предел памяти мира — игра раньше выгружает то, чего рядом нет, и память заполняется медленнее'},
+    {'add', 'Память: видно самый большой свободный кусок, на сколько времени хватит и кто держит память'},
+    {'fix', 'Память: предупреждение и своя разгрузка срабатывают по разу на 450, 250 и 120 МБ, а не каждые 10 минут'},
+    {'fix', 'Память: своя разгрузка больше не подвешивает игру, а сам fHelper занимает меньше'},
+  }},
   {'1.19.5', '10.11.2026', {
     {'fix', 'Лесоруб: «Заработано» и «В час» считают деньги за тележки и группу плюс стоимость добытых дров и ДВК, продажа склада больше не задваивает доход'},
     {'fix', 'Лесоруб: если скрипт был выключен, пришедшие разом дрова и ДВК не портят «за тележку», они видны отдельно'},
@@ -7829,6 +8030,301 @@ function F.draw_patch_body()
       imgui.PopTextWrapPos()
     end
   end
+end
+
+-- What changed where. A note belongs to a section by its third field ('income:work') or by
+-- how it starts («Лесоруб: …»). Until the player has looked, the section's row in the menu
+-- and its tab carry a pulsing dot, and the first visit shows what changed there, once.
+F.NEWS_WHERE = {
+  {'Лесоруб', 'income:work'}, {'Смена', 'income:work'}, {'Смены', 'income:work'}, {'Доходы', 'income'},
+  {'Память', 'exp:mem'}, {'Лавки', 'exp:shops'}, {'Машины', 'exp:cars'},
+  {'Скрипты', 'scripts'}, {'Настройки', 'settings'}, {'Библиотека', 'items'}, {'Предметы', 'items'},
+  {'Сундуки', 'chests'}, {'Чат', 'chat'}, {'Бинды', 'binds'}, {'Заметки', 'notes'}, {'Калькулятор', 'calc'},
+  {'Крафт', 'craft'}, {'Клавиши', 'hotkeys'}, {'Экран', 'screen'}, {'Журнал', 'logs'}, {'Главная', 'home'},
+}
+F.NEWS_TABS = {
+  income = {over = 'Обзор', pay = 'Пейдеи', work = 'Работа', sell = 'Продажи', buy = 'Покупки', spend = 'Расходы',
+    other = 'Прочее', items = 'Предметы'},
+  exp = {proj = 'Проект', cars = 'Машины', shops = 'Лавки', mem = 'Память'},
+}
+
+function F.note_where(row)
+  if row[3] then return row[3] end
+  local text = row[2] or ''
+  for _, w in ipairs(F.NEWS_WHERE) do
+    local n = #w[1]
+    if text:sub(1, n) == w[1] then
+      local rest = text:sub(n + 1, n + 5)
+      if rest:sub(1, 1) == ':' or rest:sub(1, 5) == ' → ' then return w[2] end
+    end
+  end
+  return nil
+end
+
+function F.ver_idx(ver)
+  for i = 1, #F.PATCH do
+    if F.PATCH[i][1] == ver then return i end
+  end
+  return nil
+end
+
+function F.news_state()
+  if F._news then return F._news end
+  local st = {seen = {}}
+  for _, line in ipairs(F.read_lines('fhelp_news.txt')) do
+    local k, v = line:match('^seen|(.-)|(.+)$')
+    if k then st.seen[k] = v
+    else st.base = line:match('^base|(.+)$') or st.base end
+  end
+  if not st.base then
+    -- The first run with this feature: what came after the notes the player last opened, and
+    -- at least the newest version, whose sections were never shown one by one.
+    local at = cfg.seen_ver ~= '' and F.ver_idx(cfg.seen_ver) or nil
+    st.base = (at and at >= 2) and cfg.seen_ver or (F.PATCH[2] and F.PATCH[2][1] or VER)
+    F._news = st
+    F.news_save()
+  end
+  F._news = st
+  return st
+end
+
+function F.news_save()
+  local st = F._news
+  if not st then return end
+  local out = {'base|' .. st.base}
+  for k, v in pairs(st.seen) do out[#out + 1] = 'seen|' .. k .. '|' .. v end
+  table.sort(out)
+  F.write_lines('fhelp_news.txt', out)
+end
+
+-- key -> notes not looked at yet, newest first; pages -> true for a page with any of them.
+function F.news_map()
+  if F._news_map then return F._news_map end
+  local st = F.news_state()
+  local base = F.ver_idx(st.base) or 2
+  local map = {keys = {}, pages = {}, n = 0}
+  for i = 1, #F.PATCH do
+    local v = F.PATCH[i]
+    for _, row in ipairs(v[3]) do
+      local key = F.note_where(row)
+      if key then
+        local top = math.min(base, F.ver_idx(st.seen[key] or '') or base)
+        if i < top then
+          map.keys[key] = map.keys[key] or {}
+          table.insert(map.keys[key], {ver = v[1], kind = row[1], text = row[2]})
+          map.pages[key:match('^[^:]+')] = true
+          map.n = map.n + 1
+        end
+      end
+    end
+  end
+  F._news_map = map
+  return map
+end
+
+function F.news_page(id)
+  if cfg.news_on ~= 1 then return false end
+  return F.news_map().pages[id] == true
+end
+
+-- Tabs of a page that still have something new: tab -> true.
+function F.news_tabs(id)
+  local out
+  if cfg.news_on ~= 1 then return nil end
+  for key in pairs(F.news_map().keys) do
+    local pg, tab = key:match('^([^:]+):(.+)$')
+    if pg == id then
+      out = out or {}
+      out[tab] = true
+    end
+  end
+  return out
+end
+
+function F.news_mark(keys)
+  local st = F.news_state()
+  for _, k in ipairs(keys) do st.seen[k] = F.PATCH[1][1] end
+  F._news_map = nil
+  F.news_save()
+end
+
+function F.news_mark_all()
+  local st = F.news_state()
+  st.base, st.seen = F.PATCH[1][1], {}
+  F._news_map = nil
+  F.news_save()
+  cfg.seen_ver = VER
+  dirty = true
+end
+
+function F.news_title(key)
+  local pg, tab = key:match('^([^:]+):?(.*)$')
+  local t = F.nav_title(pg)
+  local tn = tab ~= '' and F.NEWS_TABS[pg] and F.NEWS_TABS[pg][tab]
+  if tn then t = t .. ' → ' .. tn end
+  return t
+end
+
+-- The tab of the page that is on screen now, for the pages that have tabs.
+function F.news_tab(id)
+  if id == 'income' then return F.inc_tab or 'over' end
+  if id == 'exp' then return F.exp_tab or 'proj' end
+  return nil
+end
+
+-- A dot that breathes: a solid core and a ring that grows and fades, about once a second.
+function F.pulse_dot(x, y, r)
+  local dl = imgui.GetWindowDrawList()
+  local t = (os.clock() * 0.9) % 1
+  local ring = r + r * 1.9 * t
+  dl:AddCircleFilled(imgui.ImVec2(x, y), ring, F.col('accent', math.floor(120 * (1 - t))), 20)
+  dl:AddCircleFilled(imgui.ImVec2(x, y), r, F.col('accent_hi'), 16)
+end
+
+function F.draw_news_body(m)
+  local last
+  for _, row in ipairs(m.rows) do
+    if row.head then
+      if last then imgui.Dummy(imgui.ImVec2(1, 6)) end
+      local p = imgui.GetCursorScreenPos()
+      F.text_at(font_bold, 18, p.x, p.y, F.col('accent_hi'), row.head)
+      F.advance(p, 1, F.s(26))
+      last = nil
+    else
+      if row.ver ~= last then
+        if last then imgui.Dummy(imgui.ImVec2(1, 4)) end
+        local p = imgui.GetCursorScreenPos()
+        F.chip(p.x, p.y, 'версия ' .. row.ver, row.ver == VER and 'on' or 'muted')
+        F.advance(p, 1, F.s(26))
+        last = row.ver
+      end
+      local kind = F.PATCH_KIND[row.kind] or F.PATCH_KIND.chg
+      imgui.TextColored(F.cvec(kind[2], 0.75), '%s', kind[1])
+      imgui.SameLine(F.s(100))
+      imgui.PushTextWrapPos(0)
+      imgui.TextUnformatted(row.text)
+      imgui.PopTextWrapPos()
+    end
+  end
+end
+
+function F.patch_open()
+  local left = F.news_map().n
+  modal = {kind = 'patch', title = 'Что нового',
+    btn = left > 0 and {label = 'Всё прочитано', w = 170, tip = 'Убрать точки со всех разделов', fn = F.news_mark_all} or nil}
+  cfg.seen_ver = VER
+  dirty = true
+end
+
+-- The first look at a section with changes: one window with what changed here.
+function F.news_visit()
+  if cfg.news_on ~= 1 then return false end
+  local map = F.news_map()
+  if map.n == 0 or not map.pages[page] then return false end
+  local keys = {page}
+  local tab = F.news_tab(page)
+  if tab then keys[2] = page .. ':' .. tab end
+  local rows, hit = {}, {}
+  for _, k in ipairs(keys) do
+    local list = map.keys[k]
+    if list then
+      hit[#hit + 1] = k
+      if #keys > 1 and k ~= page then rows[#rows + 1] = {head = F.news_title(k)} end
+      for _, r in ipairs(list) do rows[#rows + 1] = r end
+    end
+  end
+  if #hit == 0 then return false end
+  F.news_mark(hit)
+  local more = F.news_tabs(page)
+  local names = {}
+  for t in pairs(more or {}) do names[#names + 1] = F.NEWS_TABS[page] and F.NEWS_TABS[page][t] or t end
+  table.sort(names)
+  modal = {kind = 'news', wide = true, icon = 'ICON_FA_BULLHORN', rows = rows, close = 'Понятно',
+    title = 'Что нового: ' .. F.news_title(hit[#hit]),
+    body_h = math.max(120, math.min(360, 46 + #rows * 40)),
+    foot = #names > 0 and ('Ещё есть новое во вкладках: ' .. table.concat(names, ', ') .. '.') or nil,
+    btn = {label = 'Все изменения', w = 170, fn = F.patch_open}}
+  return true
+end
+
+-- «Добро пожаловать»: the first opening of the menu after a long break.
+F.WEL_GAP = 3600
+
+function F.greet_word(hour)
+  if hour >= 5 and hour < 12 then return 'Доброе утро' end
+  if hour >= 12 and hour < 18 then return 'Добрый день' end
+  if hour >= 18 and hour < 23 then return 'Добрый вечер' end
+  return 'Доброй ночи'
+end
+
+function F.ago_text(sec)
+  if sec < 3600 then return math.max(1, math.floor(sec / 60)) .. ' мин назад' end
+  if sec < 86400 then
+    local h = math.floor(sec / 3600)
+    return h .. ' ' .. F.ru_count(h, 'час', 'часа', 'часов') .. ' назад'
+  end
+  local d = math.floor(sec / 86400)
+  return d .. ' ' .. F.ru_count(d, 'день', 'дня', 'дней') .. ' назад'
+end
+
+function F.welcome_lines(now, last)
+  local lines = {}
+  local nick = live.online and live.nick ~= '—' and live.nick or nil
+  lines[#lines + 1] = F.greet_word(tonumber(os.date('%H', now))) .. (nick and (', ' .. nick) or '') .. '!'
+  if live.online and live.server and live.server ~= '' then lines[#lines + 1] = 'Сервер: ' .. live.server end
+  if last > 0 then
+    lines[#lines + 1] = 'Последний раз ты открывал fHelper ' .. F.ago_text(now - last) .. ', ' .. os.date('%d.%m в %H:%M', last) .. '.'
+  else
+    lines[#lines + 1] = 'Это первый запуск: загляни в «Настройки», там вид окна, клавиша меню и обновления.'
+  end
+  local s = F.shift
+  if s then
+    lines[#lines + 1] = 'Смена «' .. F.shift_title(s) .. '» ' .. (s.pause_at > 0 and 'стоит на паузе' or 'идёт')
+      .. ': заработано ' .. F.shift_m(s, F.shift_earn(s)) .. ' за ' .. F.dur_short(F.shift_secs(s)) .. '.'
+  end
+  local u = F.upd_state()
+  if u.state == 'new' and u.info then
+    lines[#lines + 1] = 'Вышла версия ' .. tostring(u.info.version or '') .. ': обнови кнопкой с облаком вверху.'
+  end
+  local map = F.news_map()
+  if cfg.news_on == 1 and map.n > 0 then
+    local names = {}
+    for i = 1, #NAV do
+      if map.pages[NAV[i][1]] then names[#names + 1] = NAV[i][3] end
+    end
+    lines[#lines + 1] = 'В версии ' .. VER .. ' есть новое: ' .. table.concat(names, ', ')
+      .. '. Разделы с изменениями отмечены пульсирующей точкой — открой, и увидишь, что поменялось.'
+  end
+  return lines
+end
+
+-- Called each frame the menu is drawn: at most one window at a time, the welcome first.
+function F.news_frame()
+  if modal or collapsed then return end
+  local now = os.time()
+  if not F._wel_checked then
+    F._wel_checked = true
+    local last = tonumber(cfg.wel_at) or 0
+    F._wel_want = cfg.wel_on == 1 and now - last >= F.WEL_GAP and {last = last, till = os.clock() + 20} or nil
+    cfg.wel_at = now
+    dirty = true
+  end
+  local w = F._wel_want
+  if w then
+    -- The nick comes with the server; without one the greeting waits a little, then goes without.
+    if (live.online and live.nick ~= '—') or os.clock() > w.till then
+      F._wel_want = nil
+      local nick = live.online and live.nick ~= '—' and live.nick or nil
+      local lines = F.welcome_lines(now, w.last)
+      modal = {kind = 'welcome', wide = true, icon = 'ICON_FA_HAND_SPARKLES', lines = lines, close = 'Поехали',
+        title = 'Добро пожаловать' .. (nick and (', ' .. nick) or ''),
+        body_h = math.max(110, math.min(300, 30 + #lines * 44)),
+        btn = F.news_map().n > 0 and {label = 'Что нового', w = 150, fn = F.patch_open} or nil}
+      return
+    end
+    return
+  end
+  F.news_visit()
 end
 
 -- Money
@@ -8633,9 +9129,10 @@ F.SHIFT_COST = {
 }
 F.SHIFT_NUM = {'id', 't0', 't1', 'pause', 'pause_at', 'beat', 'inc', 'n', 'prem', 'fuel', 'liters', 'refuel',
   'repair', 'fine', 'rent', 'goal', 'lvl0', 'lvl', 'tariff', 'last', 'hit', 'auto', 'vc', 'wood', 'dvk', 'lost', 'sold',
-  'wood_inv', 'dvk_inv', 'inv', 'pay', 'miss', 'dvk_miss', 'base', 'base_got', 'tree', 'tree_k'}
--- Shorter lines from older versions: 22 fields before 1.19, 27 in the first 1.19 build, 31 before 1.19.5.
-F.SHIFT_NUM_OLD = {31, 27, 22}
+  'wood_inv', 'dvk_inv', 'inv', 'pay', 'miss', 'dvk_miss', 'base', 'base_got', 'tree', 'tree_k',
+  'stk', 'w0', 'd0', 'soldw', 'soldd'}
+-- Shorter lines from older versions: 22 fields before 1.19, 27 in the first 1.19 build, 31 before 1.19.5, 37 in 1.19.5.
+F.SHIFT_NUM_OLD = {37, 31, 27, 22}
 F.SHIFT_MAX = 300
 -- Bits of cfg.shift_fields: what the on-screen bar shows.
 F.SHIFT_FIELDS = {
@@ -8922,6 +9419,10 @@ function F.shift_led(r)
     -- Wood sold during the shift is what the shift earned.
     s.inc = s.inc + r.amount
     s.sold = s.sold + r.amount
+    if j.key == 'wood' then
+      local k = F.wood_price_key(text) == 'wood_pd' and 'soldd' or 'soldw'
+      s[k] = s[k] + (tonumber(r.qty) or 0)
+    end
     took = true
   elseif r.cat == 'work' then
     if j.inc then took = F.has_pre(text, j.inc)
@@ -9059,9 +9560,12 @@ end
 
 function F.wood_tick()
   local q = F._wq
-  if not q then return end
-  local now = os.clock()
   local s = F.wood_on()
+  if not q then
+    if s and s.stk == 0 and F.wood_stock_mark(s) then F.shift_save() end
+    return
+  end
+  local now = os.clock()
   if not s then
     F._wq = nil
     return
@@ -9098,6 +9602,7 @@ function F.wood_tick()
       if now - list[k].at > F.WOOD_SPAN + 2 then table.remove(list, k) end
     end
   end
+  if s.stk == 0 and #q.adds == 0 and #q.deltas == 0 and #q.units == 0 and F.wood_stock_mark(s) then changed = true end
   if changed then F.shift_save() end
 end
 
@@ -9272,10 +9777,11 @@ F.WOOD_NEW_MAX = {[566] = 5000, [4032] = 100}
 
 function F.wood_inv_load()
   local st = F.wood_inv
-  st.loaded, st.slots = true, {}
+  st.loaded, st.slots, st.full = true, {}, false
   for _, line in ipairs(F.read_lines('fhelp_wood_inv.txt')) do
     local slot, id, n = line:match('^(%d+)|(%d+)|(%d+)$')
-    if slot then st.slots[tonumber(slot)] = {id = tonumber(id), n = tonumber(n)} end
+    if slot then st.slots[tonumber(slot)] = {id = tonumber(id), n = tonumber(n)}
+    elseif line == 'full' then st.full = true end
   end
 end
 
@@ -9283,7 +9789,39 @@ function F.wood_inv_save()
   local out = {}
   for slot, v in pairs(F.wood_inv.slots) do out[#out + 1] = slot .. '|' .. v.id .. '|' .. v.n end
   table.sort(out)
+  if F.wood_inv.full then out[#out + 1] = 'full' end
   F.write_lines('fhelp_wood_inv.txt', out)
+end
+
+-- What lies in the inventory now: wood, ДВК, and whether the whole bag was seen at least once.
+function F.wood_stock()
+  local st = F.wood_inv
+  if not st.loaded then F.wood_inv_load() end
+  local w, d = 0, 0
+  for _, v in pairs(st.slots) do
+    if v.id == F.WOOD_ID then w = w + v.n elseif v.id == F.DVK_ID then d = d + v.n end
+  end
+  return w, d, st.full == true
+end
+
+-- The bag at the shift's start, worked back from what the shift has counted so far.
+function F.wood_stock_mark(s)
+  if s.stk ~= 0 then return false end
+  local w, d, known = F.wood_stock()
+  if not known then return false end
+  s.w0 = w - s.wood + s.soldw
+  s.d0 = d - s.dvk_inv + s.soldd
+  s.stk = 1
+  return true
+end
+
+-- Wood and ДВК that came to the bag (or left it) past the carts, the group and the sales:
+-- chests, trades, crafts. Zero means the shift's count matches the inventory to a piece.
+function F.wood_drift(s)
+  if s.stk ~= 1 or s.inv ~= 2 or (s.guess or 0) > 0 then return nil end
+  local w, d, known = F.wood_stock()
+  if not known then return nil end
+  return w - s.w0 + s.soldw - s.wood, d - s.d0 + s.soldd - s.dvk_inv
 end
 
 function F.wood_inv_event(v)
@@ -9295,6 +9833,10 @@ function F.wood_inv_event(v)
   if not st.loaded then F.wood_inv_load() end
   local s = F.wood_on()
   local touched = false
+  if act == 0 and not st.full then
+    st.full = true
+    touched = true
+  end
   for _, it in pairs(d.items) do
     local slot = type(it) == 'table' and tonumber(it.slot)
     if slot then
@@ -9305,12 +9847,13 @@ function F.wood_inv_event(v)
         st.slots[slot] = {id = id, n = n}
         touched = true
         if s then F.wood_dbg('inv', 'act=' .. act .. ' ' .. F.json_encode_safe(it)) end
-        -- A full list is only the starting point.
-        if s and act == 2 then
+        -- A full list (the bag was opened) is a starting point for slots never seen, but a
+        -- known slot that grew in it is wood that came while the bag was open.
+        if s then
           local grew
           if old and old.id == id then
             if n > old.n then grew = n - old.n end
-          elseif n <= F.WOOD_NEW_MAX[id] then
+          elseif act == 2 and n <= F.WOOD_NEW_MAX[id] then
             grew = n
           end
           if grew then
@@ -9490,10 +10033,25 @@ function F.shift_rows(s, all)
   if j.key == 'wood' then
     local est = F.wood_value(s)
     if est or all then add(2, 'Добыто на', est and ('~' .. m(est)) or 'нет цены') end
+    if all then
+      local cur = s.vc == 1 and 'vc' or 'sa'
+      local pw, pd = F.wood_price('Дрова', cur), F.wood_price('Древесина высшего качества', cur)
+      local wood, dvk = F.wood_amounts(s)
+      if pw and wood > 0 then add(2, 'Дрова на', '~' .. m(wood * pw)) end
+      if pd and (dvk or 0) > 0 then add(2, 'ДВК на', '~' .. m(dvk * pd)) end
+      add(2, 'Цена полена', pw and m(pw) or 'не задана')
+      add(2, 'Цена ДВК', pd and m(pd) or 'не задана')
+    end
     local grp_m = s.inc - s.sold - s.pay
-    if s.pay > 0 then add(2, 'За тележки', m(s.pay)) end
+    if s.pay > 0 then add(2, 'За тележки', m(s.pay) .. (all and s.n > 0 and ('  ·  ~' .. m(s.pay / s.n)) or '')) end
     if grp_m > 0 then add(2, 'Бонусы группы', m(grp_m)) end
     if s.sold > 0 then add(2, 'Продано', m(s.sold)) end
+    if all and (s.soldw > 0 or s.soldd > 0) then
+      local parts = {}
+      if s.soldw > 0 then parts[#parts + 1] = F.num_text(s.soldw) .. ' дров' end
+      if s.soldd > 0 then parts[#parts + 1] = 'ДВК ' .. F.num_text(s.soldd) end
+      add(2, 'Продано штук', table.concat(parts, ' · '))
+    end
   end
   if j.key ~= 'wood' then
     add(4, 'Расходы', F.shift_costs(s) > 0 and ('-' .. m(F.shift_costs(s))) or m(0))
@@ -9523,6 +10081,31 @@ function F.shift_rows(s, all)
     end
     local split = all and F.wood_split(s)
     if split then add(64, 'Из чего доход', split) end
+    if all then
+      local t = F.shift_secs(s, now)
+      if t >= 300 then
+        if s.n > 0 then add(64, 'Тележек в час', string.format('%.0f', s.n * 3600 / t)) end
+        if wood > 0 then add(64, 'Дров в час', F.num_text(wood * 3600 / t)) end
+        if dvk then add(64, 'ДВК в час', string.format('%.0f', dvk * 3600 / t)) end
+      end
+      local sw, sd, known = F.wood_stock()
+      if known then
+        add(64, 'На складе', F.num_text(sw) .. ' · ДВК ' .. F.num_text(sd))
+        local cur = s.vc == 1 and 'vc' or 'sa'
+        local v = sw * (F.wood_price('Дрова', cur) or 0) + sd * (F.wood_price('Древесина высшего качества', cur) or 0)
+        if v > 0 then add(64, 'Склад на', '~' .. m(v)) end
+      end
+      local dw, dd = F.wood_drift(s)
+      if dw then
+        if dw == 0 and dd == 0 then add(64, 'Сверка со складом', 'сходится')
+        else
+          local parts = {}
+          if dw ~= 0 then parts[#parts + 1] = string.format('%+d дров', dw) end
+          if dd ~= 0 then parts[#parts + 1] = string.format('ДВК %+d', dd) end
+          add(64, 'Мимо тележек', table.concat(parts, ' · '))
+        end
+      end
+    end
   elseif s.n > 0 or all then
     add(64, j.rows, tostring(s.n) .. (s.n > 0 and ('  ·  ~' .. m((s.inc - s.prem) / s.n)) or ''))
   end
@@ -9623,9 +10206,12 @@ end
 
 -- Prices the lumberjack's wood and ДВК are valued at. A sale sets them by itself.
 function F.wood_price_edit(s)
-  local cur = s.vc == 1 and 'vc' or 'sa'
+  -- Without a shift the prices are those of the city the player is in.
+  local vc = s and s.vc == 1
+  if not s then vc = F.here_vc() and true or false end
+  local cur = vc and 'vc' or 'sa'
   local sfx = cur == 'vc' and '_vc' or ''
-  local m = function(n) return F.shift_m(s, n) end
+  local m = function(n) return F.fmt_cur(n, cur == 'vc') or '$0' end
   local pw, pd = F.wood_price('Дрова', cur), F.wood_price('Древесина высшего качества', cur)
   F.hint('Цены для подсчёта: полено ' .. (pw and m(pw) or 'не задана') .. ', ДВК ' .. (pd and m(pd) or 'не задана')
     .. '. Когда продаёшь дрова или ДВК, цена обновляется сама.')
@@ -9670,6 +10256,10 @@ function F.shift_card()
       dirty = true
     end
     F.hint('Считается: ' .. F.shift_job(F.shift_pick).tip .. (F.shift_pick == 'wood' and '.' or '. Расходы: АЗС, канистры, ремонт, штрафы, аренда.'))
+    if F.shift_pick == 'wood' then
+      imgui.Spacing()
+      F.wood_price_edit(nil)
+    end
     imgui.Spacing()
     if F.button('Начать смену##shiftgo', 200, 0, 'primary') then F.shift_start(F.shift_pick) end
     imgui.Spacing()
@@ -9691,7 +10281,11 @@ function F.shift_card()
     ['Дров за тележку'] = 'ICON_FA_TREE', ['От группы'] = 'ICON_FA_USERS', ['ДВК за тележку'] = 'ICON_FA_GEM',
     ['За тележки'] = 'ICON_FA_DOLLY', ['Бонусы группы'] = 'ICON_FA_USERS', ['Продано'] = 'ICON_FA_HANDSHAKE',
     ['Бонус к дровам'] = 'ICON_FA_PERCENT', ['Последнее дерево'] = 'ICON_FA_TREE', ['Без скрипта'] = 'ICON_FA_EXCLAMATION_TRIANGLE',
-    ['Из чего доход'] = 'ICON_FA_CHART_PIE'}
+    ['Из чего доход'] = 'ICON_FA_CHART_PIE', ['Дрова на'] = 'ICON_FA_TAGS', ['ДВК на'] = 'ICON_FA_TAGS',
+    ['Цена полена'] = 'ICON_FA_TAG', ['Цена ДВК'] = 'ICON_FA_TAG', ['Продано штук'] = 'ICON_FA_HANDSHAKE',
+    ['Тележек в час'] = 'ICON_FA_TACHOMETER_ALT', ['Дров в час'] = 'ICON_FA_TACHOMETER_ALT', ['ДВК в час'] = 'ICON_FA_TACHOMETER_ALT',
+    ['На складе'] = 'ICON_FA_BOX', ['Склад на'] = 'ICON_FA_BOX', ['Сверка со складом'] = 'ICON_FA_CHECK',
+    ['Мимо тележек'] = 'ICON_FA_EXCLAMATION_TRIANGLE'}
   for _, t in ipairs(tiles) do t[1] = icons[t[2]] or F.shift_job(s.job).icon end
   F.tile_grid('shift', tiles, 180)
   local other = {}
@@ -10091,7 +10685,7 @@ function F.draw_income()
   local tab = F.segment('inc', {
     {'over', 'Обзор'}, {'pay', 'Пейдеи'}, {'work', 'Работа'}, {'sell', 'Продажи'},
     {'buy', 'Покупки'}, {'spend', 'Расходы'}, {'other', 'Прочее'}, {'items', 'Предметы'},
-  }, F.inc_tab)
+  }, F.inc_tab, nil, F.news_tabs('income'))
   if tab then F.inc_tab = tab end
   imgui.Spacing()
   local period = F.pill_row('##per', F.PERIODS, F.inc_period)
@@ -12742,47 +13336,169 @@ function F.mem_read()
   return nil
 end
 
+-- The address space of the game piece by piece: what is free, the biggest free piece (a big
+-- texture needs one piece, so this is what runs out first), and who holds the rest, in MB.
+function F.mem_map()
+  if not ffi_ok then return nil end
+  if not F._map_def then
+    F._map_def = pcall(ffi.cdef, [[
+      typedef struct { void* base; void* abase; unsigned long aprot; unsigned long size; unsigned long state;
+        unsigned long prot; unsigned long type; } FH_MBI;
+      unsigned long __stdcall VirtualQuery(const void* addr, FH_MBI* buf, unsigned long len);
+    ]]) or 'fail'
+  end
+  local ok, r = pcall(function()
+    local mbi = ffi.new('FH_MBI')
+    local len = ffi.sizeof('FH_MBI')
+    local out = {free = 0, big = 0, priv = 0, mapped = 0, image = 0, reserved = 0, n = 0}
+    local addr, top = 0x10000, 0xFFFE0000
+    while addr < top and out.n < 200000 do
+      if ffi.C.VirtualQuery(ffi.cast('void*', addr), mbi, len) == 0 then break end
+      local size = tonumber(mbi.size)
+      if size <= 0 then break end
+      local state, kind = tonumber(mbi.state), tonumber(mbi.type)
+      if state == 0x10000 then
+        out.free = out.free + size
+        if size > out.big then out.big = size end
+      elseif state == 0x2000 then out.reserved = out.reserved + size
+      elseif kind == 0x1000000 then out.image = out.image + size
+      elseif kind == 0x40000 then out.mapped = out.mapped + size
+      else out.priv = out.priv + size end
+      out.n = out.n + 1
+      addr = addr + size
+    end
+    if out.n == 0 then return nil end
+    for _, k in ipairs({'free', 'big', 'priv', 'mapped', 'image', 'reserved'}) do out[k] = out[k] / 1048576 end
+    return out
+  end)
+  if ok then return r end
+  return nil
+end
+if jit and jit.off then pcall(jit.off, F.mem_map, true) end
+
+-- Three steps down: a hint to plan a relog, a warning, and «now». Each speaks once on the
+-- way down and is armed again only when the memory really came back.
+F.MEM_LEVELS = {F.MEM_WARN, 250, 120}
+F.MEM_BACK = 120
+
+function F.mem_level(free, slack)
+  local lvl = 0
+  for i, v in ipairs(F.MEM_LEVELS) do
+    if free < v + (slack or 0) then lvl = i end
+  end
+  return lvl
+end
+
+function F.mem_warn_text(lvl, free)
+  local s = string.format('Игре осталось %.0f МБ памяти', free)
+  if lvl >= 3 then return s .. ': игра может вылететь, перезайди сейчас' end
+  if lvl == 2 then return s .. ': скоро фризы и квадраты вместо текста, перезайди в игру' end
+  local left = F.mem_left(free)
+  return s .. (left and string.format('. Хватит примерно на %s, запланируй перезаход', F.dur_short(left)) or '. Запланируй перезаход')
+end
+
+-- Seconds until the free memory reaches the last step at the current speed.
+function F.mem_left(free)
+  local rate = F.mem_rate
+  if not free or not rate or rate < 20 then return nil end
+  local spare = free - F.MEM_LEVELS[#F.MEM_LEVELS]
+  if spare <= 0 then return 0 end
+  return spare / rate * 3600
+end
+
 function F.mem_tick(now)
   if F._mem_at and now - F._mem_at < 15 then return end
   F._mem_at = now
   local st = F.mem_read()
+  local keep = F.mem_st
   F.mem_st = st or {}
   F.mem_st.lua = collectgarbage('count') / 1024
   F.mem_st.pics = F._lib and F._lib.cached or 0
+  pcall(F.mem_world_apply)
   if not st then return end
+  -- The walk over the address space is the heavy part: once a minute is enough.
+  if not F._map_at or now - F._map_at >= 60 or not (keep and keep.map) then
+    F._map_at = now
+    F.mem_st.map = F.mem_map()
+  else F.mem_st.map = keep.map end
   F.mem_trend(now, st.free)
   if not F._mem_logged or now - F._mem_logged > 1800 then
     F._mem_logged = now
-    F.log_line(string.format('Память: свободно у игры %.0f из %.0f МБ, fHelper %.0f МБ', st.free, st.total, F.mem_st.lua))
+    local map = F.mem_st.map
+    F.log_line(string.format('Память: свободно у игры %.0f из %.0f МБ, fHelper %.0f МБ', st.free, st.total, F.mem_st.lua)
+      .. (map and string.format(', самый большой кусок %.0f МБ, игра держит %.0f МБ, файлы %.0f МБ, запас %.0f МБ',
+        map.big, map.priv, map.mapped + map.image, map.reserved) or ''))
   end
-  if st.free < F.MEM_WARN and (not F._mem_warned or now - F._mem_warned > 600) then
-    F._mem_warned = now
-    if cfg.mem_auto == 1 then
-      local r = F.mem_clean(true)
-      -- Enough came back: the toast of the clean-up says it, no warning.
-      if r and r.free2 and r.free2 >= F.MEM_WARN then return end
-      st = F.mem_read() or st
-    else
-      -- The pictures are the only big thing fHelper can give back right away.
-      F.lib_free()
-      collectgarbage('collect')
+  local was = F._mem_lvl or 0
+  -- Armed again only when the memory is well above the step it spoke at.
+  local back = F.mem_level(st.free, F.MEM_BACK)
+  if back < was then
+    was = back
+    F._mem_lvl = back
+  end
+  local lvl = F.mem_level(st.free)
+  if lvl <= was then return end
+  F._mem_lvl = lvl
+  if cfg.mem_auto == 1 then
+    local r = F.mem_clean(true)
+    st = F.mem_read() or st
+    -- Enough came back: the toast of the clean-up says it, no warning.
+    if r and F.mem_level(st.free) < lvl then
+      F._mem_lvl = F.mem_level(st.free)
+      return
     end
-    local msg = string.format('Игре осталось %.0f МБ памяти. Скоро будут фризы и квадраты вместо текста', st.free)
-    msg = msg .. (cfg.mem_auto == 1 and ', перезапусти игру' or '. Попробуй /fmem или перезапусти игру')
-    F.log_line(msg)
-    F.chat_brand(msg)
-    pcall(F.toast, 'sys', {force = true, key = 'mem', icon = 'ICON_FA_EXCLAMATION_TRIANGLE', title = 'Мало памяти', text = msg})
+  else
+    -- The pictures are the only big thing fHelper can give back right away.
+    F.lib_free()
+    collectgarbage('collect')
   end
+  local msg = F.mem_warn_text(lvl, st.free)
+  if lvl == 1 and cfg.mem_auto ~= 1 then msg = msg .. '. Можно попробовать /fmem' end
+  F.log_line(msg)
+  F.chat_brand(msg)
+  pcall(F.toast, 'sys', {force = true, key = 'mem', icon = 'ICON_FA_EXCLAMATION_TRIANGLE',
+    title = lvl >= 3 and 'Память кончается' or 'Мало памяти', text = msg})
+  if lvl >= 2 then pcall(F.want_sound) end
 end
 
 -- How fast the free memory goes, MB per hour over the last half hour (at least 5 minutes of samples).
 function F.mem_trend(now, free)
   local h = F.mem_hist or {}
   F.mem_hist = h
+  -- A jump up is a restart of the game or a big unload: the old slope says nothing about now.
+  if #h > 0 and free - h[#h][2] > 300 then
+    h = {}
+    F.mem_hist = h
+  end
   h[#h + 1] = {now, free}
   while #h > 1 and now - h[1][1] > 1800 do table.remove(h, 1) end
   local dt = now - h[1][1]
   F.mem_rate = dt >= 300 and (h[1][2] - free) / dt * 3600 or nil
+end
+
+-- The game keeps models and textures of the world up to its streaming limit; Arizona sets it
+-- high, and on a long session that is hundreds of MB the game never gives back. A lower limit
+-- makes the game drop what is not around sooner. Only ever lowered, and put back on unload.
+F.MEM_WORLD = {0, 384, 512, 768, 1024}
+
+function F.mem_world_apply(restore)
+  if type(readMemory) ~= 'function' or type(writeMemory) ~= 'function' then return nil end
+  local cur = tonumber(readMemory(0x8A5A80, 4, false))
+  if not cur or cur <= 0 then return nil end
+  if not F._mem_lim0 then F._mem_lim0 = cur end
+  local want = F._mem_lim0
+  local cap = restore and 0 or (tonumber(cfg.mem_world) or 0)
+  if cap > 0 then want = math.min(F._mem_lim0, cap * 1048576) end
+  -- Somebody else changed the limit (the game's settings): that is the new original.
+  if cur ~= F._mem_set and cur ~= F._mem_lim0 then
+    F._mem_lim0 = cur
+    want = cap > 0 and math.min(cur, cap * 1048576) or cur
+  end
+  if cur ~= want then
+    writeMemory(0x8A5A80, 4, want, false)
+    F._mem_set = want
+  end
+  return want / 1048576, F._mem_lim0 / 1048576
 end
 
 -- Streaming memory of the game: models and textures of the world around, used and allowed, in MB.
@@ -12810,6 +13526,7 @@ function F.mem_clean(auto)
   end
   F._mem_clean_at = now
   local before = F.mem_read() or {}
+  local map1 = F.mem_map()
   local s1 = F.mem_game()
   local lua1 = collectgarbage('count') / 1024
   local pics = F.lib_free()
@@ -12819,20 +13536,26 @@ function F.mem_clean(auto)
     callFunction(0x53C500, 2, 2, 1, 1) -- CGame::TidyUpMemory(true, true)
     callFunction(0x40CF80, 0, 0) -- CStreaming::RemoveAllUnusedModels
   end)
-  pcall(function()
-    local x, y, z = getCharCoordinates(PLAYER_PED)
-    requestCollision(x, y)
-    loadScene(x, y, z)
-  end)
+  -- By hand the scene around is loaded back at once (a short freeze). On its own the game
+  -- brings the models back as it needs them: no freeze in the middle of a drive.
+  if not auto then
+    pcall(function()
+      local x, y, z = getCharCoordinates(PLAYER_PED)
+      requestCollision(x, y)
+      loadScene(x, y, z)
+    end)
+  end
   local after = F.mem_read() or {}
   local s2 = F.mem_game()
+  local map2 = F.mem_map()
   local r = {
     at = os.time(), auto = auto, pics = pics, game = game_ok,
     lua = math.max(0, lua1 - collectgarbage('count') / 1024),
     free1 = before.free, free2 = after.free, s1 = s1, s2 = s2,
+    big1 = map1 and map1.big, big2 = map2 and map2.big,
   }
   F.mem_last = r
-  F._mem_at = nil
+  F._mem_at, F._map_at = nil, nil
   local text = F.mem_result(r)
   F.log_line('Разгрузка памяти' .. (auto and ' (сама)' or '') .. ': ' .. text)
   pcall(F.toast, 'sys', {force = true, key = 'memclean', icon = 'ICON_FA_BROOM', title = 'Память разгружена', text = text})
@@ -12843,7 +13566,11 @@ end
 function F.mem_result(r)
   local parts = {}
   if r.s1 and r.s2 then parts[#parts + 1] = string.format('мир отдал %.0f МБ (%.0f → %.0f)', math.max(0, r.s1 - r.s2), r.s1, r.s2) end
-  if r.free2 then parts[#parts + 1] = string.format('свободно %.0f МБ', r.free2) end
+  if r.free2 then
+    local d = r.free1 and (r.free2 - r.free1) or 0
+    parts[#parts + 1] = string.format('свободно %.0f МБ', r.free2) .. (d >= 1 and string.format(' (+%.0f)', d) or '')
+  end
+  if r.big2 then parts[#parts + 1] = string.format('самый большой кусок %.0f МБ', r.big2) end
   if (r.pics or 0) > 0 then parts[#parts + 1] = 'картинок ' .. r.pics end
   if not r.game then parts[#parts + 1] = 'игра не ответила' end
   return table.concat(parts, ', ')
@@ -12857,26 +13584,60 @@ function F.draw_exp_mem()
   F.card_begin('Память игры', 'Разгрузить память без перезахода', 'ICON_FA_MEMORY')
   local m = F.mem_st or {}
   local used, limit = F.mem_game()
-  local low = m.free and m.free < F.MEM_WARN
-  F.tile_grid('mem', {
-    {'ICON_FA_MEMORY', 'Свободно у игры', m.free and string.format('%.0f МБ', m.free) or '—'},
+  local map = m.map
+  local lvl = m.free and F.mem_level(m.free) or 0
+  local left = F.mem_left(m.free)
+  local mb = function(n) return n and string.format('%.0f МБ', n) or '—' end
+  local tiles = {
+    {'ICON_FA_MEMORY', 'Свободно у игры', mb(m.free)},
+    {'ICON_FA_PUZZLE_PIECE', 'Самый большой кусок', mb(map and map.big)},
+    {'ICON_FA_HOURGLASS_HALF', 'Хватит на', left and (left > 0 and ('~' .. F.dur_short(left)) or 'перезайди') or (F.mem_rate and 'не убывает' or 'считаю')},
+    {'ICON_FA_CHART_LINE', 'Уходит за час', F.mem_rate and mb(math.max(0, F.mem_rate)) or 'считаю'},
     {'ICON_FA_GLOBE', 'Мир вокруг', used and string.format('%.0f / %.0f МБ', used, limit) or '—'},
-    {'ICON_FA_CUBE', 'fHelper', string.format('%.0f МБ', m.lua or collectgarbage('count') / 1024)},
-    {'ICON_FA_CHART_LINE', 'Уходит за час', F.mem_rate and string.format('%.0f МБ', math.max(0, F.mem_rate)) or 'считаю'},
-  }, 200)
-  if low then F.hint_bad('Памяти мало: скоро будут фризы и квадраты вместо текста.') end
+  }
+  if map then
+    tiles[#tiles + 1] = {'ICON_FA_GAMEPAD', 'Держит игра', mb(map.priv)}
+    tiles[#tiles + 1] = {'ICON_FA_FILE', 'Файлы и модули', mb(map.mapped + map.image)}
+    tiles[#tiles + 1] = {'ICON_FA_LOCK', 'Занято про запас', mb(map.reserved)}
+  end
+  tiles[#tiles + 1] = {'ICON_FA_CUBE', 'fHelper', string.format('%.0f МБ', m.lua or collectgarbage('count') / 1024)
+    .. ((m.pics or 0) > 0 and ('  ·  картинок ' .. m.pics) or '')}
+  F.tile_grid('mem', tiles, 200)
+  if lvl >= 3 then F.hint_bad('Память кончается: игра может вылететь, перезайди сейчас.')
+  elseif lvl == 2 then F.hint_bad('Памяти мало: скоро фризы и квадраты вместо текста. Перезайди в игру.')
+  elseif lvl == 1 then F.hint_bad('Память подходит к концу: запланируй перезаход.')
+  elseif map and m.free and map.big < 100 and m.free > 300 then
+    F.hint_bad('Свободная память разбита на мелкие куски: большая текстура может не поместиться, хотя всего свободно много.')
+  end
   imgui.Spacing()
   if F.button('Разгрузить сейчас##memgo', 220, 0, 'primary') then F.mem_cmd() end
   if F.mem_last then
     F.hint('Последний раз в ' .. os.date('%H:%M', F.mem_last.at) .. (F.mem_last.auto and ' (сам)' or '') .. ': ' .. F.mem_result(F.mem_last))
   end
   imgui.Spacing()
-  F.chest_flag('memauto', 'Разгружать самому', 'mem_auto', 'Когда игре остаётся меньше ' .. F.MEM_WARN .. ' МБ, разгрузить до предупреждения')
+  F.chest_flag('memauto', 'Разгружать самому', 'mem_auto',
+    'На каждой ступени (' .. table.concat(F.MEM_LEVELS, ', ') .. ' МБ) один раз и без подвисания, а не каждые 10 минут')
   F.divider()
-  F.hint('Что делается: fHelper отдаёт свои картинки и память, игра выгружает модели и текстуры, которые сейчас не видны, мир вокруг подгружается заново. На секунду может подвиснуть и мелькнуть текстуры.')
-  F.hint('Почему «свободно» почти не растёт: память мира остаётся у игры, и она берёт её под новые модели вместо того, чтобы занимать ещё. Windows считает её занятой, поэтому цифра не меняется, но падать она начинает медленнее.')
-  F.hint('Это помогает отложить перезаход, но не заменяет его: большую часть памяти держат сама игра, Arizona и другие скрипты, их отсюда не освободить.')
-  F.hint('Команда /fmem делает то же самое.')
+  F.ic_title('ICON_FA_GLOBE', 'Предел памяти мира')
+  local list = {}
+  for _, v in ipairs(F.MEM_WORLD) do list[#list + 1] = {tostring(v), v == 0 and 'Как в игре' or (v .. ' МБ')} end
+  local pick = F.segment('memworld', list, tostring(math.floor(tonumber(cfg.mem_world) or 0)))
+  if pick then
+    cfg.mem_world = tonumber(pick) or 0
+    dirty = true
+    pcall(F.mem_world_apply)
+    F._mem_at = nil
+  end
+  local lim0 = F._mem_lim0 and F._mem_lim0 / 1048576
+  F.hint('Игра держит в памяти модели и текстуры мира до своего предела'
+    .. (lim0 and string.format(' (в твоей игре он %.0f МБ)', lim0) or '')
+    .. '. Чем он ниже, тем раньше игра выгружает то, чего рядом нет, и тем медленнее заполняется память. '
+    .. 'Слишком низкий даёт подгрузку текстур на глазах: начни с 768, если мир «моргает» — верни выше.')
+  F.divider()
+  F.hint('«Разгрузить»: fHelper отдаёт свои картинки и память, игра выгружает модели и текстуры, которые сейчас не видны. По кнопке мир вокруг сразу подгружается заново (на секунду подвиснет), сама разгрузка идёт без подвисания.')
+  F.hint('«Самый большой кусок» важнее, чем «свободно»: текстуре нужен один цельный кусок. Когда он мал, появляются квадраты и вылеты, даже если всего свободно сотни МБ.')
+  F.hint('Это откладывает перезаход, но не заменяет его: большую часть памяти держат сама игра, Arizona и другие скрипты, их отсюда не освободить.')
+  F.hint('Команда /fmem делает то же, что кнопка.')
   F.card_end()
 end
 
@@ -15286,7 +16047,7 @@ function F.draw_overlay(ww, wh, wp)
   local ask = m.kind == 'ask'
   local patch = m.kind == 'patch'
   local pad = 24
-  local mw = math.min(F.s(patch and 700 or 480), ww - 40)
+  local mw = math.min(F.s(patch and 700 or (m.wide and 580 or 480)), ww - 40)
   local inner = mw - pad * 2
   local head_h = F.s(36)
   local btn_h = F.s(38)
@@ -15298,7 +16059,7 @@ function F.draw_overlay(ww, wh, wp)
   elseif patch then
     body_h = math.max(F.s(200), wh - 80 - pad * 2 - head_h - 36 - btn_h)
   else
-    body_h = F.s(150)
+    body_h = math.min(F.s(m.body_h or 150), math.max(F.s(100), wh - 80 - pad * 2 - head_h - 36 - btn_h))
   end
   local mh = pad + head_h + 14 + body_h + 22 + btn_h + pad
   local x = math.floor(wp.x + (ww - mw) / 2)
@@ -15306,6 +16067,7 @@ function F.draw_overlay(ww, wh, wp)
   F.round_rect(x, y + 4, mw, mh, F.col('side', 120), nil, 20)
   F.round_rect(x, y, mw, mh, F.col('panel'), F.col('accent', 110), 20)
   local icon = F.faico(ask and 'ICON_FA_QUESTION_CIRCLE' or 'ICON_FA_INFO_CIRCLE')
+  if m.icon and F.faico(m.icon) ~= '' then icon = F.faico(m.icon) end
   local tx = x + pad
   local cy = y + pad + head_h / 2
   if icon ~= '' then
@@ -15324,12 +16086,23 @@ function F.draw_overlay(ww, wh, wp)
     imgui.BeginChild('##report', imgui.ImVec2(inner, body_h), false)
     if patch then
       F.draw_patch_body()
+    elseif m.rows then
+      F.draw_news_body(m)
+      if m.foot then
+        imgui.Dummy(imgui.ImVec2(1, 6))
+        imgui.PushTextWrapPos(0)
+        imgui.TextColored(F.cvec('text', 0.6), '%s', m.foot)
+        imgui.PopTextWrapPos()
+      end
     else
       imgui.PushTextWrapPos(0)
       local lines = m.lines or {}
       for i = 1, #lines do
         if i == 1 then imgui.TextColored(F.cvec('accent_hi'), '%s', lines[i])
-        else imgui.TextUnformatted(lines[i]) end
+        else
+          if m.kind == 'welcome' then imgui.Dummy(imgui.ImVec2(1, 3)) end
+          imgui.TextUnformatted(lines[i])
+        end
       end
       imgui.PopTextWrapPos()
     end
@@ -15354,8 +16127,18 @@ function F.draw_overlay(ww, wh, wp)
         F.queue('fn', {fn = function() F.shell_open('explore', folder) end})
       end
     end
+    if m.btn then
+      imgui.SetCursorScreenPos(imgui.ImVec2(x + pad, by))
+      if F.button(m.btn.label .. '##mbtn', m.btn.w or 160, 38) then
+        modal = nil
+        local ok, err = pcall(m.btn.fn)
+        if not ok then F.log_line('Окно: ' .. tostring(err)) end
+      end
+      if m.btn.tip and imgui.IsItemHovered() then F.tip(m.btn.tip) end
+    end
     imgui.SetCursorScreenPos(imgui.ImVec2(right - F.s(120), by))
-    if F.accent_button('Закрыть##mclose', 120, 38) then modal = nil end
+    -- A button of this frame may have opened the next window: only the one drawn is closed.
+    if F.accent_button((m.close or 'Закрыть') .. '##mclose', 120, 38) and modal == m then modal = nil end
   end
   imgui.End()
   imgui.PopStyleColor()
@@ -15509,6 +16292,7 @@ function F.draw()
     overlay_x, overlay_y = p.x, p.y
   end
   imgui.End()
+  pcall(F.news_frame)
   if overlay_x then F.draw_overlay(ww, wh, imgui.ImVec2(overlay_x, overlay_y)) end
   F.done_font(font_main)
   F.style_pop()
@@ -15594,6 +16378,8 @@ function F.close_menu()
   F.note_flush()
   show = false
   capture = false
+  -- The welcome counts the break from the last time the menu was in use.
+  cfg.wel_at = os.time()
   dirty = true
 end
 
@@ -15683,7 +16469,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 32
+F.BUILD = 33
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -16178,6 +16964,10 @@ function main()
   sampRegisterChatCommand('fupdate', F.upd_cmd)
   sampRegisterChatCommand('fchest', F.chest_cmd)
   sampRegisterChatCommand('fmem', F.mem_cmd)
+  pcall(F.sc_off_apply)
+  -- fHelper's own memory stays near what it really uses instead of growing to twice that.
+  pcall(collectgarbage, 'setpause', 130)
+  pcall(collectgarbage, 'setstepmul', 300)
   sampRegisterChatCommand('fitem', function(arg) pcall(F.item_cmd, arg) end)
   sampRegisterChatCommand('fwant', function(arg) pcall(F.want_cmd, arg) end)
   sampRegisterChatCommand('fshift', function(arg) pcall(F.shift_cmd, arg) end)
@@ -16259,6 +17049,8 @@ addEventHandler('onScriptTerminate', function(scr)
     pcall(F.sc_terminated, scr)
     return
   end
+  -- The game's own streaming limit comes back with the script gone.
+  pcall(F.mem_world_apply, true)
   if F._restoring then
     pcall(F.lib_free)
     return
