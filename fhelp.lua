@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.9'
+local VER = '1.19.10'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(36)
+script_version_number(37)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -1373,8 +1373,12 @@ function F.perform(j)
   elseif j.op == 'rep_open' then
     -- Only a report from its own folder is opened.
     if j.path and j.path:sub(1, #F.rep_dir()) == F.rep_dir() and doesFileExist(j.path) then F.shell_open('open', j.path) end
+  elseif j.op == 'tg' then
+    F.shell_open('open', F.tg_url())
+  --@full{
   elseif j.op == 'url' then
     if j.url and j.url:find('^https://') then F.shell_open('open', j.url) end
+  --@full}
   elseif j.op == 'copy' then
     if not j.text or j.text == '' then
       F.notify('Нечего копировать')
@@ -3820,6 +3824,9 @@ end
 F.HEAD = 56
 -- Buttons on the right of the header: close, max, min, reload, update, what's new.
 F.HEAD_ICONS = 7
+--[==[@launcher{
+F.HEAD_ICONS = 6
+--@launcher}]==]
 
 function F.header_icon(id, x, y, glyph, tip, action)
   local size = 32
@@ -3843,7 +3850,7 @@ function F.header_icon(id, x, y, glyph, tip, action)
       F.close_menu()
     elseif action == 'settings' then page = 'settings'
     elseif action == 'reload' then F.queue('reload_self')
-    elseif action == 'upd' then F.upd_button()
+    elseif action == 'upd' then F.upd_button() --@full
     elseif action == 'patch' then F.patch_open()
     elseif action == 'data' then F.data_open()
     end
@@ -3918,6 +3925,7 @@ function F.paint_top(ww, wp, side_w)
   bx = bx - 34
   F.header_icon('##rel', bx, iy, glyph('ICON_FA_SYNC', 'R'), 'Перезагрузить fHelper', 'reload')
   bx = bx - 34
+  --@full{
   local u = F.upd_state()
   local busy = u.state == 'checking' or u.state == 'loading'
   F.header_icon('##upd', bx, iy, busy and glyph('ICON_FA_HOURGLASS_HALF', '…') or glyph('ICON_FA_CLOUD_DOWNLOAD_ALT', 'U'), F.upd_tip(), 'upd')
@@ -3925,6 +3933,7 @@ function F.paint_top(ww, wp, side_w)
     dl:AddCircleFilled(imgui.ImVec2(bx + 25, iy + 7), 4, F.col('accent'), 12)
   end
   bx = bx - 34
+  --@full}
   F.header_icon('##patch', bx, iy, glyph('ICON_FA_BULLHORN', '!'), 'Что нового в версии ' .. VER, 'patch')
   if cfg.seen_ver ~= VER then
     -- A pulsing dot until the notes of this version were opened.
@@ -7731,8 +7740,10 @@ F.REP_SKIP = {rep_seen = true, open = true, x = true, y = true, wel_at = true, i
 F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
   bars = 'плашки смены, машины, розыска и времени', calc = 'калькулятор и закрепы'}
 
+--@full{
 F.REP_UPD = {idle = 'ещё не проверялось', off = 'выключено', checking = 'идёт проверка', fail = 'нет связи с GitHub',
   none = 'стоит последняя версия', new = 'есть новая версия', done = 'обновлено'}
+--@full}
 
 function F.rep_new()
   return {parts = {}, tasks = {}, errs = {}, err_n = 0, err_kinds = 0, mins = {}, made = {}, auto_n = 0, cost = 0, pauses = 0,
@@ -8487,10 +8498,12 @@ function F.rep_build(kind, why)
   H('Что сейчас делает fHelper')
   L('Меню: ' .. (show and ('открыто, раздел ' .. tostring(page)) or 'закрыто'))
   L('Смена: ' .. (F.shift and tostring(F.shift.job or 'идёт') or 'нет'))
+  --@full{
   pcall(function()
     local u = F.upd_state()
     L('Обновление: ' .. (cfg.upd_on == 1 and 'проверяется само' or 'проверка выключена') .. ', состояние: ' .. (F.REP_UPD[u and u.state or ''] or tostring(u and u.state or '—')))
   end)
+  --@full}
   local changed, total = F.rep_changed()
   L('')
   L(string.format('Настройки, изменённые относительно обычных: %d из %d', #changed, total))
@@ -8701,6 +8714,9 @@ function F.data_open()
 end
 
 F.REP_TG = 'fhyart'
+
+-- The only address fHelper opens by itself in every build: the author's support chat.
+function F.tg_url() return 'https://t.me/' .. F.REP_TG end
 F.REP_SEND_MIN = 600
 
 -- The player sends the report himself: the file is made, shown in its folder, the summary is
@@ -8722,7 +8738,7 @@ function F.rep_send()
   end
   F.clip_set(F.rep.last.head)
   F.shell_open('open', 'explorer.exe', '/select,"' .. path .. '"')
-  F.shell_open('open', 'https://t.me/' .. F.REP_TG)
+  F.shell_open('open', F.tg_url())
   F.notify('Открыл чат @' .. F.REP_TG .. ' и папку с отчётом: перетащи файл в чат. Сводка уже в буфере обмена')
   return true
 end
@@ -8806,12 +8822,15 @@ end
 
 F.ABOUT_AUTHOR = 'fhyart'
 F.ABOUT_TEXT ='fHelper собирает в одном окне всё, что нужно в игре: доходы и расходы, смены на работах, '
-  .. 'пейдеи, бинды, заметки, библиотеку предметов, управление скриптами MoonLoader и обновляется сам с GitHub. '
-  .. 'Открыть меню: /fhelp.'
+  .. 'пейдеи, бинды, заметки, библиотеку предметов и управление скриптами MoonLoader. '
+--@full{
+F.ABOUT_TEXT = F.ABOUT_TEXT .. 'Обновляется сам с GitHub. '
 
 function F.about_url()
   return 'https://github.com/' .. F.UPD.user .. '/' .. F.UPD.repo
 end
+--@full}
+F.ABOUT_TEXT = F.ABOUT_TEXT .. 'Открыть меню: /fhelp.'
 
 function F.draw_settings_page()
   F.page_head('Настройки', 'Вид окна, сообщения и данные fHelper')
@@ -8857,7 +8876,7 @@ function F.draw_settings_page()
   end
   F.card_end()
   F.toast_settings()
-  F.upd_card()
+  F.upd_card() --@full
   F.bak_card()
   F.card_begin('Данные', 'Всё хранится в moonloader\\config', 'ICON_FA_DATABASE')
   local m = F.mem_st or {}
@@ -8883,14 +8902,21 @@ function F.draw_settings_page()
   F.hint(F.ABOUT_TEXT)
   imgui.Spacing()
   F.hint('Автор: ' .. F.ABOUT_AUTHOR)
+  F.hint('Поддержка: Telegram @' .. F.REP_TG)
+  --@full{
   local url = F.about_url()
   F.hint('GitHub: ' .. url)
+  --@full}
   imgui.Spacing()
-  if F.button(F.icon_label('ICON_FA_EXTERNAL_LINK_ALT', 'Открыть GitHub') .. '##aboutgh', 210, 0, 'primary') then
+  if F.button(F.icon_label('ICON_FA_PAPER_PLANE', 'Написать в Telegram') .. '##abouttg', 230, 0, 'primary') then F.queue('tg') end
+  --@full{
+  F.same_if_fit(F.s(210))
+  if F.button(F.icon_label('ICON_FA_EXTERNAL_LINK_ALT', 'Открыть GitHub') .. '##aboutgh', 210, 0) then
     F.queue('url', {url = url})
   end
   F.same_if_fit(F.s(230))
   if F.button(F.icon_label('ICON_FA_COPY', 'Скопировать ссылку') .. '##aboutcp', 230, 0) then F.queue('copy', {text = url}) end
+  --@full}
   imgui.Spacing()
   F.hint('fHelper не включает читы, обход античита, скрытые автоматические действия и эксплуатацию уязвимостей.')
   F.hint('Команды уходят в чат только когда ты сам нажал отправить или свой бинд.')
@@ -8900,6 +8926,9 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.10', '12.11.2026', {
+    {'add', 'Настройки: в «О fHelper» — поддержка в Telegram @fhyart одной кнопкой'},
+  }},
   {'1.19.9', '11.11.2026', {
     {'add', 'Значок со щитом вверху окна: простыми словами, какие данные о своей работе собирает fHelper, какие нет, и кнопка включить или отключить сбор', 'home'},
     {'add', 'Настройки: сбор данных о работе можно выключить одним переключателем — fHelper перестанет что-либо замерять'},
@@ -9417,17 +9446,19 @@ function F.welcome_lines(now, last)
   if last > 0 then
     lines[#lines + 1] = 'Последний раз ты открывал fHelper ' .. F.ago_text(now - last) .. ', ' .. os.date('%d.%m в %H:%M', last) .. '.'
   else
-    lines[#lines + 1] = 'Это первый запуск: загляни в «Настройки», там вид окна, клавиша меню и обновления.'
+    lines[#lines + 1] = 'Это первый запуск: загляни в «Настройки», там вид окна и клавиша меню.'
   end
   local s = F.shift
   if s then
     lines[#lines + 1] = 'Смена «' .. F.shift_title(s) .. '» ' .. (s.pause_at > 0 and 'стоит на паузе' or 'идёт')
       .. ': заработано ' .. F.shift_m(s, F.shift_earn(s)) .. ' за ' .. F.dur_short(F.shift_secs(s)) .. '.'
   end
+  --@full{
   local u = F.upd_state()
   if u.state == 'new' and u.info then
     lines[#lines + 1] = 'Вышла версия ' .. tostring(u.info.version or '') .. ': обнови кнопкой с облаком вверху.'
   end
+  --@full}
   local map = F.news_map()
   if cfg.news_on == 1 and map.n > 0 then
     local names = {}
@@ -17679,12 +17710,15 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
--- Updates
+F.BUILD = 37
+
+--@full{
+-- Updates. This whole region is left out of the build for the launcher (tools/release.py):
+-- that build checks nothing, downloads nothing and has no links.
 
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 36
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -18037,6 +18071,7 @@ function F.upd_card()
   F.hint('Перед заменой файл проверяется целиком, старая версия остаётся в moonloader\\fhelp_backup.')
   F.card_end()
 end
+--@full}
 
 function F.file_mtime(path)
   if not lfs_ok or not lfs or not path or path == '' then return 0 end
@@ -18176,7 +18211,7 @@ function main()
   end)
   sampRegisterChatCommand('fcalc', F.calc_cmd)
   sampRegisterChatCommand('fcar', F.car_scan)
-  sampRegisterChatCommand('fupdate', F.upd_cmd)
+  sampRegisterChatCommand('fupdate', F.upd_cmd) --@full
   sampRegisterChatCommand('fchest', F.chest_cmd)
   sampRegisterChatCommand('fmem', F.mem_cmd)
   sampRegisterChatCommand('freport', F.rep_cmd)
@@ -18226,7 +18261,7 @@ function main()
     F.guard('память', F.mem_tick, now)
     F.guard('карта памяти', F.mem_map_tick)
     if not F._restoring then F.guard('автобэкап', F.bak_tick, now) end
-    F.guard('обновление', F.upd_tick, now)
+    F.guard('обновление', F.upd_tick, now) --@full
     F.guard('картинки предметов', F.lib_pic_tick)
     F.guard('лавки', F.shop_tick)
     F.guard('сундуки', F.chest_tick)
