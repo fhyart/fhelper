@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.6'
+local VER = '1.19.7'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(33)
+script_version_number(34)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -187,6 +187,8 @@ local cfg = {
   wood_pd = 0,
   wood_pw_vc = 0,
   wood_pd_vc = 0,
+  rep_auto = 1,
+  rep_priv = 1,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -211,6 +213,7 @@ local CFG_NUM = {
   {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 5}, {'shift_chat', 0, 1},
   {'vc_here', 0, 1}, {'loc2_money', -1, 1e15}, {'loc2_bank', -1, 1e15}, {'loc2_depo', -1, 1e15}, {'inc_cur', 0, 1},
   {'wood_pw', 0, 1e9}, {'wood_pd', 0, 1e12}, {'wood_pw_vc', 0, 1e9}, {'wood_pd_vc', 0, 1e12},
+  {'rep_auto', 0, 1}, {'rep_priv', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -338,6 +341,9 @@ local NAV = {
 }
 
 local F = {}
+-- The settings as they come out of the box: the report shows what was changed.
+F.CFG_DEF = {}
+for k, v in pairs(cfg) do F.CFG_DEF[k] = v end
 function F.wd()
   return getWorkingDirectory()
 end
@@ -1349,6 +1355,18 @@ function F.perform(j)
     F.shell_open('explore', F.wd())
   elseif j.op == 'log' then
     F.shell_open('open', F.log_path())
+  elseif j.op == 'report' then
+    local path, name, size, notes = F.rep_make('manual')
+    if path then
+      F.notify('Отчёт сохранён: config\\fhelp_reports\\' .. name .. ', ' .. math.max(1, math.ceil(size / 1024)) .. ' КБ. '
+        .. (#notes > 0 and ('Замечаний: ' .. #notes) or 'Замечаний нет'))
+    else F.notify('Не удалось записать отчёт') end
+  elseif j.op == 'rep_dir' then
+    F.mkdir(F.rep_dir())
+    F.shell_open('explore', F.rep_dir())
+  elseif j.op == 'rep_open' then
+    -- Only a report from its own folder is opened.
+    if j.path and j.path:sub(1, #F.rep_dir()) == F.rep_dir() and doesFileExist(j.path) then F.shell_open('open', j.path) end
   elseif j.op == 'url' then
     if j.url and j.url:find('^https://') then F.shell_open('open', j.url) end
   elseif j.op == 'copy' then
@@ -7690,8 +7708,660 @@ function F.bak_preview()
   if F.button('Отмена##bakno', 160, 0) then F.bak_in = nil end
 end
 
+-- The work report: how fHelper runs on this PC. While the game goes it keeps the frame times,
+-- the stalls, what its own parts cost and the errors it caught; on request (or by itself after
+-- a failure) all of that goes into one text file together with the hardware, the memory, the
+-- settings changed from the defaults, the other scripts and the tail of the journals.
+F.REP_KEEP = 12
+F.REP_STALL, F.REP_BIG = 0.1, 0.5
+F.REP_SKIP = {open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
+  alt_money_real = true, alt_bank = true, alt_depo = true, loc2_money = true, loc2_bank = true, loc2_depo = true}
+F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
+  bars = 'плашки смены, машины, розыска и времени', calc = 'калькулятор и закрепы'}
+
+function F.rep_new()
+  return {parts = {}, errs = {}, err_n = 0, err_kinds = 0, mins = {}, made = {}, auto_n = 0, cost = 0, pauses = 0,
+    t0 = os.time(), all = {n = 0, sum = 0, stall = 0, big = 0, max = 0},
+    cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = 0}}
+end
+F.rep = F.rep_new()
+
+function F.rep_dir() return F.cfg_dir() .. '\\fhelp_reports' end
+
+-- Seconds with a fine grain: os.clock ticks once a millisecond, too coarse for a frame.
+function F.rep_clock()
+  local q = F._qpc
+  if q == nil then
+    q = false
+    if ffi_ok then
+      pcall(ffi.cdef, 'int __stdcall QueryPerformanceCounter(int64_t* v); int __stdcall QueryPerformanceFrequency(int64_t* v);')
+      local ok, r = pcall(function()
+        local b = ffi.new('int64_t[1]')
+        if ffi.C.QueryPerformanceFrequency(b) == 0 then return nil end
+        local fr = tonumber(b[0])
+        if not fr or fr <= 0 then return nil end
+        ffi.C.QueryPerformanceCounter(b)
+        return {buf = b, freq = fr}
+      end)
+      if ok and r then q = r end
+    end
+    F._qpc = q
+  end
+  if q then
+    ffi.C.QueryPerformanceCounter(q.buf)
+    return tonumber(q.buf[0]) / q.freq
+  end
+  return os.clock()
+end
+
+function F.rep_part(name, dt)
+  local r = F.rep
+  local p = r.parts[name]
+  if not p then
+    p = {n = 0, sum = 0, max = 0, slow = 0}
+    r.parts[name] = p
+  end
+  p.n = p.n + 1
+  p.sum = p.sum + dt
+  r.cost = r.cost + dt
+  if dt > p.max then p.max = dt end
+  if dt > 0.02 then p.slow = p.slow + 1 end
+end
+
+-- A draw function with its time counted. An error goes up as before.
+function F.rep_wrap(name, fn)
+  return function(...)
+    local t = F.rep_clock()
+    fn(...)
+    F.rep_part(name, F.rep_clock() - t)
+  end
+end
+
+-- One frame of the game: the time since the previous one. A pause or a minimised game is not a stall.
+function F.rep_frame(t, paused)
+  local r = F.rep
+  local last = r.ft
+  r.ft = t
+  if not last then return end
+  local dt = t - last
+  if dt <= 0 then return end
+  if paused or dt > 5 then
+    if dt > 5 then r.pauses = r.pauses + 1 end
+    return
+  end
+  local s, m = r.all, r.cur
+  s.n = s.n + 1
+  s.sum = s.sum + dt
+  m.n = m.n + 1
+  m.sum = m.sum + dt
+  if dt > m.max then m.max = dt end
+  if dt > F.REP_STALL then
+    s.stall = s.stall + 1
+    m.stall = m.stall + 1
+    if dt > F.REP_BIG then s.big = s.big + 1 end
+    if dt > s.max then s.max, s.max_at = dt, os.time() end
+  end
+  if m.sum >= 60 then
+    local st = F.mem_st or {}
+    r.mins[#r.mins + 1] = {t = os.time(), fps = m.n / m.sum, low = 1 / m.max, stall = m.stall, free = st.free,
+      lua = collectgarbage('count') / 1024, cost = (r.cost - m.cost0) / m.n * 1000}
+    if #r.mins > 90 then table.remove(r.mins, 1) end
+    r.cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = r.cost}
+  end
+end
+
+-- An error that fHelper caught and lived through: counted, and written to the journal once.
+function F.rep_err(where, err)
+  local r = F.rep
+  local text = tostring(err):gsub('[\r\n]+', ' '):sub(1, 300)
+  local key = where .. '|' .. text
+  r.err_n = r.err_n + 1
+  local e = r.errs[key]
+  if e then
+    e.n, e.last = e.n + 1, os.time()
+    return
+  end
+  if r.err_kinds >= 30 then return end
+  r.err_kinds = r.err_kinds + 1
+  r.errs[key] = {where = where, text = text, n = 1, first = os.time(), last = os.time(), idx = r.err_kinds}
+  pcall(F.log_line, 'Сбой в ' .. where .. ': ' .. text)
+  if not r.auto_why then r.auto_why, r.auto_from = 'сбой в ' .. where, os.clock() end
+end
+
+function F.guard(where, fn, ...)
+  local ok, err = pcall(fn, ...)
+  if not ok then F.rep_err(where, err) end
+  return ok, err
+end
+
+-- A value from HKEY_LOCAL_MACHINE: a string, or a number for the numeric kinds.
+function F.reg_read(sub, name)
+  if not ffi_ok then return nil end
+  if F._reg == nil then
+    F._reg = false
+    pcall(ffi.cdef, [[
+      long __stdcall RegOpenKeyExA(void* key, const char* sub, unsigned long opt, unsigned long sam, void** out);
+      long __stdcall RegQueryValueExA(void* key, const char* name, unsigned long* res, unsigned long* kind, unsigned char* data, unsigned long* len);
+      long __stdcall RegCloseKey(void* key);
+    ]])
+    local ok, lib = pcall(ffi.load, 'advapi32')
+    if ok then F._reg = lib end
+  end
+  local lib = F._reg
+  if not lib then return nil end
+  local ok, kind, data = pcall(function()
+    local h = ffi.new('void*[1]')
+    if lib.RegOpenKeyExA(ffi.cast('void*', 0x80000002), sub, 0, 0x20119, h) ~= 0 then return nil end
+    local buf = ffi.new('unsigned char[1024]')
+    local len = ffi.new('unsigned long[1]', 1024)
+    local kd = ffi.new('unsigned long[1]')
+    local rc = lib.RegQueryValueExA(h[0], name, nil, kd, buf, len)
+    lib.RegCloseKey(h[0])
+    if rc ~= 0 then return nil end
+    return tonumber(kd[0]), ffi.string(buf, len[0])
+  end)
+  if not ok or not kind or not data then return nil end
+  if kind == 1 or kind == 2 then
+    local s = data:gsub('%z.*$', '')
+    if not F.utf8_ok(s) and enc_ok then
+      local eok, u = pcall(function() return encoding.UTF8:encode(s) end)
+      if eok and u then s = u end
+    end
+    return F.trim(s)
+  end
+  if (kind == 4 or kind == 11 or kind == 3) and #data >= 4 then
+    local n = 0
+    for i = math.min(#data, 8), 1, -1 do n = n * 256 + data:byte(i) end
+    return n
+  end
+  return nil
+end
+if jit and jit.off then pcall(jit.off, F.reg_read, true) end
+
+-- What does not change while the game runs: Windows, the processor, the video card.
+function F.rep_hw()
+  if F._hw then return F._hw end
+  local hw = {}
+  local nt = 'SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'
+  local name, build = F.reg_read(nt, 'ProductName'), F.reg_read(nt, 'CurrentBuild')
+  if name then
+    -- Windows 11 still calls itself Windows 10 in this key.
+    if (tonumber(build) or 0) >= 22000 then name = name:gsub('Windows 10', 'Windows 11') end
+    local dv = F.reg_read(nt, 'DisplayVersion')
+    hw.os = name .. (type(dv) == 'string' and dv ~= '' and (' ' .. dv) or '') .. (build and (', сборка ' .. tostring(build)) or '')
+  end
+  local cp = 'HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0'
+  hw.cpu = F.reg_read(cp, 'ProcessorNameString')
+  if type(hw.cpu) == 'string' then hw.cpu = hw.cpu:gsub('%s+', ' ') else hw.cpu = nil end
+  hw.mhz = tonumber(F.reg_read(cp, '~MHz'))
+  hw.cores = tonumber(os.getenv('NUMBER_OF_PROCESSORS') or '')
+  hw.gpu = {}
+  local seen = {}
+  for i = 0, 3 do
+    local key = 'SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\000' .. i
+    local desc = F.reg_read(key, 'DriverDesc')
+    if type(desc) == 'string' and desc ~= '' and not seen[desc] then
+      seen[desc] = true
+      local vram = tonumber(F.reg_read(key, 'HardwareInformation.qwMemorySize')) or tonumber(F.reg_read(key, 'HardwareInformation.MemorySize'))
+      local drv = F.reg_read(key, 'DriverVersion')
+      hw.gpu[#hw.gpu + 1] = {name = desc, vram = vram and vram > 0 and vram / 1048576 or nil, drv = type(drv) == 'string' and drv or nil}
+    end
+  end
+  F._hw = hw
+  return hw
+end
+
+-- What changes: free RAM of the PC and free space on the disk with the game, in MB.
+function F.rep_now()
+  local out = {}
+  if not ffi_ok then return out end
+  F.mem_read()
+  pcall(function()
+    local m = ffi.new('FH_MEMSTAT')
+    m.len = ffi.sizeof('FH_MEMSTAT')
+    if ffi.C.GlobalMemoryStatusEx(m) == 0 then return end
+    out.ram, out.ram_free, out.ram_load = tonumber(m.tphys) / 1048576, tonumber(m.aphys) / 1048576, tonumber(m.load)
+  end)
+  pcall(ffi.cdef, 'int __stdcall GetDiskFreeSpaceExA(const char* dir, uint64_t* avail, uint64_t* total, uint64_t* free);')
+  pcall(function()
+    local a, t = ffi.new('uint64_t[1]'), ffi.new('uint64_t[1]')
+    if ffi.C.GetDiskFreeSpaceExA(F.wd(), a, t, nil) == 0 then return end
+    out.disk_free, out.disk = tonumber(a[0]) / 1048576, tonumber(t[0]) / 1048576
+  end)
+  return out
+end
+if jit and jit.off then pcall(jit.off, F.rep_now, true) end
+
+function F.rep_nick()
+  local n = live.nick_raw or ''
+  if n == '' then return '—' end
+  if cfg.rep_priv ~= 1 then return n end
+  return n:sub(1, 2) .. '***'
+end
+
+-- With the privacy switch on the nick and the Windows user name never leave the PC.
+function F.rep_scrub(s)
+  if cfg.rep_priv ~= 1 then return s end
+  s = s:gsub('([A-Za-z]:[\\/][Uu]sers[\\/])[^\\/\r\n]+', '%1***')
+  local n = live.nick_raw or ''
+  if #n >= 3 then s = s:gsub(n:gsub('%p', '%%%0'), F.rep_nick()) end
+  return s
+end
+
+function F.rep_scripts()
+  local out = {}
+  pcall(function()
+    local list = script.list()
+    for i = 1, #list do
+      local s = list[i]
+      if s ~= script.this then
+        local ok, name, file = pcall(function() return tostring(s.name or ''), tostring(s.filename or '') end)
+        if ok then out[#out + 1] = {name = F.game_text(name), file = F.game_text(file)} end
+      end
+    end
+  end)
+  table.sort(out, function(a, b) return a.file:lower() < b.file:lower() end)
+  return out
+end
+
+-- fHelper's own files in config with their sizes, the biggest first.
+function F.rep_cfg_files()
+  local out, total = {}, 0
+  if not lfs_ok then return out, total end
+  local function walk(dir, rel, depth)
+    pcall(function()
+      for name in lfs.dir(dir) do
+        if name ~= '.' and name ~= '..' then
+          local path = dir .. '\\' .. name
+          local mode = lfs.attributes(path, 'mode')
+          if mode == 'directory' then
+            if depth < 2 and (name:match('^fhelp') or rel ~= '' or F.PROJ.arz.folder == name or F.PROJ.rod.folder == name) then
+              walk(path, rel .. name .. '\\', depth + 1)
+            end
+          elseif name:match('^fhelp') then
+            local size = lfs.attributes(path, 'size') or 0
+            total = total + size
+            out[#out + 1] = {name = rel .. name, size = size}
+          end
+        end
+      end
+    end)
+  end
+  walk(F.cfg_dir(), '', 0)
+  table.sort(out, function(a, b) return a.size > b.size end)
+  return out, total
+end
+
+function F.rep_changed()
+  local out, n = {}, 0
+  local function show(v)
+    if type(v) == 'number' and v ~= math.floor(v) then return (string.format('%.3f', v):gsub('0+$', '')) end
+    if v == '' then return 'пусто' end
+    return tostring(v)
+  end
+  for k, def in pairs(F.CFG_DEF) do
+    n = n + 1
+    if not F.REP_SKIP[k] and cfg[k] ~= def and type(cfg[k]) ~= 'table' then
+      out[#out + 1] = k .. ' = ' .. show(cfg[k]) .. '   (обычно ' .. show(def) .. ')'
+    end
+  end
+  table.sort(out)
+  return out, n
+end
+
+-- Everything measured, in one table: the card, the summary and the file all read it.
+function F.rep_data()
+  local r = F.rep
+  local s = r.all
+  local d = {frames = s.n, played = s.sum, stall = s.stall, big = s.big, worst = s.max, worst_at = s.max_at,
+    errs = r.err_n, err_kinds = r.err_kinds, pauses = r.pauses}
+  d.fps_avg = s.sum > 0 and s.n / s.sum or nil
+  d.cost_ms = s.n > 0 and r.cost / s.n * 1000 or nil
+  d.cost_share = s.sum > 0 and math.min(100, r.cost / s.sum * 100) or nil
+  d.stall_h = s.sum >= 300 and s.stall / (s.sum / 3600) or nil
+  for _, m in ipairs(r.mins) do
+    if not d.min_fps or m.fps < d.min_fps then d.min_fps, d.min_at = m.fps, m.t end
+  end
+  local st = F.mem_st or {}
+  d.free, d.total, d.map, d.rate = st.free, st.total, st.map, F.mem_rate
+  d.lua = collectgarbage('count') / 1024
+  return d
+end
+
+-- What stands out, in plain words. Empty when everything is fine.
+function F.rep_notes(d, now, scripts)
+  local out = {}
+  local function add(s) out[#out + 1] = s end
+  if d.errs > 0 then add(string.format('fHelper поймал ошибок: %d (разных %d) — они перечислены ниже, это первое, что стоит прислать автору', d.errs, d.err_kinds)) end
+  if d.free and d.free < F.MEM_WARN then add(string.format('У игры осталось %.0f МБ памяти: скоро фризы и квадраты вместо текста, поможет перезаход', d.free)) end
+  if d.map and d.map.big < 200 and not (d.free and d.free < F.MEM_WARN) then
+    add(string.format('Память игры раздроблена: самый большой свободный кусок %.0f МБ, большие текстуры могут не загрузиться', d.map.big))
+  end
+  if d.rate and d.rate > 250 then add(string.format('Память игры уходит быстро: %.0f МБ в час. Попробуй «Предел памяти мира» во вкладке «Память»', d.rate)) end
+  if d.fps_avg and d.frames > 600 and d.fps_avg < 30 then add(string.format('Средний FPS низкий: %.0f', d.fps_avg)) end
+  if d.stall_h and d.stall_h > 30 then add(string.format('Игра часто замирает: %.0f фризов в час дольше %d мс', d.stall_h, F.REP_STALL * 1000)) end
+  if d.worst and d.worst > 1 then add(string.format('Самый долгий фриз: %.1f с', d.worst)) end
+  if d.cost_ms and d.frames > 600 and (d.cost_ms > 2 or (d.cost_share or 0) > 8) then
+    add(string.format('fHelper сам занимает много: %.2f мс на кадр (%.1f%% времени кадра)', d.cost_ms, d.cost_share or 0))
+  end
+  if d.lua > 150 then add(string.format('Своя память fHelper большая: %.0f МБ', d.lua)) end
+  if now.ram_free and now.ram_free < 1500 then add(string.format('У компьютера мало свободной оперативной памяти: %.0f МБ из %.0f', now.ram_free, now.ram or 0)) end
+  if now.disk_free and now.disk_free < 2048 then add(string.format('На диске с игрой мало места: %.0f МБ', now.disk_free)) end
+  if scripts and #scripts > 30 then add(string.format('Вместе с fHelper работает %d скриптов: каждый берёт память и время кадра', #scripts)) end
+  return out
+end
+
+function F.rep_ms(sec) return string.format('%.2f мс', (sec or 0) * 1000) end
+
+-- The short part: fits a chat message, and opens the file.
+function F.rep_head(kind, why, d, now, hw, notes)
+  local out = {}
+  local function L(s) out[#out + 1] = s end
+  L('Отчёт fHelper ' .. VER .. ' (сборка ' .. tostring(F.BUILD) .. '), ' .. os.date('%d.%m.%Y %H:%M:%S'))
+  L(kind == 'auto' and ('Собран сам: ' .. tostring(why or 'сбой')) or 'Собран по кнопке')
+  L('Проект: ' .. F.proj().name .. (live.online and (', сервер: ' .. tostring(live.server)) or ', не в игре'))
+  if hw.os then L('Система: ' .. hw.os) end
+  if hw.cpu then L('Процессор: ' .. hw.cpu .. (hw.cores and (', потоков ' .. hw.cores) or '')) end
+  for _, g in ipairs(hw.gpu or {}) do L('Видеокарта: ' .. g.name .. (g.vram and string.format(', %.0f МБ', g.vram) or '')) end
+  if now.ram then L(string.format('Оперативная память: %.0f МБ, свободно %.0f МБ', now.ram, now.ram_free or 0)) end
+  if d.fps_avg then
+    L(string.format('FPS: в среднем %.0f%s, фризов %d (долгих %d)', d.fps_avg,
+      d.min_fps and string.format(', худшая минута %.0f', d.min_fps) or '', d.stall, d.big))
+  end
+  if d.cost_ms then L(string.format('fHelper на кадр: %.2f мс (%.1f%% времени кадра)', d.cost_ms, d.cost_share or 0)) end
+  if d.free then L(string.format('Память игры: свободно %.0f из %.0f МБ, fHelper %.0f МБ', d.free, d.total or 0, d.lua)) end
+  L('Ошибок fHelper: ' .. d.errs)
+  L('')
+  if #notes == 0 then L('Что заметно: замечаний нет, fHelper работает ровно.')
+  else
+    L('Что заметно:')
+    for _, n in ipairs(notes) do L('  - ' .. n) end
+  end
+  return out
+end
+
+function F.rep_build(kind, why)
+  local r = F.rep
+  local d, now, hw, scripts = F.rep_data(), F.rep_now(), F.rep_hw(), F.rep_scripts()
+  local notes = F.rep_notes(d, now, scripts)
+  local out = F.rep_head(kind, why, d, now, hw, notes)
+  local function L(s) out[#out + 1] = s or '' end
+  local function H(s) L('') L('=== ' .. s .. ' ===') end
+
+  H('Проект и игра')
+  L('Проект: ' .. F.proj().name)
+  L('В игре: ' .. (live.online and 'да' or 'нет'))
+  if live.online then
+    L('Сервер: ' .. tostring(live.server) .. '  (' .. tostring(live.ip) .. ')')
+    L('Игрок: ' .. F.rep_nick() .. ', пинг ' .. tostring(live.ping) .. ', игроков ' .. tostring(live.players))
+  end
+  L('Сессия в игре: ' .. tostring(live.session) .. ', fHelper запущен ' .. F.dur_short(os.time() - r.t0) .. ' назад')
+  pcall(function() if type(getMoonloaderVersion) == 'function' then L('MoonLoader: версия ' .. tostring(getMoonloaderVersion())) end end)
+  pcall(function() if type(getGameDirectory) == 'function' then L('Папка игры: ' .. F.game_text(getGameDirectory())) end end)
+  L('Библиотеки: mimgui ' .. (imgui_ok and 'есть' or 'НЕТ') .. ', encoding ' .. (enc_ok and 'есть' or 'НЕТ')
+    .. ', fAwesome5 ' .. (fa_ok and 'есть' or 'НЕТ') .. ', lfs ' .. (lfs_ok and 'есть' or 'НЕТ') .. ', ffi ' .. (ffi_ok and 'есть' or 'НЕТ'))
+
+  H('Компьютер')
+  L('Система: ' .. tostring(hw.os or 'не прочиталась'))
+  L('Процессор: ' .. tostring(hw.cpu or 'не прочитался') .. (hw.mhz and string.format(', %.1f ГГц', hw.mhz / 1000) or '')
+    .. (hw.cores and (', потоков ' .. hw.cores) or ''))
+  if #hw.gpu == 0 then L('Видеокарта: не прочиталась') end
+  for _, g in ipairs(hw.gpu) do
+    L('Видеокарта: ' .. g.name .. (g.vram and string.format(', память %.0f МБ', g.vram) or '') .. (g.drv and (', драйвер ' .. g.drv) or ''))
+  end
+  if now.ram then L(string.format('Оперативная память: всего %.0f МБ, свободно %.0f МБ, занято %d%%', now.ram, now.ram_free or 0, now.ram_load or 0)) end
+  if now.disk then L(string.format('Диск с игрой: свободно %.1f из %.1f ГБ', (now.disk_free or 0) / 1024, now.disk / 1024)) end
+  pcall(function()
+    local sw, sh = getScreenResolution()
+    if sw and sh then L('Экран игры: ' .. tostring(sw) .. ' x ' .. tostring(sh)) end
+  end)
+
+  H('Скорость игры')
+  if d.frames == 0 then L('Замеров пока нет: отчёт собран сразу после запуска.')
+  else
+    L(string.format('Замерено: %s игры, кадров %d', F.dur_short(d.played), d.frames))
+    L(string.format('FPS: сейчас %s, в среднем %.1f', tostring(live.fps), d.fps_avg or 0))
+    if d.min_fps then L(string.format('Худшая минута: %.1f FPS в %s', d.min_fps, os.date('%H:%M', d.min_at))) end
+    L(string.format('Фризы дольше %d мс: %d, из них дольше %d мс: %d%s', F.REP_STALL * 1000, d.stall, F.REP_BIG * 1000, d.big,
+      d.stall_h and string.format(' (%.0f в час)', d.stall_h) or ''))
+    if d.worst and d.worst > 0 then L(string.format('Самый долгий фриз: %.0f мс в %s', d.worst * 1000, os.date('%H:%M:%S', d.worst_at or 0))) end
+    if d.pauses > 0 then L('Пауз и сворачиваний игры (не считаются фризами): ' .. d.pauses) end
+  end
+  L('Настройки, влияющие на скорость: свой предел FPS ' .. (cfg.fps_free == 1 and 'снят' or 'как в игре')
+    .. ', дальность прорисовки ' .. (cfg.draw_on == 1 and tostring(cfg.draw) or 'как в игре')
+    .. ', предел памяти мира ' .. ((tonumber(cfg.mem_world) or 0) > 0 and (tostring(cfg.mem_world) .. ' МБ') or 'как в игре'))
+
+  H('Сколько занимает сам fHelper')
+  if d.cost_ms then L(string.format('Всего: %.2f мс на кадр, %.1f%% времени кадра', d.cost_ms, d.cost_share or 0)) end
+  local parts = {}
+  for name, p in pairs(r.parts) do parts[#parts + 1] = {name = name, p = p} end
+  table.sort(parts, function(a, b) return a.p.sum > b.p.sum end)
+  for _, x in ipairs(parts) do
+    local p = x.p
+    L(string.format('  %s: в среднем %s, дольше всего %s, вызовов %d, дольше 20 мс %d раз',
+      F.REP_PARTS[x.name] or x.name, F.rep_ms(p.sum / math.max(1, p.n)), F.rep_ms(p.max), p.n, p.slow))
+  end
+  if #parts == 0 then L('  Замеров пока нет.') end
+  L(string.format('Своя память fHelper: %.1f МБ, картинок предметов загружено: %s', d.lua, tostring((F.mem_st or {}).pics or 0)))
+
+  H('Память игры')
+  if d.free then
+    L(string.format('Свободно %.0f из %.0f МБ', d.free, d.total or 0))
+    if d.map then
+      L(string.format('Самый большой свободный кусок: %.0f МБ', d.map.big))
+      L(string.format('Игра держит %.0f МБ, файлы %.0f МБ, запас %.0f МБ', d.map.priv, d.map.mapped + d.map.image, d.map.reserved))
+    end
+    if d.rate then L(string.format('Уходит %.0f МБ в час', d.rate)) end
+    pcall(function()
+      local used, limit = F.mem_game()
+      if used then L(string.format('Мир игры (модели и текстуры): %.0f из %.0f МБ', used, limit or 0)) end
+    end)
+    L('Ступень предупреждения: ' .. tostring(F._mem_lvl or 0) .. ' из ' .. #F.MEM_LEVELS .. ', своя разгрузка ' .. (cfg.mem_auto == 1 and 'включена' or 'выключена'))
+  else L('Не прочиталась.') end
+
+  H('Ошибки fHelper')
+  local errs = {}
+  for _, e in pairs(r.errs) do errs[#errs + 1] = e end
+  table.sort(errs, function(a, b) return a.idx < b.idx end)
+  if #errs == 0 then L('Ни одной с запуска.') end
+  for _, e in ipairs(errs) do
+    L(string.format('  [%s] %s: %s%s', os.date('%H:%M:%S', e.first), e.where, e.text,
+      e.n > 1 and string.format('  (всего %d, последний раз в %s)', e.n, os.date('%H:%M:%S', e.last)) or ''))
+  end
+
+  H('По минутам (последний час)')
+  if #r.mins == 0 then L('Пока меньше минуты замеров.') end
+  for i = math.max(1, #r.mins - 59), #r.mins do
+    local m = r.mins[i]
+    L(string.format('  %s  FPS %5.1f  худший кадр %4.0f мс  фризов %2d  fHelper %.2f мс  память игры %s МБ  fHelper %.0f МБ',
+      os.date('%H:%M', m.t), m.fps, 1000 / m.low, m.stall, m.cost, m.free and string.format('%.0f', m.free) or '—', m.lua))
+  end
+
+  H('Что сейчас делает fHelper')
+  L('Меню: ' .. (show and ('открыто, раздел ' .. tostring(page)) or 'закрыто'))
+  L('Смена: ' .. (F.shift and tostring(F.shift.job or 'идёт') or 'нет'))
+  pcall(function()
+    local u = F.upd_state()
+    L('Обновление: ' .. (cfg.upd_on == 1 and 'проверяется само' or 'проверка выключена') .. ', состояние: ' .. tostring(u and u.state or '—'))
+  end)
+  local changed, total = F.rep_changed()
+  L('')
+  L(string.format('Настройки, изменённые относительно обычных: %d из %d', #changed, total))
+  for _, c in ipairs(changed) do L('  ' .. c) end
+
+  H('Файлы fHelper в config')
+  local files, bytes = F.rep_cfg_files()
+  if #files == 0 then L('Список не прочитался.')
+  else
+    L(string.format('Файлов %d, всего %.1f МБ. Самые большие:', #files, bytes / 1048576))
+    for i = 1, math.min(15, #files) do L(string.format('  %8.1f КБ  %s', files[i].size / 1024, files[i].name)) end
+  end
+
+  H('Другие скрипты MoonLoader (' .. #scripts .. ')')
+  for i = 1, math.min(80, #scripts) do
+    local s = scripts[i]
+    L('  ' .. s.file .. (s.name ~= '' and s.name ~= s.file and ('  —  ' .. s.name) or ''))
+  end
+  local off = {}
+  pcall(function() for _, rel in pairs(F.sc_off_list()) do off[#off + 1] = tostring(rel) end end)
+  table.sort(off)
+  if #off > 0 then L('Выключены через fHelper: ' .. table.concat(off, ', ')) end
+
+  H('moonloader.log: строки про fHelper и ошибки скриптов')
+  local mine, bad = {}, {}
+  pcall(function()
+    for _, line in ipairs(F.ml_log_since(0)) do
+      local low = line:lower()
+      if low:find('fhelp', 1, true) then mine[#mine + 1] = line
+      elseif low:find('(error)', 1, true) then bad[#bad + 1] = line end
+    end
+  end)
+  if #mine == 0 and #bad == 0 then L('Ничего.') end
+  for i = math.max(1, #mine - 39), #mine do L('  ' .. mine[i]) end
+  if #bad > 0 then
+    L('Ошибки других скриптов (последние):')
+    for i = math.max(1, #bad - 14), #bad do L('  ' .. bad[i]) end
+  end
+
+  H('Журнал fHelper (последние строки)')
+  for i = math.max(1, #logs - 119), #logs do
+    local line = logs[i]
+    -- What the player typed and what they were paid is theirs.
+    if cfg.rep_priv == 1 then
+      if line:find('Команда отправлена:', 1, true) then line = line:gsub('Команда отправлена:.*$', 'Команда отправлена (скрыто)')
+      elseif line:find('Пейдей', 1, true) or line:find('$', 1, true) or line:find('руб.', 1, true) then line = nil end
+    end
+    if line then L('  ' .. line) end
+  end
+  if #logs == 0 then L('Пусто.') end
+
+  for i = 1, #out do out[i] = F.rep_scrub(out[i]) end
+  return out, d, notes
+end
+
+function F.rep_files()
+  local out = {}
+  if lfs_ok then
+    pcall(function()
+      for name in lfs.dir(F.rep_dir()) do
+        if type(name) == 'string' and name:match('^fhelp_report_.*%.txt$') then
+          local path = F.rep_dir() .. '\\' .. name
+          out[#out + 1] = {name = name, path = path, size = lfs.attributes(path, 'size') or 0}
+        end
+      end
+    end)
+  end
+  if #out == 0 then
+    for _, f in ipairs(F.rep.made) do
+      if doesFileExist(f.path) then out[#out + 1] = f end
+    end
+  end
+  -- The name carries the time, so the newest is the first.
+  table.sort(out, function(a, b) return a.name > b.name end)
+  return out
+end
+
+-- Writes the report; the oldest files over F.REP_KEEP are removed.
+function F.rep_make(kind, why)
+  local lines, d, notes = F.rep_build(kind, why)
+  F.mkdir(F.rep_dir())
+  local name = 'fhelp_report_' .. os.date('%Y-%m-%d_%H-%M-%S') .. (kind == 'auto' and '_auto' or '') .. '.txt'
+  local path = F.rep_dir() .. '\\' .. name
+  local f = io.open(path, 'wb')
+  if not f then return nil end
+  local text = table.concat(lines, '\r\n') .. '\r\n'
+  f:write('\239\187\191', text)
+  f:close()
+  local made = F.rep.made
+  for i = #made, 1, -1 do
+    if made[i].name == name then table.remove(made, i) end
+  end
+  table.insert(made, 1,{name = name, path = path, size = #text + 3})
+  F.rep.last = {name = name, path = path, at = os.time(), notes = #notes, kind = kind}
+  local head = {}
+  for i, line in ipairs(lines) do
+    if line:sub(1, 3) == '===' then break end
+    head[#head + 1] = line
+  end
+  F.rep.last.head = table.concat(head, '\n')
+  local all = F.rep_files()
+  for i = F.REP_KEEP + 1, #all do pcall(os.remove, all[i].path) end
+  F._rep_list = nil
+  return path, name, #text, notes
+end
+
+-- After a failure fHelper writes a report by itself: a few seconds later, so that what followed
+-- is in it too, not more often than once in ten minutes and three times a session.
+function F.rep_tick(now)
+  local r = F.rep
+  if (F._mem_lvl or 0) >= 3 then
+    if not r.mem_said then
+      r.mem_said = true
+      if not r.auto_why then r.auto_why, r.auto_from = 'память игры кончается', now end
+    end
+  else r.mem_said = nil end
+  if not r.auto_why or now - (r.auto_from or now) < 5 then return end
+  local why = r.auto_why
+  r.auto_why, r.auto_from = nil, nil
+  if cfg.rep_auto ~= 1 or r.auto_n >= 3 or (r.auto_at and now - r.auto_at < 600) then return end
+  r.auto_n, r.auto_at = r.auto_n + 1, now
+  local path, name = F.rep_make('auto', why)
+  if path then F.notify('Записан отчёт о сбое: Настройки → «Отчёт о работе»', true) end
+end
+
+function F.rep_cmd()
+  F.queue('report')
+end
+
+function F.rep_card()
+  F.card_begin('Отчёт о работе', 'Как fHelper работает на этом компьютере: скорость, память, ошибки, железо', 'ICON_FA_CLIPBOARD_LIST')
+  local d = F.rep_data()
+  F.tile_grid('rep', {
+    {'ICON_FA_TACHOMETER_ALT', 'FPS в среднем', d.fps_avg and string.format('%.0f', d.fps_avg) or '—'},
+    {'ICON_FA_HOURGLASS_HALF', 'Фризы', d.frames > 0 and (tostring(d.stall) .. (d.big > 0 and (' (долгих ' .. d.big .. ')') or '')) or '—'},
+    {'ICON_FA_STOPWATCH', 'fHelper на кадр', d.cost_ms and string.format('%.2f мс', d.cost_ms) or '—'},
+    {'ICON_FA_BUG', 'Ошибки', tostring(d.errs)},
+  }, 190)
+  imgui.Spacing()
+  F.hint('Отчёт — один текстовый файл: проект и сервер, железо, FPS и фризы по минутам, сколько занимает сам fHelper, '
+    .. 'память игры, пойманные ошибки, изменённые настройки, другие скрипты и хвост журналов. Его можно прислать автору, если что-то работает не так.')
+  imgui.Spacing()
+  if F.button(F.icon_label('ICON_FA_FILE_MEDICAL_ALT', 'Собрать отчёт') .. '##repmake', 210, 0, 'primary') then F.queue('report') end
+  F.same_if_fit(F.s(210))
+  if F.button('Папка отчётов##repdir', 210, 0) then F.queue('rep_dir') end
+  local last = F.rep.last
+  if last then
+    F.same_if_fit(F.s(230))
+    if F.button(F.icon_label('ICON_FA_COPY', 'Скопировать сводку') .. '##repcp', 230, 0) then
+      if F.clip_set(last.head) then F.notify('Сводка отчёта скопирована', true) else F.notify('Не удалось скопировать', true) end
+    end
+  end
+  imgui.Spacing()
+  F.chest_flag('repauto', 'Отчёт при сбое', 'rep_auto',
+    'Если fHelper поймал ошибку или у игры кончается память, отчёт записывается сам, не чаще раза в 10 минут')
+  F.chest_flag('reppriv', 'Скрывать личное', 'rep_priv',
+    'Ник и имя пользователя Windows заменяются звёздочками, из журнала убираются отправленные команды и строки с деньгами')
+  F._rep_list = F._rep_list or F.rep_files()
+  if #F._rep_list > 0 then
+    imgui.Spacing()
+    for i = 1, math.min(#F._rep_list, 6) do
+      local f = F._rep_list[i]
+      local stamp = f.name:match('(%d+%-%d+%-%d+_%d+%-%d+%-%d+)') or ''
+      local dd, tt = stamp:match('^(%d+%-%d+%-%d+)_(%d+%-%d+)')
+      local sub = (dd and (dd:gsub('(%d+)%-(%d+)%-(%d+)', '%3.%2.%1') .. ' ' .. tt:gsub('%-', ':')) or f.name)
+        .. '  ·  ' .. math.max(1, math.ceil((f.size or 0) / 1024)) .. ' КБ' .. (f.name:find('_auto', 1, true) and '  ·  записан сам после сбоя' or '')
+      F.item_row(f.name, 0, sub, 'открыть', 7100 + i, 'Открыть файл в блокноте', function()
+        F.queue('rep_open', {path = f.path})
+      end)
+    end
+  end
+  imgui.Spacing()
+  F.hint('В отчёт не попадают пароли, переписка из чата и балансы. Файл никуда не отправляется сам: он лежит в папке, пока ты его не перешлёшь. Команда: /freport.')
+  F.card_end()
+end
+
 F.ABOUT_AUTHOR = 'fhyart'
-F.ABOUT_TEXT = 'fHelper собирает в одном окне всё, что нужно в игре: доходы и расходы, смены на работах, '
+F.ABOUT_TEXT ='fHelper собирает в одном окне всё, что нужно в игре: доходы и расходы, смены на работах, '
   .. 'пейдеи, бинды, заметки, библиотеку предметов, управление скриптами MoonLoader и обновляется сам с GitHub. '
   .. 'Открыть меню: /fhelp.'
 
@@ -7758,6 +8428,7 @@ function F.draw_settings_page()
     F.ask('Сбросить время в игре и трафик? Пейдеи, бинды и заметки останутся.', 'Сбросить', 'fn', {fn = F.reset_stats})
   end
   F.card_end()
+  F.rep_card()
   F.card_begin('О fHelper', 'Помощник для Arizona RP и Rodina RP', 'ICON_FA_INFO_CIRCLE')
   local p = imgui.GetCursorScreenPos()
   local x = p.x
@@ -7785,6 +8456,14 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.7', '11.11.2026', {
+    {'add', 'Настройки: «Отчёт о работе» — один файл о том, как fHelper работает на твоём компьютере: железо, FPS и фризы по минутам, память, ошибки, изменённые настройки, другие скрипты'},
+    {'add', 'Настройки: в отчёте видно, сколько времени кадра занимает сам fHelper и какая его часть — меню, уведомления, плашки или фоновая работа'},
+    {'add', 'Настройки: вверху отчёта «Что заметно» — простыми словами, что не так: мало памяти, фризы, ошибки, мало места на диске'},
+    {'add', 'Настройки: отчёт пишется сам после сбоя, папка отчётов и сводка для чата в одну кнопку, команда /freport'},
+    {'add', 'Настройки: ник и имя пользователя Windows в отчёте скрыты, пароли, переписка, отправленные команды и балансы в него не попадают'},
+    {'fix', 'Ошибки фоновой работы больше не проглатываются молча: fHelper записывает их в журнал и считает'},
+  }},
   {'1.19.6', '11.11.2026', {
     {'add', 'Лесоруб: цены полена и ДВК видны плитками и задаются ещё до начала смены; отдельно видно, на сколько добыто дров и на сколько ДВК'},
     {'add', 'Лесоруб: сверка со складом — счёт смены сравнивается с инвентарём, а всё, что пришло мимо тележек, показано отдельно'},
@@ -16292,7 +16971,7 @@ function F.draw()
     overlay_x, overlay_y = p.x, p.y
   end
   imgui.End()
-  pcall(F.news_frame)
+  F.guard('окно «что нового»', F.news_frame)
   if overlay_x then F.draw_overlay(ww, wh, imgui.ImVec2(overlay_x, overlay_y)) end
   F.done_font(font_main)
   F.style_pop()
@@ -16300,7 +16979,8 @@ end
 
 if imgui_ok then
   imgui.OnInitialize(F.init_fonts)
-  frame = imgui.OnFrame(function() return F.menu_drawn() end, F.draw)
+  -- Every window is drawn through rep_wrap: the report knows what each of them costs.
+  frame = imgui.OnFrame(function() return F.menu_drawn() end, F.rep_wrap('menu', F.draw))
   frame.LockPlayer = false
   frame.HideCursor = false
   hud_frame = imgui.OnFrame(function()
@@ -16309,28 +16989,28 @@ if imgui_ok then
       hud_frame.LockPlayer = false
     end
     return F.hud_on()
-  end, F.draw_hud)
+  end, F.rep_wrap('hud', F.draw_hud))
   hud_frame.HideCursor = true
   hud_frame.LockPlayer = false
-  F.calc_frame = imgui.OnFrame(function() return F.calc_win_on() end, F.draw_calc_win)
+  F.calc_frame = imgui.OnFrame(function() return F.calc_win_on() end, F.rep_wrap('calc', F.draw_calc_win))
   F.calc_frame.HideCursor = true
   F.calc_frame.LockPlayer = false
-  F.pin_frame = imgui.OnFrame(function() return F.pins_on() end, F.draw_pins)
+  F.pin_frame = imgui.OnFrame(function() return F.pins_on() end, F.rep_wrap('calc', F.draw_pins))
   F.pin_frame.HideCursor = true
   F.pin_frame.LockPlayer = false
-  F.want_frame = imgui.OnFrame(function() return F.want_bar_on() end, F.draw_want_bar)
-  F.shift_frame = imgui.OnFrame(function() return F.shift_bar_on() end, F.draw_shift_bar)
+  F.want_frame = imgui.OnFrame(function() return F.want_bar_on() end, F.rep_wrap('bars', F.draw_want_bar))
+  F.shift_frame = imgui.OnFrame(function() return F.shift_bar_on() end, F.rep_wrap('bars', F.draw_shift_bar))
   F.want_frame.HideCursor = true
   F.want_frame.LockPlayer = false
   F.shift_frame.HideCursor = true
   F.shift_frame.LockPlayer = false
-  F.time_frame = imgui.OnFrame(function() return F.time_on() end, F.draw_time)
+  F.time_frame = imgui.OnFrame(function() return F.time_on() end, F.rep_wrap('bars', F.draw_time))
   F.time_frame.HideCursor = true
   F.time_frame.LockPlayer = false
-  F.car_frame = imgui.OnFrame(function() return F.car_bar_on() end, F.draw_car_bar)
+  F.car_frame = imgui.OnFrame(function() return F.car_bar_on() end, F.rep_wrap('bars', F.draw_car_bar))
   F.car_frame.HideCursor = true
   F.car_frame.LockPlayer = false
-  F.toast_frame = imgui.OnFrame(function() return F.toast_on() end, F.draw_toasts)
+  F.toast_frame = imgui.OnFrame(function() return F.toast_on() end, F.rep_wrap('toasts', F.draw_toasts))
   F.toast_frame.HideCursor = true
   F.toast_frame.LockPlayer = false
 end
@@ -16469,7 +17149,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 33
+F.BUILD = 34
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -16964,7 +17644,8 @@ function main()
   sampRegisterChatCommand('fupdate', F.upd_cmd)
   sampRegisterChatCommand('fchest', F.chest_cmd)
   sampRegisterChatCommand('fmem', F.mem_cmd)
-  pcall(F.sc_off_apply)
+  sampRegisterChatCommand('freport', F.rep_cmd)
+  F.guard('выключенные скрипты', F.sc_off_apply)
   -- fHelper's own memory stays near what it really uses instead of growing to twice that.
   pcall(collectgarbage, 'setpause', 130)
   pcall(collectgarbage, 'setstepmul', 300)
@@ -16980,6 +17661,8 @@ function main()
     wait(0)
     frames = frames + 1
     local now = os.clock()
+    local t_in = F.rep_clock()
+    F.rep_frame(t_in, isPauseMenuActive())
     if now - fps_mark >= 0.5 then
       fps = frames / (now - fps_mark)
       frames = 0
@@ -16990,22 +17673,24 @@ function main()
       F.ensure_boot()
       F.apply_limiter(true)
       up_mark = now
+      F.guard('отчёт', F.rep_tick, now)
     end
     if F.int_dirty and now - int_mark >= 20 then
       int_mark = now
-      pcall(F.int_save)
+      F.guard('сохранение интерьеров', F.int_save)
     end
     F.play_tick()
     F.pay_tick()
     F.car_tick()
-    pcall(F.mem_tick, now)
-    if not F._restoring then pcall(F.bak_tick, now) end
-    pcall(F.upd_tick, now)
-    pcall(F.lib_pic_tick)
-    pcall(F.shop_tick)
-    pcall(F.chest_tick)
-    pcall(F.wood_tick)
-    if not F._restoring then pcall(F.shift_tick, now) end
+    -- What fails here is caught, counted and written to the journal once: the report shows it.
+    F.guard('память', F.mem_tick, now)
+    if not F._restoring then F.guard('автобэкап', F.bak_tick, now) end
+    F.guard('обновление', F.upd_tick, now)
+    F.guard('картинки предметов', F.lib_pic_tick)
+    F.guard('лавки', F.shop_tick)
+    F.guard('сундуки', F.chest_tick)
+    F.guard('лесоруб', F.wood_tick)
+    if not F._restoring then F.guard('смена', F.shift_tick, now) end
     F.watch_self()
     if frame then
       frame.LockPlayer = (show or anim > 0.45) and not hidden and cfg.lock == 1
@@ -17026,11 +17711,14 @@ function main()
         sampAddChatMessage(F.to_cp('{E08A55}[fHelper] {FFFFFF}' .. msg:gsub('{', '(')), -1)
       end
     end
+    -- The buttons' own work may wait inside, so it is not part of the per-frame cost.
+    F.rep_part('tick', F.rep_clock() - t_in)
     if job then
       local current = job
       job = nil
       local ok, err = pcall(F.perform, current)
       if not ok then
+        F.rep_err('действие «' .. tostring(current.op) .. '»', err)
         F.notify('Ошибка: ' .. tostring(err))
       end
     end
