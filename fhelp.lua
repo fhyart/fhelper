@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.8'
+local VER = '1.19.9'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(35)
+script_version_number(36)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -189,6 +189,8 @@ local cfg = {
   wood_pd_vc = 0,
   rep_auto = 1,
   rep_priv = 1,
+  rep_on = 1,
+  rep_seen = 0,
 }
 
 -- Saved as plain numbers, each with its allowed range.
@@ -213,7 +215,7 @@ local CFG_NUM = {
   {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 5}, {'shift_chat', 0, 1},
   {'vc_here', 0, 1}, {'loc2_money', -1, 1e15}, {'loc2_bank', -1, 1e15}, {'loc2_depo', -1, 1e15}, {'inc_cur', 0, 1},
   {'wood_pw', 0, 1e9}, {'wood_pd', 0, 1e12}, {'wood_pw_vc', 0, 1e9}, {'wood_pd_vc', 0, 1e12},
-  {'rep_auto', 0, 1}, {'rep_priv', 0, 1},
+  {'rep_auto', 0, 1}, {'rep_priv', 0, 1}, {'rep_on', 0, 1}, {'rep_seen', 0, 1},
 }
 
 local net ={inn = 0, outn = 0, sin = 0, sout = 0, bw = 210, bh = 58, force = false}
@@ -834,13 +836,13 @@ function F.prep_ffi()
   if kok then F.kernel32 = kernel32 end
 end
 
-function F.shell_open(op, path)
+function F.shell_open(op, path, params)
   if not shell32 then
     F.notify('Не удалось открыть папку')
     return
   end
   local ok, rc = pcall(function()
-    return shell32.ShellExecuteA(ffi.cast('void*', 0), op, path, nil, nil, 1)
+    return shell32.ShellExecuteA(ffi.cast('void*', 0), op, path, params, nil, 1)
   end)
   if not ok or not rc or tonumber(rc) == nil or tonumber(rc) <= 32 then
     F.notify('Не удалось открыть: ' .. path)
@@ -1355,12 +1357,16 @@ function F.perform(j)
     F.shell_open('explore', F.wd())
   elseif j.op == 'log' then
     F.shell_open('open', F.log_path())
+  elseif j.op == 'report' and cfg.rep_on ~= 1 then
+    F.notify('Сбор данных выключен: включи его в «Настройки → Отчёт о работе»')
   elseif j.op == 'report' then
     local path, name, size, notes = F.rep_make('manual')
     if path then
       F.notify('Отчёт сохранён: config\\fhelp_reports\\' .. name .. ', ' .. math.max(1, math.ceil(size / 1024)) .. ' КБ. '
         .. (#notes > 0 and ('Замечаний: ' .. #notes) or 'Замечаний нет'))
     else F.notify('Не удалось записать отчёт') end
+  elseif j.op == 'rep_send' then
+    F.rep_send()
   elseif j.op == 'rep_dir' then
     F.mkdir(F.rep_dir())
     F.shell_open('explore', F.rep_dir())
@@ -3813,7 +3819,7 @@ end
 -- Header height. Everything in the header is centred on it.
 F.HEAD = 56
 -- Buttons on the right of the header: close, max, min, reload, update, what's new.
-F.HEAD_ICONS = 6
+F.HEAD_ICONS = 7
 
 function F.header_icon(id, x, y, glyph, tip, action)
   local size = 32
@@ -3839,6 +3845,7 @@ function F.header_icon(id, x, y, glyph, tip, action)
     elseif action == 'reload' then F.queue('reload_self')
     elseif action == 'upd' then F.upd_button()
     elseif action == 'patch' then F.patch_open()
+    elseif action == 'data' then F.data_open()
     end
   end
   return hovered
@@ -3926,6 +3933,10 @@ function F.paint_top(ww, wp, side_w)
     -- Opened, but some sections with changes were not visited yet.
     dl:AddCircleFilled(imgui.ImVec2(bx + 25, iy + 7), 4, F.col('accent'), 12)
   end
+  bx = bx - 34
+  F.header_icon('##data', bx, iy, glyph('ICON_FA_SHIELD_ALT', 'i'), 'Важно: какие данные о работе собирает fHelper и как это выключить', 'data')
+  -- Pulses until the player has read what is collected.
+  if cfg.rep_seen ~= 1 then F.pulse_dot(bx + 25, iy + 7, 4) end
 end
 
 function F.paint_side(h, wide)
@@ -7715,7 +7726,7 @@ end
 F.REP_KEEP = 12
 F.REP_STALL, F.REP_BIG = 0.1, 0.5
 F.REP_WARM = 20
-F.REP_SKIP = {open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
+F.REP_SKIP = {rep_seen = true, open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
   alt_money_real = true, alt_bank = true, alt_depo = true, loc2_money = true, loc2_bank = true, loc2_depo = true}
 F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
   bars = 'плашки смены, машины, розыска и времени', calc = 'калькулятор и закрепы'}
@@ -7725,8 +7736,9 @@ F.REP_UPD = {idle = 'ещё не проверялось', off = 'выключе�
 
 function F.rep_new()
   return {parts = {}, tasks = {}, errs = {}, err_n = 0, err_kinds = 0, mins = {}, made = {}, auto_n = 0, cost = 0, pauses = 0,
-    t0 = os.time(), all = {n = 0, sum = 0, stall = 0, big = 0, max = 0},
-    cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = 0}}
+    t0 = os.time(), all = {n = 0, sum = 0, stall = 0, big = 0, max = 0, ours = 0, pn = 0, psum = 0, pmax = 0},
+    cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = 0, pn = 0, psum = 0, pmax = 0},
+    hist = {}, pages = {}, stalls = {}, fr_own = 0, fr_top_dt = 0}
 end
 F.rep = F.rep_new()
 
@@ -7759,7 +7771,11 @@ function F.rep_clock()
 end
 
 function F.rep_part(name, dt)
+  if cfg.rep_on ~= 1 then return end
   local r = F.rep
+  -- What fHelper took since the last frame, and its heaviest piece: a stall is blamed on it.
+  r.fr_own = r.fr_own + dt
+  if name ~= 'tick' and dt > r.fr_top_dt then r.fr_top, r.fr_top_dt = F.REP_PARTS[name] or name, dt end
   local p = r.parts[name]
   if not p then
     p = {n = 0, sum = 0, max = 0, slow = 0}
@@ -7783,7 +7799,10 @@ end
 
 -- One frame of the game: the time since the previous one. A pause or a minimised game is not a stall.
 function F.rep_frame(t, paused)
+  if cfg.rep_on ~= 1 then return end
   local r = F.rep
+  local own, top = r.fr_own, r.fr_top
+  r.fr_own, r.fr_top, r.fr_top_dt = 0, nil, 0
   local last = r.ft
   r.ft = t
   if not last then return end
@@ -7802,18 +7821,30 @@ function F.rep_frame(t, paused)
   m.n = m.n + 1
   m.sum = m.sum + dt
   if dt > m.max then m.max = dt end
+  -- How the frames are spread: one count per millisecond, everything over 100 ms together.
+  local ms = math.floor(dt * 1000)
+  if ms > 100 then ms = 101 end
+  r.hist[ms] = (r.hist[ms] or 0) + 1
   if dt > F.REP_STALL then
     s.stall = s.stall + 1
     m.stall = m.stall + 1
     if dt > F.REP_BIG then s.big = s.big + 1 end
     if dt > s.max then s.max, s.max_at = dt, os.time() end
+    -- Whose stall it is: fHelper's when it took a good part of that frame itself.
+    local mine = own >= dt * 0.4 or own >= 0.05
+    if mine then s.ours = s.ours + 1 end
+    local list = r.stalls
+    list[#list + 1] = {t = os.time(), dt = dt, own = own, top = top, mine = mine, page = show and F.rep_page_key() or nil}
+    if #list > 25 then table.remove(list, 1) end
   end
   if m.sum >= 60 then
     local st = F.mem_st or {}
     r.mins[#r.mins + 1] = {t = os.time(), fps = m.n / m.sum, low = 1 / m.max, stall = m.stall, free = st.free,
-      lua = collectgarbage('count') / 1024, cost = (r.cost - m.cost0) / m.n * 1000}
+      lua = collectgarbage('count') / 1024, cost = (r.cost - m.cost0) / m.n * 1000,
+      ping = m.pn > 0 and m.psum / m.pn or nil, ping_max = m.pn > 0 and m.pmax or nil}
     if #r.mins > 90 then table.remove(r.mins, 1) end
-    r.cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = r.cost}
+    if st.free and (not r.min_free or st.free < r.min_free) then r.min_free = st.free end
+    r.cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = r.cost, pn = 0, psum = 0, pmax = 0}
   end
 end
 
@@ -7837,7 +7868,10 @@ end
 
 -- One background task: how long it takes, so that the report can name the slow one.
 function F.rep_task(where, dt)
-  local ts = F.rep.tasks
+  if cfg.rep_on ~= 1 then return end
+  local r = F.rep
+  if dt > r.fr_top_dt then r.fr_top, r.fr_top_dt = where, dt end
+  local ts = r.tasks
   local t = ts[where]
   if not t then
     t = {n = 0, sum = 0, max = 0, slow = 0}
@@ -7952,6 +7986,16 @@ function F.rep_now()
     if ffi.C.GlobalMemoryStatusEx(m) == 0 then return end
     out.ram, out.ram_free, out.ram_load = tonumber(m.tphys) / 1048576, tonumber(m.aphys) / 1048576, tonumber(m.load)
   end)
+  pcall(ffi.cdef, 'int __stdcall GetSystemPowerStatus(unsigned char* st);')
+  pcall(function()
+    local ps = ffi.new('unsigned char[12]')
+    if ffi.C.GetSystemPowerStatus(ps) == 0 then return end
+    -- No battery at all (a desktop) is not «on battery».
+    if ps[1] < 128 and ps[0] <= 1 then
+      out.on_ac = ps[0] == 1
+      if ps[2] <= 100 then out.batt = ps[2] end
+    end
+  end)
   pcall(ffi.cdef, 'int __stdcall GetDiskFreeSpaceExA(const char* dir, uint64_t* avail, uint64_t* total, uint64_t* free);')
   pcall(function()
     local a, t = ffi.new('uint64_t[1]'), ffi.new('uint64_t[1]')
@@ -8043,6 +8087,129 @@ function F.rep_changed()
   return out, n
 end
 
+function F.rep_page_key()
+  local tab = F.news_tab(page)
+  return tab and (page .. ':' .. tab) or page
+end
+
+-- The menu by section: which screen is the heavy one.
+function F.rep_page(dt)
+  if cfg.rep_on ~= 1 then return end
+  local key = F.rep_page_key()
+  local ps = F.rep.pages
+  local p = ps[key]
+  if not p then
+    p = {n = 0, sum = 0, max = 0}
+    ps[key] = p
+  end
+  p.n = p.n + 1
+  p.sum = p.sum + dt
+  if dt > p.max then p.max = dt end
+end
+
+function F.rep_ping(v)
+  if cfg.rep_on ~= 1 or not v or v <= 0 then return end
+  local r = F.rep
+  for _, x in ipairs({r.cur, r.all}) do
+    x.pn, x.psum = x.pn + 1, x.psum + v
+    if v > x.pmax then x.pmax = v end
+  end
+end
+
+-- FPS of the worst share of the frames (0.01 is «1% low»): what the game feels like, not the average.
+function F.rep_low(share)
+  local r = F.rep
+  local n = r.all.n
+  if n < 1000 then return nil end
+  local need, got = n * share, 0
+  for ms = 101, 0, -1 do
+    got = got + (r.hist[ms] or 0)
+    if got >= need then return 1000 / (ms + 0.5) end
+  end
+  return nil
+end
+
+-- The video card that really draws the game, asked from the game's own Direct3D device: on a
+-- laptop with two cards that may be the weak built-in one. Asked once, from the main loop.
+function F.rep_gpu()
+  if F._gpu ~= nil then return F._gpu or nil end
+  F._gpu = false
+  if not ffi_ok or type(getD3DDevicePtr) ~= 'function' then return nil end
+  local ok, out = pcall(function()
+    local dev = getD3DDevicePtr()
+    if not dev or dev == 0 then return nil end
+    local pdev = ffi.cast('void***', dev)
+    local vt = pdev[0]
+    local g = {}
+    g.tex = tonumber(ffi.cast('unsigned int (__stdcall*)(void*)', vt[4])(pdev)) / 1048576
+    local cp = ffi.new('unsigned int[4]')
+    if ffi.cast('long (__stdcall*)(void*, void*)', vt[9])(pdev, cp) ~= 0 then return g end
+    g.adapter = tonumber(cp[0])
+    local dm = ffi.new('unsigned int[4]')
+    if ffi.cast('long (__stdcall*)(void*, unsigned int, void*)', vt[8])(pdev, 0, dm) == 0 then
+      g.w, g.h, g.hz = tonumber(dm[0]), tonumber(dm[1]), tonumber(dm[2])
+    end
+    local pd3d = ffi.new('void*[1]')
+    if ffi.cast('long (__stdcall*)(void*, void**)', vt[6])(pdev, pd3d) ~= 0 or pd3d[0] == nil then return g end
+    local d3d = ffi.cast('void***', pd3d[0])
+    local dvt = d3d[0]
+    local id = ffi.new('unsigned char[1200]')
+    if ffi.cast('long (__stdcall*)(void*, unsigned int, unsigned long, void*)', dvt[5])(d3d, g.adapter, 0, id) == 0 then
+      g.name = F.trim(ffi.string(id + 512))
+    end
+    ffi.cast('unsigned long (__stdcall*)(void*)', dvt[2])(d3d)
+    return g
+  end)
+  if ok and out then
+    F._gpu = out
+    pcall(F.log_line, 'Игру рисует: ' .. tostring(out.name or 'не определилось') .. string.format(', свободно видеопамяти %.0f МБ', out.tex or 0)
+      .. (out.w and string.format(', режим %dx%d %d Гц', out.w, out.h, out.hz or 0) or ''))
+    return out
+  end
+  return nil
+end
+if jit and jit.off then pcall(jit.off, F.rep_gpu, true) end
+
+-- One line per session in a file of its own: after an update the numbers of the versions
+-- can be put side by side. The line of the running session is rewritten as it goes.
+F.REP_HIST = 'fhelp_sessions.txt'
+
+function F.rep_hist_save()
+  if cfg.rep_on ~= 1 then return end
+  local r = F.rep
+  local s = r.all
+  if s.sum < 120 then return end
+  local st = F.mem_st or {}
+  local minf = r.min_free
+  if st.free and (not minf or st.free < minf) then minf = st.free end
+  local key = tostring(r.t0)
+  local low = F.rep_low(0.01)
+  local line = table.concat({key, VER, tostring(F.BUILD), cfg.proj or 'arz', string.format('%.0f', s.sum), string.format('%.1f', s.n / s.sum),
+    low and string.format('%.1f', low) or '', string.format('%.3f', r.cost / s.n * 1000), tostring(s.stall), tostring(s.ours),
+    minf and string.format('%.0f', minf) or '', tostring(r.err_n)}, '|')
+  local lines, done = F.read_lines(F.REP_HIST), false
+  for i = 1, #lines do
+    if lines[i]:sub(1, #key + 1) == key .. '|' then lines[i], done = line, true end
+  end
+  if not done then lines[#lines + 1] = line end
+  while #lines > 60 do table.remove(lines, 1) end
+  F.write_lines(F.REP_HIST, lines)
+end
+
+function F.rep_hist()
+  local out = {}
+  for _, line in ipairs(F.read_lines(F.REP_HIST)) do
+    local f = {}
+    for v in (line .. '|'):gmatch('(.-)|') do f[#f + 1] = v end
+    if #f >= 12 and tonumber(f[1]) then
+      out[#out + 1] = {t = tonumber(f[1]), ver = f[2], build = f[3], proj = f[4], played = tonumber(f[5]) or 0, fps = tonumber(f[6]) or 0,
+        low = tonumber(f[7]), cost = tonumber(f[8]) or 0, stall = tonumber(f[9]) or 0, ours = tonumber(f[10]) or 0,
+        minf = tonumber(f[11]), errs = tonumber(f[12]) or 0}
+    end
+  end
+  return out
+end
+
 -- Everything measured, in one table: the card, the summary and the file all read it.
 function F.rep_data()
   local r = F.rep
@@ -8050,6 +8217,10 @@ function F.rep_data()
   local d = {frames = s.n, played = s.sum, stall = s.stall, big = s.big, worst = s.max, worst_at = s.max_at,
     errs = r.err_n, err_kinds = r.err_kinds, pauses = r.pauses}
   d.fps_avg = s.sum > 0 and s.n / s.sum or nil
+  d.low1, d.low01 = F.rep_low(0.01), F.rep_low(0.001)
+  d.ours = s.ours
+  d.ping, d.ping_max = s.pn > 0 and s.psum / s.pn or nil, s.pn > 0 and s.pmax or nil
+  d.gpu = F._gpu or nil
   d.cost_ms = s.n > 0 and r.cost / s.n * 1000 or nil
   d.cost_share = s.sum > 0 and math.min(100, r.cost / s.sum * 100) or nil
   d.stall_h = s.sum >= 1800 and s.stall / (s.sum / 3600) or nil
@@ -8063,7 +8234,7 @@ function F.rep_data()
 end
 
 -- What stands out, in plain words. Empty when everything is fine.
-function F.rep_notes(d, now, scripts)
+function F.rep_notes(d, now, scripts, hw)
   local out = {}
   local function add(s) out[#out + 1] = s end
   if d.errs > 0 then add(string.format('fHelper поймал ошибок: %d (разных %d) — они перечислены ниже, это первое, что стоит прислать автору', d.errs, d.err_kinds)) end
@@ -8090,6 +8261,29 @@ function F.rep_notes(d, now, scripts)
   end
   if (now.died or 0) > 0 then
     add('Другие скрипты падают с ошибкой: ' .. now.died .. ' — они названы внизу, в разделе про moonloader.log. К fHelper это не относится')
+  end
+  if (d.ours or 0) > 0 then
+    local tops = {}
+    for _, x in ipairs(F.rep.stalls) do
+      if x.mine and x.top then tops[x.top] = (tops[x.top] or 0) + 1 end
+    end
+    local best
+    for name, n in pairs(tops) do
+      if not best or n > tops[best] then best = name end
+    end
+    add(string.format('Из %d фризов %d по вине самого fHelper', d.stall, d.ours) .. (best and (', чаще всего: ' .. best) or ''))
+  end
+  if d.gpu and d.gpu.name and hw and #hw.gpu > 1 and d.gpu.name:find('Intel', 1, true) then
+    for _, g in ipairs(hw.gpu) do
+      if g.name:find('NVIDIA', 1, true) or g.name:find('AMD', 1, true) or g.name:find('Radeon', 1, true) then
+        add('Игру рисует встроенная видеокарта ' .. d.gpu.name .. ', хотя в компьютере есть ' .. g.name
+          .. '. Назначь игре вторую в настройках драйвера — это самый большой запас FPS')
+        break
+      end
+    end
+  end
+  if now.on_ac == false then
+    add('Ноутбук работает от батареи' .. (now.batt and (' (' .. now.batt .. '%)') or '') .. ': Windows придерживает процессор и видеокарту, FPS ниже, чем от сети')
   end
   local slow
   for name, tk in pairs(F.rep.tasks) do
@@ -8120,10 +8314,12 @@ function F.rep_head(kind, why, d, now, hw, notes)
   if hw.os then L('Система: ' .. hw.os) end
   if hw.cpu then L('Процессор: ' .. hw.cpu .. (hw.cores and (', потоков ' .. hw.cores) or '')) end
   for _, g in ipairs(hw.gpu or {}) do L('Видеокарта: ' .. g.name .. (g.vram and string.format(', %.0f МБ', g.vram) or '')) end
+  if d.gpu and d.gpu.name then L('Игру рисует: ' .. d.gpu.name) end
   if now.ram then L(string.format('Оперативная память: %.0f МБ, свободно %.0f МБ', now.ram, now.ram_free or 0)) end
   if d.fps_avg then
-    L(string.format('FPS: в среднем %.0f%s, фризов %d (долгих %d)', d.fps_avg,
-      d.min_fps and string.format(', худшая минута %.0f', d.min_fps) or '', d.stall, d.big))
+    L(string.format('FPS: в среднем %.0f%s%s, фризов %d (долгих %d, по вине fHelper %d)', d.fps_avg,
+      d.low1 and string.format(', 1%% худших кадров %.0f', d.low1) or '',
+      d.min_fps and string.format(', худшая минута %.0f', d.min_fps) or '', d.stall, d.big, d.ours or 0))
   end
   if d.cost_ms then L(string.format('fHelper на кадр: %.2f мс (%.1f%% времени кадра)', d.cost_ms, d.cost_share or 0)) end
   if d.free then L(string.format('Память игры: свободно %.0f из %.0f МБ, fHelper %.0f МБ', d.free, d.total or 0, d.lua)) end
@@ -8151,7 +8347,7 @@ function F.rep_build(kind, why)
       end
     end
   end)
-  local notes = F.rep_notes(d, now, scripts)
+  local notes = F.rep_notes(d, now, scripts, hw)
   local out = F.rep_head(kind, why, d, now, hw, notes)
   local function L(s) out[#out + 1] = s or '' end
   local function H(s) L('') L('=== ' .. s .. ' ===') end
@@ -8183,17 +8379,38 @@ function F.rep_build(kind, why)
     local sw, sh = getScreenResolution()
     if sw and sh then L('Экран игры: ' .. tostring(sw) .. ' x ' .. tostring(sh)) end
   end)
+  local g = d.gpu
+  if g then
+    L('Игру рисует: ' .. tostring(g.name or 'не определилось') .. (g.adapter and (' (адаптер ' .. g.adapter .. ')') or '')
+      .. (g.tex and string.format(', свободно видеопамяти при запуске около %.0f МБ', g.tex) or '')
+      .. (g.w and string.format(', режим экрана %dx%d, %d Гц', g.w, g.h, g.hz or 0) or ''))
+  else L('Игру рисует: пока не определилось (нужно быть в игре полминуты)') end
+  if now.on_ac ~= nil then L('Питание: ' .. (now.on_ac and 'от сети' or 'от батареи') .. (now.batt and (', заряд ' .. now.batt .. '%') or '')) end
 
   H('Скорость игры')
   if d.frames == 0 then L('Замеров пока нет: отчёт собран сразу после запуска.')
   else
     L(string.format('Замерено: %s игры, кадров %d', F.dur_short(d.played), d.frames))
     L(string.format('FPS: сейчас %s, в среднем %.1f', tostring(live.fps), d.fps_avg or 0))
+    if d.low1 then
+      L(string.format('1%% худших кадров: %.0f FPS%s — это то, как игра ощущается, а не среднее', d.low1,
+        d.low01 and string.format(', 0,1%% худших: %.0f FPS', d.low01) or ''))
+    end
     if d.min_fps then L(string.format('Худшая минута: %.1f FPS в %s', d.min_fps, os.date('%H:%M', d.min_at))) end
+    if d.ping then L(string.format('Пинг: в среднем %.0f, худший %.0f', d.ping, d.ping_max or 0)) end
     L(string.format('Фризы дольше %d мс: %d, из них дольше %d мс: %d%s', F.REP_STALL * 1000, d.stall, F.REP_BIG * 1000, d.big,
       d.stall_h and string.format(' (%.0f в час)', d.stall_h) or ''))
     if d.worst and d.worst > 0 then L(string.format('Самый долгий фриз: %.0f мс в %s', d.worst * 1000, os.date('%H:%M:%S', d.worst_at or 0))) end
     if d.pauses > 0 then L('Пауз и сворачиваний игры (не считаются фризами): ' .. d.pauses) end
+  end
+  if #r.stalls > 0 then
+    L(string.format('Последние фризы и кто в них виноват (по вине fHelper всего %d из %d):', d.ours or 0, d.stall))
+    for i = math.max(1, #r.stalls - 14), #r.stalls do
+      local x = r.stalls[i]
+      L(string.format('  %s  %4.0f мс  fHelper занял %5.1f мс%s%s%s', os.date('%H:%M:%S', x.t), x.dt * 1000, x.own * 1000,
+        x.top and (' (больше всего: ' .. x.top .. ')') or '', x.page and (', открыто меню: ' .. F.news_title(x.page)) or '',
+        x.mine and '  <- fHelper' or ''))
+    end
   end
   L('Настройки, влияющие на скорость: свой предел FPS ' .. (cfg.fps_free == 1 and 'снят' or 'как в игре')
     .. ', дальность прорисовки ' .. (cfg.draw_on == 1 and tostring(cfg.draw) or 'как в игре')
@@ -8210,6 +8427,16 @@ function F.rep_build(kind, why)
       F.REP_PARTS[x.name] or x.name, F.rep_ms(p.sum / math.max(1, p.n)), F.rep_ms(p.max), p.n, p.slow))
   end
   if #parts == 0 then L('  Замеров пока нет.') end
+  local pages = {}
+  for key, pg in pairs(r.pages) do pages[#pages + 1] = {key = key, p = pg} end
+  table.sort(pages, function(a, b) return a.p.sum / a.p.n > b.p.sum / b.p.n end)
+  if #pages > 0 then
+    L('Меню по разделам, самые тяжёлые сверху:')
+    for i = 1, math.min(14, #pages) do
+      local pg = pages[i].p
+      L(string.format('  %s: в среднем %s, дольше всего %s, кадров %d', F.news_title(pages[i].key), F.rep_ms(pg.sum / pg.n), F.rep_ms(pg.max), pg.n))
+    end
+  end
   local tasks = {}
   for name, tk in pairs(r.tasks) do tasks[#tasks + 1] = {name = name, t = tk} end
   table.sort(tasks, function(a, b) return a.t.max > b.t.max end)
@@ -8252,8 +8479,9 @@ function F.rep_build(kind, why)
   if #r.mins == 0 then L('Пока меньше минуты замеров.') end
   for i = math.max(1, #r.mins - 59), #r.mins do
     local m = r.mins[i]
-    L(string.format('  %s  FPS %5.1f  худший кадр %4.0f мс  фризов %2d  fHelper %.2f мс  память игры %s МБ  fHelper %.0f МБ',
-      os.date('%H:%M', m.t), m.fps, 1000 / m.low, m.stall, m.cost, m.free and string.format('%.0f', m.free) or '—', m.lua))
+    L(string.format('  %s  FPS %5.1f  худший кадр %4.0f мс  фризов %2d  fHelper %.2f мс  память игры %s МБ  fHelper %.0f МБ  пинг %s',
+      os.date('%H:%M', m.t), m.fps, 1000 / m.low, m.stall, m.cost, m.free and string.format('%.0f', m.free) or '—', m.lua,
+      m.ping and string.format('%.0f (до %.0f)', m.ping, m.ping_max or 0) or '—'))
   end
 
   H('Что сейчас делает fHelper')
@@ -8273,7 +8501,52 @@ function F.rep_build(kind, why)
   if #files == 0 then L('Список не прочитался.')
   else
     L(string.format('Файлов %d, всего %.1f МБ. Самые большие:', #files, bytes / 1048576))
-    for i = 1, math.min(15, #files) do L(string.format('  %8.1f КБ  %s', files[i].size / 1024, files[i].name)) end
+    for i = 1, math.min(15, #files) do
+      local f = files[i]
+      -- How many records a text file holds: slowness often comes with the amount of data.
+      local rows
+      if f.size <= 3145728 and (f.name:match('%.txt$') or f.name:match('%.log$')) then
+        pcall(function()
+          local h = io.open(F.cfg_dir() .. '\\' .. f.name, 'rb')
+          if not h then return end
+          local _, n = (h:read('*a') or ''):gsub('\n', '')
+          h:close()
+          rows = n
+        end)
+      end
+      L(string.format('  %8.1f КБ  %s%s', f.size / 1024, f.name, rows and ('  (строк ' .. rows .. ')') or ''))
+    end
+  end
+
+  H('Прошлые сессии: версии рядом')
+  local hist = F.rep_hist()
+  if #hist == 0 then L('Пока нет: строка о сессии появляется после двух минут игры.')
+  else
+    local by, order = {}, {}
+    for _, x in ipairs(hist) do
+      local v = by[x.ver]
+      if not v then
+        v = {played = 0, cost = 0, fps = 0, stall = 0, ours = 0, n = 0}
+        by[x.ver] = v
+        order[#order + 1] = x.ver
+      end
+      v.played, v.cost, v.fps = v.played + x.played, v.cost + x.cost * x.played, v.fps + x.fps * x.played
+      v.stall, v.ours, v.n = v.stall + x.stall, v.ours + x.ours, v.n + 1
+    end
+    for i = #order, 1, -1 do
+      local v = by[order[i]]
+      if v.played > 0 then
+        L(string.format('  версия %s: сессий %d, наиграно %s, FPS %.0f, fHelper %.2f мс на кадр, фризов в час %.0f (по вине fHelper %d)',
+          order[i], v.n, F.dur_short(v.played), v.fps / v.played, v.cost / v.played, v.stall / (v.played / 3600), v.ours))
+      end
+    end
+    L('Последние сессии:')
+    for i = math.max(1, #hist - 9), #hist do
+      local x = hist[i]
+      L(string.format('  %s  %s  %s  %s  FPS %.0f%s  fHelper %.2f мс  фризов %d (fHelper %d)  минимум памяти %s МБ  ошибок %d',
+        os.date('%d.%m %H:%M', x.t), x.ver, x.proj == 'rod' and 'Rodina' or 'Arizona', F.dur_short(x.played), x.fps,
+        x.low and string.format(' (1%% худших %.0f)', x.low) or '', x.cost, x.stall, x.ours, x.minf and string.format('%.0f', x.minf) or '—', x.errs))
+    end
   end
 
   H('Другие скрипты MoonLoader (' .. #scripts .. ')')
@@ -8364,7 +8637,14 @@ end
 -- After a failure fHelper writes a report by itself: a few seconds later, so that what followed
 -- is in it too, not more often than once in ten minutes and three times a session.
 function F.rep_tick(now)
+  if cfg.rep_on ~= 1 then return end
   local r = F.rep
+  -- Half a minute into the game the device is surely there: which card draws it is asked once.
+  if F._gpu == nil and live.online and r.all.sum > 30 then F.rep_gpu() end
+  if not r.hist_at or now - r.hist_at >= 300 then
+    r.hist_at = now
+    pcall(F.rep_hist_save)
+  end
   if (F._mem_lvl or 0) >= 3 then
     if not r.mem_said then
       r.mem_said = true
@@ -8380,22 +8660,105 @@ function F.rep_tick(now)
   if path then F.notify('Записан отчёт о сбое: Настройки → «Отчёт о работе»', true) end
 end
 
+-- The switch of the whole thing. Off: nothing is measured and what was measured is dropped.
+function F.rep_set(on)
+  cfg.rep_on = on and 1 or 0
+  dirty = true
+  if not on then
+    local made = F.rep.made
+    F.rep = F.rep_new()
+    F.rep.made = made
+  end
+  F.notify(on and 'Сбор данных о работе включён' or 'Сбор данных о работе выключен, собранное за сессию стёрто', true)
+end
+
+function F.data_lines()
+  return {
+    'fHelper следит за тем, как он сам работает на твоём компьютере. Это нужно, чтобы находить, что в нём тормозит, и делать его быстрее на разном железе.',
+    'Что собирается: модель процессора и видеокарты, объём памяти, версия Windows; FPS, фризы и пинг; сколько времени кадра и памяти '
+      .. 'занимает fHelper и какие его части; его ошибки; какие его настройки ты менял; названия других скриптов MoonLoader; проект и сервер.',
+    'Что не собирается: пароли, переписка в чате, деньги и балансы, инвентарь, твои файлы. Ник и имя пользователя Windows в отчёте заменены звёздочками.',
+    'Всё лежит только на твоём компьютере, в папке moonloader\\config\\fhelp_reports. Сам fHelper никуда ничего не отправляет.',
+    'Если хочешь помочь автору, поиграй хотя бы 10 минут и нажми «Отправить автору в Telegram» в «Настройки → Отчёт о работе»: '
+      .. 'откроется чат @' .. F.REP_TG .. ' и папка с файлом, отправляешь ты сам.',
+    'Сейчас сбор ' .. (cfg.rep_on == 1 and 'ВКЛЮЧЁН' or 'ВЫКЛЮЧЕН') .. '. Переключить можно кнопкой ниже или в настройках, в любой момент.',
+  }
+end
+
+function F.data_open()
+  local on = cfg.rep_on == 1
+  modal = {kind = 'data', wide = true, icon = 'ICON_FA_SHIELD_ALT', title = 'Важно: какие данные собирает fHelper',
+    lines = F.data_lines(), body_h = 360, close = 'Понятно',
+    btn = {label = on and 'Отключить сбор' or 'Включить сбор', w = 180, tip = on and 'fHelper перестанет замерять свою работу' or 'fHelper снова будет замерять свою работу',
+      fn = function()
+        F.rep_set(cfg.rep_on ~= 1)
+        F.data_open()
+      end}}
+  if cfg.rep_seen ~= 1 then
+    cfg.rep_seen = 1
+    dirty = true
+  end
+end
+
+F.REP_TG = 'fhyart'
+F.REP_SEND_MIN = 600
+
+-- The player sends the report himself: the file is made, shown in its folder, the summary is
+-- in the clipboard and the author's chat opens. fHelper itself sends nothing.
+function F.rep_send()
+  if cfg.rep_on ~= 1 then
+    F.notify('Сбор данных выключен: включи его в «Отчёт о работе» и поиграй 10 минут')
+    return false
+  end
+  local left = F.REP_SEND_MIN - F.rep.all.sum
+  if left > 0 then
+    F.notify('Поиграй ещё ' .. math.ceil(left / 60) .. ' мин: в отчёте должно быть что смотреть')
+    return false
+  end
+  local path = F.rep_make('manual')
+  if not path then
+    F.notify('Не удалось записать отчёт')
+    return false
+  end
+  F.clip_set(F.rep.last.head)
+  F.shell_open('open', 'explorer.exe', '/select,"' .. path .. '"')
+  F.shell_open('open', 'https://t.me/' .. F.REP_TG)
+  F.notify('Открыл чат @' .. F.REP_TG .. ' и папку с отчётом: перетащи файл в чат. Сводка уже в буфере обмена')
+  return true
+end
+
 function F.rep_cmd()
   F.queue('report')
 end
 
 function F.rep_card()
   F.card_begin('Отчёт о работе', 'Как fHelper работает на этом компьютере: скорость, память, ошибки, железо', 'ICON_FA_CLIPBOARD_LIST')
+  if F.switch('repon', 'Собирать данные о работе', cfg.rep_on == 1,
+    'fHelper замеряет свою скорость, память и ошибки. Всё остаётся на твоём компьютере, пока ты сам не отправишь отчёт') then
+    F.rep_set(cfg.rep_on ~= 1)
+  end
+  if cfg.rep_on ~= 1 then
+    imgui.Spacing()
+    F.hint('Сбор выключен: fHelper ничего не замеряет и отчётов не пишет. Старые отчёты остались в папке.')
+    imgui.Spacing()
+    if F.button('Что собирается##repwhat0', 210, 0) then F.data_open() end
+    F.same_if_fit(F.s(210))
+    if F.button('Папка отчётов##repdir0', 210, 0) then F.queue('rep_dir') end
+    F.card_end()
+    return
+  end
+  imgui.Spacing()
   local d = F.rep_data()
   F.tile_grid('rep', {
     {'ICON_FA_TACHOMETER_ALT', 'FPS в среднем', d.fps_avg and string.format('%.0f', d.fps_avg) or '—'},
-    {'ICON_FA_HOURGLASS_HALF', 'Фризы', d.frames > 0 and (tostring(d.stall) .. (d.big > 0 and (' (долгих ' .. d.big .. ')') or '')) or '—'},
+    {'ICON_FA_HOURGLASS_HALF', 'Фризы', d.frames > 0 and (tostring(d.stall) .. ((d.ours or 0) > 0 and (' (fHelper ' .. d.ours .. ')') or '')) or '—'},
+    {'ICON_FA_CHART_AREA', '1% худших кадров', d.low1 and string.format('%.0f FPS', d.low1) or '—'},
     {'ICON_FA_STOPWATCH', 'fHelper на кадр', d.cost_ms and string.format('%.2f мс', d.cost_ms) or '—'},
     {'ICON_FA_BUG', 'Ошибки', tostring(d.errs)},
   }, 190)
   imgui.Spacing()
-  F.hint('Отчёт — один текстовый файл: проект и сервер, железо, FPS и фризы по минутам, сколько занимает сам fHelper, '
-    .. 'память игры, пойманные ошибки, изменённые настройки, другие скрипты и хвост журналов. Его можно прислать автору, если что-то работает не так.')
+  F.hint('Отчёт — один текстовый файл: проект и сервер, железо и какая видеокарта рисует игру, FPS и фризы по минутам и кто в них виноват, '
+    .. 'сколько занимает сам fHelper и каждый раздел меню, память игры, ошибки, изменённые настройки, другие скрипты, прошлые сессии по версиям.')
   imgui.Spacing()
   if F.button(F.icon_label('ICON_FA_FILE_MEDICAL_ALT', 'Собрать отчёт') .. '##repmake', 210, 0, 'primary') then F.queue('report') end
   F.same_if_fit(F.s(210))
@@ -8407,6 +8770,16 @@ function F.rep_card()
       if F.clip_set(last.head) then F.notify('Сводка отчёта скопирована', true) else F.notify('Не удалось скопировать', true) end
     end
   end
+  imgui.Spacing()
+  local left = F.REP_SEND_MIN - d.played
+  if left > 0 then
+    F.hint('Отправить отчёт автору можно будет через ' .. math.ceil(left / 60) .. ' мин игры: в отчёте должно быть что смотреть.')
+  elseif F.button(F.icon_label('ICON_FA_PAPER_PLANE', 'Отправить автору в Telegram') .. '##repsend', 300, 0, 'primary') then
+    F.ask('Откроется чат автора в Telegram (@' .. F.REP_TG .. ') и папка со свежим отчётом. Перетащи файл в чат и отправь. '
+      .. 'Сводка будет в буфере обмена — её можно вставить сообщением. Сам fHelper ничего не отправляет.', 'Открыть', 'rep_send')
+  end
+  F.same_if_fit(F.s(210))
+  if F.button('Что собирается##repwhat', 210, 0) then F.data_open() end
   imgui.Spacing()
   F.chest_flag('repauto', 'Отчёт при сбое', 'rep_auto',
     'Если fHelper поймал ошибку или у игры кончается память, отчёт записывается сам, не чаще раза в 10 минут')
@@ -8527,6 +8900,15 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.9', '11.11.2026', {
+    {'add', 'Значок со щитом вверху окна: простыми словами, какие данные о своей работе собирает fHelper, какие нет, и кнопка включить или отключить сбор', 'home'},
+    {'add', 'Настройки: сбор данных о работе можно выключить одним переключателем — fHelper перестанет что-либо замерять'},
+    {'add', 'Настройки: после 10 минут игры отчёт можно отправить автору в Telegram @fhyart — откроется чат и папка с файлом, отправляешь ты сам'},
+    {'add', 'Настройки: в отчёте видно, кто виноват в каждом фризе — игра или сам fHelper, и какая его часть'},
+    {'add', 'Настройки: в отчёте цена каждого раздела меню, «1% худших кадров», пинг по минутам и число записей в файлах'},
+    {'add', 'Настройки: отчёт называет видеокарту, которая на самом деле рисует игру, и предупреждает, если это встроенная или ноутбук на батарее'},
+    {'add', 'Настройки: в отчёте прошлые сессии по версиям — видно цифрами, стал ли fHelper легче после обновления'},
+  }},
   {'1.19.8', '11.11.2026', {
     {'fix', 'Память: раз в минуту fHelper на миг подвешивал игру, пока обходил карту памяти, — теперь обход разбит на кадры и не заметен'},
     {'fix', 'Память: «Уходит за час» и «Хватит на» больше не пугают в первые 10 минут после входа, когда игра просто догружает мир'},
@@ -9061,6 +9443,11 @@ end
 -- Called each frame the menu is drawn: at most one window at a time, the welcome first.
 function F.news_frame()
   if modal or collapsed then return end
+  -- Before anything else, once: what fHelper collects about its own work and how to turn it off.
+  if cfg.rep_seen ~= 1 then
+    F.data_open()
+    return
+  end
   local now = os.time()
   if not F._wel_checked then
     F._wel_checked = true
@@ -16921,7 +17308,7 @@ function F.draw_overlay(ww, wh, wp)
       for i = 1, #lines do
         if i == 1 then imgui.TextColored(F.cvec('accent_hi'), '%s', lines[i])
         else
-          if m.kind == 'welcome' then imgui.Dummy(imgui.ImVec2(1, 3)) end
+          if m.kind == 'welcome' or m.kind == 'data' then imgui.Dummy(imgui.ImVec2(1, 3)) end
           imgui.TextUnformatted(lines[i])
         end
       end
@@ -17122,7 +17509,13 @@ end
 if imgui_ok then
   imgui.OnInitialize(F.init_fonts)
   -- Every window is drawn through rep_wrap: the report knows what each of them costs.
-  frame = imgui.OnFrame(function() return F.menu_drawn() end, F.rep_wrap('menu', F.draw))
+  frame = imgui.OnFrame(function() return F.menu_drawn() end, function(...)
+    local t0 = F.rep_clock()
+    F.draw(...)
+    local dt = F.rep_clock() - t0
+    F.rep_part('menu', dt)
+    F.rep_page(dt)
+  end)
   frame.LockPlayer = false
   frame.HideCursor = false
   hud_frame = imgui.OnFrame(function()
@@ -17291,7 +17684,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 35
+F.BUILD = 36
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -17811,6 +18204,7 @@ function main()
       frames = 0
       fps_mark = now
       F.timed('данные игрока', F.refresh_live)
+      F.rep_ping(live.online and tonumber(live.ping) or nil)
     end
     if now - up_mark >= 1 then
       F.timed('загрузчик', F.ensure_boot)
@@ -17868,6 +18262,8 @@ function main()
         F.rep_err('действие «' .. tostring(current.op) .. '»', err)
         F.notify('Ошибка: ' .. tostring(err))
       end
+      -- A button's work may wait for seconds: that gap is not a stall of the game.
+      F.rep.ft = nil
     end
     if dirty and now >= save_at then
       F.timed('сохранение настроек', F.save_cfg)
@@ -17898,6 +18294,7 @@ addEventHandler('onScriptTerminate', function(scr)
     if F.shift then F.shift_save() end
     F.save_cfg()
   end)
+  pcall(F.rep_hist_save)
   pcall(F.lib_free)
 end)
 
