@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.7'
+local VER = '1.19.8'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(34)
+script_version_number(35)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -7714,13 +7714,17 @@ end
 -- settings changed from the defaults, the other scripts and the tail of the journals.
 F.REP_KEEP = 12
 F.REP_STALL, F.REP_BIG = 0.1, 0.5
+F.REP_WARM = 20
 F.REP_SKIP = {open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
   alt_money_real = true, alt_bank = true, alt_depo = true, loc2_money = true, loc2_bank = true, loc2_depo = true}
 F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
   bars = 'плашки смены, машины, розыска и времени', calc = 'калькулятор и закрепы'}
 
+F.REP_UPD = {idle = 'ещё не проверялось', off = 'выключено', checking = 'идёт проверка', fail = 'нет связи с GitHub',
+  none = 'стоит последняя версия', new = 'есть новая версия', done = 'обновлено'}
+
 function F.rep_new()
-  return {parts = {}, errs = {}, err_n = 0, err_kinds = 0, mins = {}, made = {}, auto_n = 0, cost = 0, pauses = 0,
+  return {parts = {}, tasks = {}, errs = {}, err_n = 0, err_kinds = 0, mins = {}, made = {}, auto_n = 0, cost = 0, pauses = 0,
     t0 = os.time(), all = {n = 0, sum = 0, stall = 0, big = 0, max = 0},
     cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = 0}}
 end
@@ -7785,6 +7789,9 @@ function F.rep_frame(t, paused)
   if not last then return end
   local dt = t - last
   if dt <= 0 then return end
+  -- The first seconds after the script starts it loads its data: that is not the game stalling.
+  if not r.warm then r.warm = last + F.REP_WARM end
+  if t < r.warm then return end
   if paused or dt > 5 then
     if dt > 5 then r.pauses = r.pauses + 1 end
     return
@@ -7828,10 +7835,33 @@ function F.rep_err(where, err)
   if not r.auto_why then r.auto_why, r.auto_from = 'сбой в ' .. where, os.clock() end
 end
 
+-- One background task: how long it takes, so that the report can name the slow one.
+function F.rep_task(where, dt)
+  local ts = F.rep.tasks
+  local t = ts[where]
+  if not t then
+    t = {n = 0, sum = 0, max = 0, slow = 0}
+    ts[where] = t
+  end
+  t.n = t.n + 1
+  t.sum = t.sum + dt
+  if dt > t.max then t.max, t.max_at = dt, os.time() end
+  if dt > 0.02 then t.slow = t.slow + 1 end
+end
+
 function F.guard(where, fn, ...)
+  local t0 = F.rep_clock()
   local ok, err = pcall(fn, ...)
+  F.rep_task(where, F.rep_clock() - t0)
   if not ok then F.rep_err(where, err) end
   return ok, err
+end
+
+-- The same without catching: for what must stop the script when it fails, as before.
+function F.timed(where, fn, ...)
+  local t0 = F.rep_clock()
+  fn(...)
+  F.rep_task(where, F.rep_clock() - t0)
 end
 
 -- A value from HKEY_LOCAL_MACHINE: a string, or a number for the numeric kinds.
@@ -7936,7 +7966,7 @@ function F.rep_nick()
   local n = live.nick_raw or ''
   if n == '' then return '—' end
   if cfg.rep_priv ~= 1 then return n end
-  return n:sub(1, 2) .. '***'
+  return (n:match('^[%z\1-\127\194-\244][\128-\191]*[%z\1-\127\194-\244]?[\128-\191]*') or '') .. '***'
 end
 
 -- With the privacy switch on the nick and the Windows user name never leave the PC.
@@ -7999,10 +8029,14 @@ function F.rep_changed()
     if v == '' then return 'пусто' end
     return tostring(v)
   end
+  local function col(k, v)
+    if k:match('^ui_') and k ~= 'ui_font' and type(v) == 'number' then return string.format('#%06X', v) end
+    return show(v)
+  end
   for k, def in pairs(F.CFG_DEF) do
     n = n + 1
-    if not F.REP_SKIP[k] and cfg[k] ~= def and type(cfg[k]) ~= 'table' then
-      out[#out + 1] = k .. ' = ' .. show(cfg[k]) .. '   (обычно ' .. show(def) .. ')'
+    if not F.REP_SKIP[k] and not k:match('_[xy]$') and cfg[k] ~= def and type(cfg[k]) ~= 'table' then
+      out[#out + 1] = k .. ' = ' .. col(k, cfg[k]) .. '   (обычно ' .. col(k, def) .. ')'
     end
   end
   table.sort(out)
@@ -8018,7 +8052,7 @@ function F.rep_data()
   d.fps_avg = s.sum > 0 and s.n / s.sum or nil
   d.cost_ms = s.n > 0 and r.cost / s.n * 1000 or nil
   d.cost_share = s.sum > 0 and math.min(100, r.cost / s.sum * 100) or nil
-  d.stall_h = s.sum >= 300 and s.stall / (s.sum / 3600) or nil
+  d.stall_h = s.sum >= 1800 and s.stall / (s.sum / 3600) or nil
   for _, m in ipairs(r.mins) do
     if not d.min_fps or m.fps < d.min_fps then d.min_fps, d.min_at = m.fps, m.t end
   end
@@ -8045,10 +8079,33 @@ function F.rep_notes(d, now, scripts)
     add(string.format('fHelper сам занимает много: %.2f мс на кадр (%.1f%% времени кадра)', d.cost_ms, d.cost_share or 0))
   end
   if d.lua > 150 then add(string.format('Своя память fHelper большая: %.0f МБ', d.lua)) end
-  if now.ram_free and now.ram_free < 1500 then add(string.format('У компьютера мало свободной оперативной памяти: %.0f МБ из %.0f', now.ram_free, now.ram or 0)) end
+  if now.ram_free and (now.ram_free < 1500 or (now.ram_load or 0) >= 85) then
+    add(string.format('Оперативная память компьютера почти занята: %d%%, свободно %.0f МБ из %.0f. Игра может подтормаживать, закрой лишние программы',
+      now.ram_load or 0, now.ram_free, now.ram or 0))
+  end
   if now.disk_free and now.disk_free < 2048 then add(string.format('На диске с игрой мало места: %.0f МБ', now.disk_free)) end
-  if scripts and #scripts > 30 then add(string.format('Вместе с fHelper работает %d скриптов: каждый берёт память и время кадра', #scripts)) end
+  if scripts and #scripts > 30 then
+    add('Вместе с fHelper ' .. F.rep_plural(#scripts, 'работает', 'работают', 'работает') .. ' ' .. #scripts .. ' '
+      .. F.rep_plural(#scripts, 'скрипт', 'скрипта', 'скриптов') .. ': каждый берёт память и время кадра')
+  end
+  if (now.died or 0) > 0 then
+    add('Другие скрипты падают с ошибкой: ' .. now.died .. ' — они названы внизу, в разделе про moonloader.log. К fHelper это не относится')
+  end
+  local slow
+  for name, tk in pairs(F.rep.tasks) do
+    if tk.slow >= 3 and (not slow or tk.max > slow.max) then slow = {name = name, max = tk.max, n = tk.slow} end
+  end
+  if slow then
+    add(string.format('Фоновая задача fHelper «%s» бывает долгой: до %.0f мс, %d раз дольше 20 мс', slow.name, slow.max * 1000, slow.n))
+  end
   return out
+end
+
+function F.rep_plural(n, one, few, many)
+  local a, b = n % 10, n % 100
+  if a == 1 and b ~= 11 then return one end
+  if a >= 2 and a <= 4 and (b < 12 or b > 14) then return few end
+  return many
 end
 
 function F.rep_ms(sec) return string.format('%.2f мс', (sec or 0) * 1000) end
@@ -8083,6 +8140,17 @@ end
 function F.rep_build(kind, why)
   local r = F.rep
   local d, now, hw, scripts = F.rep_data(), F.rep_now(), F.rep_hw(), F.rep_scripts()
+  local mine, bad = {}, {}
+  pcall(function()
+    for _, line in ipairs(F.ml_log_since(0)) do
+      local low = line:lower()
+      if low:find('fhelp', 1, true) then mine[#mine + 1] = line
+      elseif low:find('(error)', 1, true) then
+        bad[#bad + 1] = line
+        if low:find('script died', 1, true) then now.died = (now.died or 0) + 1 end
+      end
+    end
+  end)
   local notes = F.rep_notes(d, now, scripts)
   local out = F.rep_head(kind, why, d, now, hw, notes)
   local function L(s) out[#out + 1] = s or '' end
@@ -8142,6 +8210,17 @@ function F.rep_build(kind, why)
       F.REP_PARTS[x.name] or x.name, F.rep_ms(p.sum / math.max(1, p.n)), F.rep_ms(p.max), p.n, p.slow))
   end
   if #parts == 0 then L('  Замеров пока нет.') end
+  local tasks = {}
+  for name, tk in pairs(r.tasks) do tasks[#tasks + 1] = {name = name, t = tk} end
+  table.sort(tasks, function(a, b) return a.t.max > b.t.max end)
+  if #tasks > 0 then
+    L('Фоновая работа по задачам, самые долгие:')
+    for i = 1, math.min(8, #tasks) do
+      local tk = tasks[i].t
+      L(string.format('  %s: дольше всего %s%s, в среднем %s, вызовов %d, дольше 20 мс %d раз', tasks[i].name, F.rep_ms(tk.max),
+        tk.max_at and tk.max > 0.005 and (' в ' .. os.date('%H:%M:%S', tk.max_at)) or '', F.rep_ms(tk.sum / math.max(1, tk.n)), tk.n, tk.slow))
+    end
+  end
   L(string.format('Своя память fHelper: %.1f МБ, картинок предметов загружено: %s', d.lua, tostring((F.mem_st or {}).pics or 0)))
 
   H('Память игры')
@@ -8182,7 +8261,7 @@ function F.rep_build(kind, why)
   L('Смена: ' .. (F.shift and tostring(F.shift.job or 'идёт') or 'нет'))
   pcall(function()
     local u = F.upd_state()
-    L('Обновление: ' .. (cfg.upd_on == 1 and 'проверяется само' or 'проверка выключена') .. ', состояние: ' .. tostring(u and u.state or '—'))
+    L('Обновление: ' .. (cfg.upd_on == 1 and 'проверяется само' or 'проверка выключена') .. ', состояние: ' .. (F.REP_UPD[u and u.state or ''] or tostring(u and u.state or '—')))
   end)
   local changed, total = F.rep_changed()
   L('')
@@ -8208,14 +8287,6 @@ function F.rep_build(kind, why)
   if #off > 0 then L('Выключены через fHelper: ' .. table.concat(off, ', ')) end
 
   H('moonloader.log: строки про fHelper и ошибки скриптов')
-  local mine, bad = {}, {}
-  pcall(function()
-    for _, line in ipairs(F.ml_log_since(0)) do
-      local low = line:lower()
-      if low:find('fhelp', 1, true) then mine[#mine + 1] = line
-      elseif low:find('(error)', 1, true) then bad[#bad + 1] = line end
-    end
-  end)
   if #mine == 0 and #bad == 0 then L('Ничего.') end
   for i = math.max(1, #mine - 39), #mine do L('  ' .. mine[i]) end
   if #bad > 0 then
@@ -8456,6 +8527,16 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.8', '11.11.2026', {
+    {'fix', 'Память: раз в минуту fHelper на миг подвешивал игру, пока обходил карту памяти, — теперь обход разбит на кадры и не заметен'},
+    {'fix', 'Память: «Уходит за час» и «Хватит на» больше не пугают в первые 10 минут после входа, когда игра просто догружает мир'},
+    {'fix', 'Память: своя разгрузка больше не подвешивает игру на треть секунды, а если она почти ничего не вернула, до перезахода не запускается снова'},
+    {'fix', 'Фоновая работа fHelper стала вдвое легче: время в игре считается четыре раза в секунду, а не каждый кадр', 'home'},
+    {'add', 'Настройки: в отчёте видно, какая именно фоновая задача fHelper была самой долгой и когда'},
+    {'add', 'Настройки: отчёт замечает, что оперативная память компьютера почти занята и что другие скрипты падают с ошибкой'},
+    {'fix', 'Настройки: в отчёте фризы «в час» считаются только после получаса замеров, первые секунды после запуска скрипта не в счёт'},
+    {'fix', 'Настройки: в отчёте ник из русских букв скрывается правильно, цвета темы показаны как #RRGGBB, состояние обновления — словами'},
+  }},
   {'1.19.7', '11.11.2026', {
     {'add', 'Настройки: «Отчёт о работе» — один файл о том, как fHelper работает на твоём компьютере: железо, FPS и фризы по минутам, память, ошибки, изменённые настройки, другие скрипты'},
     {'add', 'Настройки: в отчёте видно, сколько времени кадра занимает сам fHelper и какая его часть — меню, уведомления, плашки или фоновая работа'},
@@ -14027,36 +14108,79 @@ function F.mem_map()
     ]]) or 'fail'
   end
   local ok, r = pcall(function()
-    local mbi = ffi.new('FH_MBI')
-    local len = ffi.sizeof('FH_MBI')
-    local out = {free = 0, big = 0, priv = 0, mapped = 0, image = 0, reserved = 0, n = 0}
-    local addr, top = 0x10000, 0xFFFE0000
-    while addr < top and out.n < 200000 do
-      if ffi.C.VirtualQuery(ffi.cast('void*', addr), mbi, len) == 0 then break end
-      local size = tonumber(mbi.size)
-      if size <= 0 then break end
-      local state, kind = tonumber(mbi.state), tonumber(mbi.type)
-      if state == 0x10000 then
-        out.free = out.free + size
-        if size > out.big then out.big = size end
-      elseif state == 0x2000 then out.reserved = out.reserved + size
-      elseif kind == 0x1000000 then out.image = out.image + size
-      elseif kind == 0x40000 then out.mapped = out.mapped + size
-      else out.priv = out.priv + size end
-      out.n = out.n + 1
-      addr = addr + size
-    end
-    if out.n == 0 then return nil end
-    for _, k in ipairs({'free', 'big', 'priv', 'mapped', 'image', 'reserved'}) do out[k] = out[k] / 1048576 end
-    return out
+    local run = F.mem_map_begin()
+    F.mem_map_step(run)
+    return F.mem_map_end(run)
   end)
   if ok then return r end
   return nil
 end
-if jit and jit.off then pcall(jit.off, F.mem_map, true) end
+
+function F.mem_map_begin()
+  return {addr = 0x10000, out = {free = 0, big = 0, priv = 0, mapped = 0, image = 0, reserved = 0, n = 0}}
+end
+
+-- A piece of the walk: with max_t it stops after that many seconds and goes on at the next
+-- call. The whole walk at once is tens of milliseconds in a long session, a visible hitch.
+function F.mem_map_step(run, max_t)
+  local mbi = F._mbi or ffi.new('FH_MBI')
+  F._mbi = mbi
+  local len = ffi.sizeof('FH_MBI')
+  local out, addr = run.out, run.addr
+  local t0 = max_t and F.rep_clock()
+  local n = 0
+  while addr < 0xFFFE0000 and out.n < 200000 do
+    if ffi.C.VirtualQuery(ffi.cast('void*', addr), mbi, len) == 0 then break end
+    local size = tonumber(mbi.size)
+    if size <= 0 then break end
+    local state, kind = tonumber(mbi.state), tonumber(mbi.type)
+    if state == 0x10000 then
+      out.free = out.free + size
+      if size > out.big then out.big = size end
+    elseif state == 0x2000 then out.reserved = out.reserved + size
+    elseif kind == 0x1000000 then out.image = out.image + size
+    elseif kind == 0x40000 then out.mapped = out.mapped + size
+    else out.priv = out.priv + size end
+    out.n = out.n + 1
+    addr = addr + size
+    n = n + 1
+    if max_t and n >= 16 then
+      n = 0
+      if F.rep_clock() - t0 >= max_t then
+        run.addr = addr
+        return false
+      end
+    end
+  end
+  run.addr, run.done = addr, true
+  return true
+end
+
+function F.mem_map_end(run)
+  local out = run.out
+  if out.n == 0 then return nil end
+  for _, k in ipairs({'free', 'big', 'priv', 'mapped', 'image', 'reserved'}) do out[k] = out[k] / 1048576 end
+  return out
+end
+
+-- Every frame while a walk is going: at most half a millisecond of it.
+function F.mem_map_tick()
+  local run = F._map_run
+  if not run then return end
+  if not F.mem_map_step(run, 0.0005) then return end
+  F._map_run = nil
+  local map = F.mem_map_end(run)
+  if map and F.mem_st then F.mem_st.map = map end
+end
+if jit and jit.off then
+  pcall(jit.off, F.mem_map, true)
+  pcall(jit.off, F.mem_map_step, true)
+end
 
 -- Three steps down: a hint to plan a relog, a warning, and «now». Each speaks once on the
 -- way down and is armed again only when the memory really came back.
+F.MEM_WARM = 600
+F.MEM_GAIN = 20
 F.MEM_LEVELS = {F.MEM_WARN, 250, 120}
 F.MEM_BACK = 120
 
@@ -14096,11 +14220,21 @@ function F.mem_tick(now)
   pcall(F.mem_world_apply)
   if not st then return end
   -- The walk over the address space is the heavy part: once a minute is enough.
-  if not F._map_at or now - F._map_at >= 60 or not (keep and keep.map) then
+  -- The very first one is done at once; after that it is spread over the frames (mem_map_tick).
+  if not (keep and keep.map) then
     F._map_at = now
     F.mem_st.map = F.mem_map()
-  else F.mem_st.map = keep.map end
-  F.mem_trend(now, st.free)
+  else
+    F.mem_st.map = keep.map
+    if not F._map_run and (not F._map_at or now - F._map_at >= 60) then
+      F._map_at = now
+      F._map_run = F.mem_map_begin()
+    end
+  end
+  -- Right after the login the game is still loading the world: that is not a leak, so the
+  -- speed is counted only from F.MEM_WARM seconds of the session on.
+  if (F.play_seconds('session') or 0) >= F.MEM_WARM then F.mem_trend(now, st.free)
+  else F.mem_hist, F.mem_rate = nil, nil end
   if not F._mem_logged or now - F._mem_logged > 1800 then
     F._mem_logged = now
     local map = F.mem_st.map
@@ -14114,13 +14248,20 @@ function F.mem_tick(now)
   if back < was then
     was = back
     F._mem_lvl = back
+    if back == 0 then F._mem_weak = nil end
   end
   local lvl = F.mem_level(st.free)
   if lvl <= was then return end
   F._mem_lvl = lvl
-  if cfg.mem_auto == 1 then
+  if cfg.mem_auto == 1 and not F._mem_weak then
     local r = F.mem_clean(true)
     st = F.mem_read() or st
+    -- It gave next to nothing: what fills the memory is not the world, the next runs would
+    -- only freeze the game. Until the memory comes back (a relog) it is not tried again.
+    if r and r.free1 and r.free2 and r.free2 - r.free1 < F.MEM_GAIN then
+      F._mem_weak = true
+      F.log_line(string.format('Своя разгрузка почти ничего не вернула (+%.0f МБ): до перезахода больше не запускается', math.max(0, r.free2 - r.free1)))
+    end
     -- Enough came back: the toast of the clean-up says it, no warning.
     if r and F.mem_level(st.free) < lvl then
       F._mem_lvl = F.mem_level(st.free)
@@ -14205,7 +14346,8 @@ function F.mem_clean(auto)
   end
   F._mem_clean_at = now
   local before = F.mem_read() or {}
-  local map1 = F.mem_map()
+  -- The walk over the whole memory is a freeze of its own: on its own run the last known map does.
+  local map1 = auto and (F.mem_st or {}).map or F.mem_map()
   local s1 = F.mem_game()
   local lua1 = collectgarbage('count') / 1024
   local pics = F.lib_free()
@@ -14226,7 +14368,7 @@ function F.mem_clean(auto)
   end
   local after = F.mem_read() or {}
   local s2 = F.mem_game()
-  local map2 = F.mem_map()
+  local map2 = not auto and F.mem_map() or nil
   local r = {
     at = os.time(), auto = auto, pics = pics, game = game_ok,
     lua = math.max(0, lua1 - collectgarbage('count') / 1024),
@@ -17149,7 +17291,7 @@ end
 -- The files live in a public GitHub repository: version.json and fhelp.lua.
 -- Raw links work as a free file server, nothing else is needed.
 F.UPD = {user = 'fhyart', repo = 'fhelper', branch = 'main'}
-F.BUILD = 34
+F.BUILD = 35
 
 function F.upd_base()
   if F.UPD.user == '' then return nil end
@@ -17656,6 +17798,7 @@ function main()
   local frames = 0
   local fps_mark = os.clock()
   local up_mark = 0
+  local play_mark = 0
   local scan_mark = 0
   while true do
     wait(0)
@@ -17667,11 +17810,11 @@ function main()
       fps = frames / (now - fps_mark)
       frames = 0
       fps_mark = now
-      F.refresh_live()
+      F.timed('данные игрока', F.refresh_live)
     end
     if now - up_mark >= 1 then
-      F.ensure_boot()
-      F.apply_limiter(true)
+      F.timed('загрузчик', F.ensure_boot)
+      F.timed('предел FPS', F.apply_limiter, true)
       up_mark = now
       F.guard('отчёт', F.rep_tick, now)
     end
@@ -17679,11 +17822,15 @@ function main()
       int_mark = now
       F.guard('сохранение интерьеров', F.int_save)
     end
-    F.play_tick()
-    F.pay_tick()
-    F.car_tick()
+    if now - play_mark >= 0.25 then
+      play_mark = now
+      F.timed('время в игре', F.play_tick)
+    end
+    F.timed('пейдей', F.pay_tick)
+    F.timed('машины', F.car_tick)
     -- What fails here is caught, counted and written to the journal once: the report shows it.
     F.guard('память', F.mem_tick, now)
+    F.guard('карта памяти', F.mem_map_tick)
     if not F._restoring then F.guard('автобэкап', F.bak_tick, now) end
     F.guard('обновление', F.upd_tick, now)
     F.guard('картинки предметов', F.lib_pic_tick)
@@ -17691,16 +17838,16 @@ function main()
     F.guard('сундуки', F.chest_tick)
     F.guard('лесоруб', F.wood_tick)
     if not F._restoring then F.guard('смена', F.shift_tick, now) end
-    F.watch_self()
+    F.timed('слежение за файлом', F.watch_self)
     if frame then
       frame.LockPlayer = (show or anim > 0.45) and not hidden and cfg.lock == 1
       frame.HideCursor = false
     end
     if need_scan and show and (cfg.bg == 1 or page == 'scripts') then
-      F.scan_files()
+      F.timed('список скриптов', F.scan_files)
       scan_mark = now
     end
-    F.read_hotkey()
+    F.timed('клавиши', F.read_hotkey)
     if release_back and now >= release_until then
       release_back = false
       show = true
@@ -17723,10 +17870,10 @@ function main()
       end
     end
     if dirty and now >= save_at then
-      F.save_cfg()
+      F.timed('сохранение настроек', F.save_cfg)
       save_at = now + 0.4
     elseif stat_dirty and now >= stat_at then
-      F.save_cfg()
+      F.timed('сохранение настроек', F.save_cfg)
       stat_at = now + 15
     end
   end
