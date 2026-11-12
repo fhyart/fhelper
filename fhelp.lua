@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.13'
+local VER = '1.19.14'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(40)
+script_version_number(41)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -9024,7 +9024,7 @@ function F.rep_gpu()
   end)
   if ok and out then
     F._gpu = out
-    pcall(F.log_line, 'Игру рисует: ' .. tostring(out.name or 'не определилось') .. string.format(', свободно видеопамяти %.0f МБ', out.tex or 0)
+    pcall(F.log_line, 'Игру рисует: ' .. tostring(out.name or 'не определилось') .. string.format(', игре доступно видеопамяти %.0f МБ', out.tex or 0)
       .. (out.w and string.format(', режим %dx%d %d Гц', out.w, out.h, out.hz or 0) or ''))
     return out
   end
@@ -9095,6 +9095,17 @@ function F.rep_data()
     d.gone, d.gone_from, d.gone_t = r.free0 - st.free, r.free0, r.free0_t
     d.rate_all = d.gone / ((os.time() - r.free0_t) / 3600)
   end
+  -- Does it go steadily: of the last six five-minute stretches at least four lost memory.
+  -- One big step (the game loading another place) is not a leak.
+  local mins = r.mins
+  if #mins >= 31 then
+    local falls = 0
+    for k = 0, 5 do
+      local a, b = mins[#mins - (k + 1) * 5], mins[#mins - k * 5]
+      if a.free and b.free and a.free - b.free >= 15 then falls = falls + 1 end
+    end
+    d.rate_steady = falls >= 4
+  end
   -- The steepest ten minutes of the kept ones: where the memory really went.
   local mins = r.mins
   for i = 11, #mins do
@@ -9118,7 +9129,7 @@ function F.rep_notes(d, now, scripts, hw)
   if d.map and d.map.big < 200 and not (d.free and d.free < F.MEM_WARN) then
     add(string.format('Память игры раздроблена: самый большой свободный кусок %.0f МБ, большие текстуры могут не загрузиться', d.map.big))
   end
-  if d.rate and d.rate > 250 then add(string.format('Память игры уходит быстро: %.0f МБ в час. Попробуй «Предел памяти мира» во вкладке «Память»', d.rate)) end
+  if d.rate and d.rate > 250 and d.rate_steady then add(string.format('Память игры уходит быстро: %.0f МБ в час. Попробуй «Предел памяти мира» во вкладке «Память»', d.rate)) end
   if d.fps_avg and d.frames > 600 and d.fps_avg < 30 then add(string.format('Средний FPS низкий: %.0f', d.fps_avg)) end
   if d.stall_h and d.stall_h > 30 then add(string.format('Игра часто замирает: %.0f фризов в час дольше %d мс', d.stall_h, F.REP_STALL * 1000)) end
   if d.worst and d.worst > 1 then add(string.format('Самый долгий фриз: %.1f с', d.worst)) end
@@ -9264,7 +9275,7 @@ function F.rep_build(kind, why)
   local g = d.gpu
   if g then
     L('Игру рисует: ' .. tostring(g.name or 'не определилось') .. (g.adapter and (' (адаптер ' .. g.adapter .. ')') or '')
-      .. (g.tex and string.format(', свободно видеопамяти при запуске около %.0f МБ', g.tex) or '')
+      .. (g.tex and string.format(', игре доступно видеопамяти около %.0f МБ (игра 32-битная и больше 4 ГБ не видит)', g.tex) or '')
       .. (g.w and string.format(', режим экрана %dx%d, %d Гц', g.w, g.h, g.hz or 0) or ''))
   else L('Игру рисует: пока не определилось (нужно быть в игре полминуты)') end
   if now.on_ac ~= nil then L('Питание: ' .. (now.on_ac and 'от сети' or 'от батареи') .. (now.batt and (', заряд ' .. now.batt .. '%') or '')) end
@@ -9809,6 +9820,12 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.14', '12.11.2026', {
+    {'fix', 'Предметы: декодер картинок Windows запускается заранее, при старте скрипта, чтобы первая картинка не подвешивала игру'},
+    {'chg', 'Смена: плашка смены и вкладка «Работа» стали в несколько раз легче — строки считаются раз в секунду, а не каждый кадр', 'income:work'},
+    {'fix', 'Настройки: отчёт не пишет «память уходит быстро» из-за одного скачка, когда игра догрузила другое место'},
+    {'chg', 'Настройки: в отчёте видеопамять подписана как доступная игре — 32-битная игра больше 4 ГБ не видит'},
+  }},
   {'1.19.13', '12.11.2026', {
     {'add', 'Лавки: окошко расчёта — нажми на предмет в лавке, и рядом видно цену, комиссию, курс VC$ к доллару и сколько придёт на руки'},
     {'add', 'Лавки: комиссия продажи, курс и комиссия обмена настраиваются, курс можно взять из своего последнего обмена'},
@@ -12110,7 +12127,24 @@ function F.shift_field_set(bit, on)
 end
 
 -- Rows the bar and the card share: label, value, and an optional share for a progress line.
+-- The rows change once a second at most: the bar and the card ask for them every frame.
 function F.shift_rows(s, all)
+  local key = os.time() .. '|' .. tostring(cfg.shift_fields) .. '|' .. tostring(F.shift_rev) .. '|' .. tostring(s.pause_at)
+    .. '|' .. tostring(s.n) .. '|' .. tostring(s.inc)
+  local c = F._shift_rows_c
+  if not c or c.s ~= s then
+    c = {s = s}
+    F._shift_rows_c = c
+  end
+  local slot = all and 'all' or 'bar'
+  local hit = c[slot]
+  if hit and hit.key == key then return hit.rows end
+  local rows = F.shift_rows_make(s, all)
+  c[slot] = {key = key, rows = rows}
+  return rows
+end
+
+function F.shift_rows_make(s, all)
   local now = os.time()
   local j = F.shift_job(s.job)
   local m = function(n) return F.shift_m(s, n) end
@@ -12231,10 +12265,17 @@ function F.draw_shift_bar()
   if sh < 100 then sh = 768 end
   local pad, head, row = 12 * ts, 30 * ts, 22 * ts
   -- Wide enough for the longest label and value side by side, they must not run into each other.
-  local need = 0
-  for _, r in ipairs(rows) do
-    need = math.max(need, (F.text_w(font_main, r[1]) + F.text_w(font_main, r[2]) + 18) * ts)
+  -- Measured once for a set of rows: measuring text is the dear part of this bar.
+  local wd = rows._w
+  if not wd then
+    wd = {need = 0}
+    for i, r in ipairs(rows) do
+      wd[i] = F.text_w(font_main, r[2])
+      wd.need = math.max(wd.need, F.text_w(font_main, r[1]) + wd[i] + 18)
+    end
+    rows._w = wd
   end
+  local need = wd.need * ts
   local ww = math.floor(math.max(250 * ts, need + pad * 2))
   local wh = head + #rows * row + pad
   local x, y = cfg.shift_x, cfg.shift_y
@@ -12265,7 +12306,7 @@ function F.draw_shift_bar()
     local ry = y + head + (i - 1) * row
     local extra = r[3] or {}
     F.text_at(font_main, 16, x + pad, ry + 3 * ts, F.col('text', 135), r[1], nil, ts)
-    local vw = F.text_w(font_main, r[2]) * ts
+    local vw = wd[i] * ts
     local col = extra.bad and F.col('bad') or (extra.strong and F.col('accent_hi') or F.col('text', 230))
     F.text_at(font_main, 16, x + ww - pad - vw, ry + 3 * ts, col, r[2], nil, ts)
     if extra.share then
@@ -15285,8 +15326,41 @@ function F.lib_pic_make(db, it)
 end
 
 -- Windows calls go through the interpreter only: a JIT trace around them broke the game.
+-- The first picture is slow whatever the processor: Windows loads its decoder on the first
+-- call. So one tiny picture goes through it a few seconds after the script starts, while the
+-- game is still loading, under the same lock file as a real one.
+F.WIC_TINY = 'RIFF\26\0\0\0WEBPVP8L\13\0\0\0\47\0\0\0\16\7\16\17\17\136\136\254\7\0'
+F.WIC_WARM_AT = 4
+
+function F.wic_warm()
+  if F._wic_warm then return end
+  if os.clock() - (F._wic_t0 or 0) < F.WIC_WARM_AT then return end
+  F._wic_warm = true
+  if not ffi_ok then return end
+  -- A lock left by a crash means pictures are off: nothing to warm, and nothing to risk.
+  local f = io.open(F.lib_lock_path(), 'rb')
+  if f then
+    f:close()
+    return
+  end
+  local lock = io.open(F.lib_lock_path(), 'wb')
+  if lock then
+    lock:write('warm')
+    lock:close()
+  end
+  local t0 = F.rep_clock()
+  local ok, png, why = pcall(F.wic_png, F.WIC_TINY, 8)
+  os.remove(F.lib_lock_path())
+  F._wic_warm_ms = (F.rep_clock() - t0) * 1000
+  F._wic_warm_ok = ok and png ~= nil
+  -- The time goes to the journal: the reports then show whether the first call was the slow one.
+  if F._wic_warm_ok then F.log_line(string.format('Картинки: декодер Windows запущен заранее за %.0f мс', F._wic_warm_ms)) end
+  if not F._wic_warm_ok then F.log_line('Картинки: разогрев не прошёл (' .. tostring(ok and why or png) .. '), первая картинка может открыться с задержкой') end
+end
+F._wic_t0 = os.clock()
+
 if jit and jit.off then
-  for _, fn in ipairs({F.wic, F.wic_png, F.lib_pic_make, F.lib_pic_tick}) do jit.off(fn, true) end
+  for _, fn in ipairs({F.wic, F.wic_png, F.lib_pic_make, F.lib_pic_tick, F.wic_warm}) do jit.off(fn, true) end
 end
 
 -- Descriptions in items.bin keep colours and line breaks; the card shows them as one text.
@@ -18626,7 +18700,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 40
+F.BUILD = 41
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -19179,6 +19253,7 @@ function main()
     F.guard('карта памяти', F.mem_map_tick)
     if not F._restoring then F.guard('автобэкап', F.bak_tick, now) end
     F.guard('обновление', F.upd_tick, now) --@full
+    F.guard('разогрев картинок', F.wic_warm)
     F.guard('картинки предметов', F.lib_pic_tick)
     F.guard('лавки', F.shop_tick)
     F.guard('сундуки', F.chest_tick)
