@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.11'
+local VER = '1.19.13'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(38)
+script_version_number(40)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -148,6 +148,24 @@ local cfg = {
   upd_skip = 0,
   shop_on = 1,
   shop_days = 3,
+  shop_calc = 1,
+  shop_tax = 0,
+  shop_rate = 0,
+  shop_fee = 0,
+  shop_cur = 0,
+  shop_calc_x = -1,
+  shop_rows = 127,
+  shop_calc_scale = 1,
+  shop_calc_alpha = 0.92,
+  shop_calc_w = 340,
+  shop_calc_keep = 40,
+  shop_calc_sell = 1,
+  shop_calc_pic = 1,
+  shop_calc_y = -1,
+  vc_rate_last = 0,
+  shop_rate_buy = 0,
+  shop_fee_buy = 0,
+  vc_rate_buy_last = 0,
   chest_on = 1,
   chest_chat = 1,
   chest_sound = 1,
@@ -208,6 +226,11 @@ local CFG_NUM = {
   {'toast_alpha', 0.3, 1}, {'toast_time', 2, 30}, {'toast_max', 1, 10}, {'toast_menu', 0, 1},
   {'toast_merge', 0, 1}, {'toast_sound', 0, 1}, {'toast_bar', 0, 1},
   {'upd_on', 0, 1}, {'upd_skip', 0, 1e9}, {'shop_on', 0, 1}, {'shop_days', 1, 14},
+  {'shop_calc', 0, 1}, {'shop_tax', 0, 100}, {'shop_rate', 0, 1e9}, {'shop_fee', 0, 100}, {'shop_cur', 0, 2},
+  {'shop_calc_x', -1, 10000}, {'shop_calc_y', -1, 10000}, {'vc_rate_last', 0, 1e9},
+  {'shop_rate_buy', 0, 1e9}, {'shop_fee_buy', 0, 100}, {'vc_rate_buy_last', 0, 1e9},
+  {'shop_rows', 0, 127}, {'shop_calc_scale', 0.7, 1.8}, {'shop_calc_alpha', 0.3, 1}, {'shop_calc_w', 260, 520},
+  {'shop_calc_keep', 10, 180}, {'shop_calc_sell', 0, 1}, {'shop_calc_pic', 0, 1},
   {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},  {'toast_chest', 0, 1},
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
   {'mem_auto', 0, 1}, {'mem_world', 0, 4096}, {'news_on', 0, 1}, {'wel_on', 0, 1}, {'wel_at', 0, 1e11},
@@ -307,6 +330,15 @@ if imgui_ok then
   ui.car_alias = imgui.new.char[60]()
   ui.item_q = imgui.new.char[80]()
   ui.shop_q = imgui.new.char[80]()
+  ui.shop_tax = imgui.new.char[16]()
+  ui.shop_rate = imgui.new.char[16]()
+  ui.shop_fee = imgui.new.char[16]()
+  ui.shop_rate_buy = imgui.new.char[16]()
+  ui.shop_fee_buy = imgui.new.char[16]()
+  ui.shop_scale = imgui.new.float(100)
+  ui.shop_alpha = imgui.new.float(92)
+  ui.shop_w = imgui.new.float(340)
+  ui.shop_keep = imgui.new.float(40)
   ui.want_q = imgui.new.char[80]()
   ui.want_price = imgui.new.char[32]()
   ui.shift_goal = imgui.new.char[32]()  ui.shift_scale = imgui.new.float(100)
@@ -331,6 +363,7 @@ local NAV = {
   {'chests', 'ICON_FA_GIFT', 'Сундуки'},
   {'chat', 'ICON_FA_COMMENTS', 'Чат'},
   {'items', 'ICON_FA_BOXES', 'Предметы'},
+  {'shops', 'ICON_FA_STORE', 'Лавки'},
   {'scripts', 'ICON_FA_CODE', 'Скрипты'},
   {'binds', 'ICON_FA_BOLT', 'Бинды'},
   {'notes', 'ICON_FA_STICKY_NOTE', 'Заметки'},
@@ -422,8 +455,9 @@ function F.plain_samp(s)
 end
 
 function F.faico(key)
-  if not fa_ok or not fa or not fa[key] then return '' end
-  return fa[key]
+  if not fa_ok or type(fa) ~= 'table' or type(key) ~= 'string' then return '' end
+  -- Not fa[key]: on a name it does not have, fAwesome5 calls itself until the stack ends.
+  return rawget(fa, key) or ''
 end
 
 function F.utf8_ok(s)
@@ -2202,9 +2236,15 @@ function F.hook_chat()
   ev.onSetVehicleNumberPlate = function(id, text)
     F.car_plates[id] = F.game_text(text or '')
   end
-  ev.onShowDialog = function(_, _, _, _, _, text)
+  ev.onShowDialog = function(_, _, title, _, _, text)
     local ok, err = pcall(F.time_sync, text)
     if not ok then F.feed_err('время', err) end
+    ok, err = pcall(F.shop_dialog, title, text)
+    if not ok then F.feed_err('лавки', err) end
+  end
+  -- Any answer to a dialog (a button, Esc) closes it: the calc by the stall goes with it.
+  ev.onSendDialogResponse = function()
+    pcall(F.shop_dialog_closed)
   end
 end
 
@@ -5969,7 +6009,7 @@ function F.shop_slot(row)
 end
 
 function F.shop_packet(text)
-  if cfg.shop_on ~= 1 or not text:find('playerInventory', 1, true) then return end
+  if (cfg.shop_on ~= 1 and cfg.shop_calc ~= 1) or not text:find('playerInventory', 1, true) then return end
   for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
     if body:find('"type"%s*:%s*13%D') or body:find('"type"%s*:%s*28%D') then
       local v = F.json_value(body, 1)
@@ -5982,8 +6022,49 @@ function F.shop_packet(text)
           F.shop_merge(kind, v.action, v.data.items)
         end
       end
+    elseif cfg.shop_calc == 1 and body:find('"type"%s*:%s*1%D') then
+      local v = F.json_value(body, 1)
+      if type(v) == 'table' and v.action == nil then v = v[1] end
+      if type(v) == 'string' then v = F.json_value(v, 1) end
+      if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table'
+        and tonumber(v.data.type) == 1 and type(v.data.items) == 'table' then
+        F.shop_bag_merge(v.action, v.data.items)
+      end
     end
   end
+end
+
+-- The player's own bag, block 1: a whole list (action 0, in pieces) or single slots (action 2).
+-- It tells how many pieces of the item a stall buys the player has.
+function F.shop_bag_merge(act, rows)
+  local now = os.clock()
+  local bag = F.shop_bag
+  if not bag or (act == 0 and now - bag.at > 2) then
+    if act ~= 0 then return end
+    bag = {slots = {}, at = now}
+    F.shop_bag = bag
+  end
+  for _, row in pairs(rows) do
+    local slot = type(row) == 'table' and tonumber(row.slot)
+    if slot then
+      local id = tonumber(row.item) or 0
+      local n = math.floor(tonumber(row.amount) or 0)
+      bag.slots[slot] = id > 0 and {id = id, n = math.max(1, n)} or nil
+    end
+  end
+  if act == 0 then bag.at = now end
+  bag.rev = (bag.rev or 0) + 1
+end
+
+-- How many pieces of the item lie in the bag; nil while the bag has not been seen.
+function F.shop_have(id)
+  local bag = F.shop_bag
+  if not bag or not id then return nil end
+  local n = 0
+  for _, it in pairs(bag.slots) do
+    if it.id == id then n = n + it.n end
+  end
+  return n
 end
 
 -- The stall itself is the nearest label with the word "лавка", else any label right next to the player.
@@ -6023,7 +6104,7 @@ function F.shop_merge(kind, act, rows)
   -- Both blocks of one stall come right after each other; a later list is another opening.
   if act == 0 and (not cur or now - cur.at > 2) then
     cur = {blocks = {}, at = now, pos = F.shop_pos()}
-    F.shop_cur = cur
+    F.shop_cur, F.shop_pick = cur, nil
   elseif not cur then
     return
   end
@@ -6045,7 +6126,7 @@ function F.shop_tick()
   local cur = F.shop_cur
   if cur and cur.dirty and os.clock() - cur.at > 0.8 then
     cur.dirty = false
-    F.shop_commit(cur)
+    if cfg.shop_on == 1 then F.shop_commit(cur) end
   end
 end
 
@@ -6534,6 +6615,11 @@ function F.shop_deals_card()
   F.card_end()
 end
 
+function F.draw_shops_page()
+  F.page_head('Лавки', 'Цены лавок, которые ты открыл: поиск, сравнение и расчёт сделки')
+  F.draw_shops()
+end
+
 function F.draw_shops()
   local sel
   for _, s in ipairs(F.shops) do
@@ -6543,6 +6629,7 @@ function F.draw_shops()
     F.shop_page(sel)
     return
   end
+  F.shop_calc_card()
   F.draw_wants()
   F.card_begin('Лавки', 'Запоминает товары и цены лавок, которые ты открыл', 'ICON_FA_STORE')
   if F.switch('shopon', 'Записывать лавки', cfg.shop_on == 1) then
@@ -6581,6 +6668,560 @@ function F.draw_shops()
     math.min(F.s(420), F.inner_w())) or F.shop_order or 'new'
   imgui.Spacing()
   F.shop_cards(F.shop_sorted(F.shop_order))
+end
+
+-- The calc by the stall. A click on a slot of an open stall goes to the server as
+-- clickOnBlock with the slot and the block (13: the stall sells, 28: the stall buys). The price
+-- of that slot is known from the list the stall sent, so a small window next to the game's
+-- own shows what the deal comes to: the stall's fee, the VC$ to $ rate and the fee of the exchange.
+
+function F.shop_sent(bs)
+  raknetBitStreamIgnoreBits(bs, 8)
+  if raknetBitStreamReadInt8(bs) ~= 18 then return end
+  local len = tonumber(raknetBitStreamReadInt16(bs)) or 0
+  if len <= 0 or len > 4096 then return end
+  F.shop_out(raknetBitStreamReadString(bs, len) or '')
+end
+
+function F.shop_out(text)
+  if text:find('inventoryClose', 1, true) or text:find('closeInventory', 1, true) then
+    F.shop_pick = nil
+    return
+  end
+  if cfg.shop_calc ~= 1 or not text:find('lickOnBlock', 1, true) then return end
+  local slot = tonumber(text:match('"slot"%s*:%s*(%d+)'))
+  local kind = F.SHOP_KIND[tonumber(text:match('"type"%s*:%s*(%d+)')) or 0]
+  -- A click in the player's own bag while a stall is open keeps what was picked.
+  if not slot or not kind then return end
+  local cur = F.shop_cur
+  local b = cur and cur.blocks[kind]
+  local r = b and b.slots[slot]
+  if not r or not r.price or r.price <= 0 or (kind == 'sell' and cfg.shop_calc_sell ~= 1) then
+    F.shop_pick = nil
+    return
+  end
+  F.shop_pick = {kind = kind, id = r.id, price = r.price, at = os.clock()}
+  if not F._shop_pick_logged then
+    F._shop_pick_logged = true
+    F.log_line('Лавки: расчёт показан для «' .. F.item_name(r.id) .. '», цена ' .. (F.fmt_money(r.price) or '?'))
+  end
+end
+
+-- Are the prices of the stall in VC$: as set, or by the city the player is in.
+function F.shop_vc()
+  if F.is_rod() then return false end
+  if cfg.shop_cur == 1 then return false end
+  if cfg.shop_cur == 2 then return true end
+  return F.here_vc()
+end
+
+-- What a deal comes to. kind 'buy': the stall buys, the player gets the money, less the fee of
+-- the sale; VC$ then go to $ at the rate, less the fee of the exchange. kind 'sell': the player pays.
+function F.shop_calc(kind, price, qty, vc, src)
+  qty = math.max(1, math.floor(tonumber(qty) or 1))
+  local c = {src = src, kind = kind, price = price, qty = qty, vc = vc and true or false, sum = price * qty}
+  local rate = tonumber(cfg.shop_rate) or 0
+  if kind == 'buy' then
+    c.tax_pct = math.max(0, math.min(100, tonumber(cfg.shop_tax) or 0))
+    c.tax = math.floor(c.sum * c.tax_pct / 100 + 0.5)
+    c.net = c.sum - c.tax
+    c.total, c.total_vc = c.net, c.vc
+    if c.vc and rate > 0 then
+      c.rate = rate
+      c.conv = math.floor(c.net * rate + 0.5)
+      c.fee_pct = math.max(0, math.min(100, tonumber(cfg.shop_fee) or 0))
+      c.fee = math.floor(c.conv * c.fee_pct / 100 + 0.5)
+      c.total, c.total_vc = c.conv - c.fee, false
+    end
+    c.lost = c.sum > 0 and c.rate == nil and c.tax / c.sum * 100 or nil
+  else
+    c.total, c.total_vc = c.sum, c.vc
+    local rb = tonumber(cfg.shop_rate_buy) or 0
+    if c.vc and rb > 0 then
+      c.rate = rb
+      c.conv = math.floor(c.sum * rb + 0.5)
+      c.fee_pct = math.max(0, math.min(100, tonumber(cfg.shop_fee_buy) or 0))
+      c.fee = math.floor(c.conv * c.fee_pct / 100 + 0.5)
+      c.total, c.total_vc = c.conv + c.fee, false
+    end
+  end
+  return c
+end
+
+function F.shop_rate_text(rate)
+  return '1 VC$ = $' .. (string.format('%.4f', rate):gsub('0+$', ''):gsub('%.$', ''))
+end
+
+-- What the window shows, bits of cfg.shop_rows.
+F.SHOP_ROWS = {
+  {1, 'want', 'Сколько лавка скупает или продаёт', 'Строка «Игрок покупает» или «Игрок продаёт» из окна игры'},
+  {2, 'have', 'Сколько у тебя есть', 'При продаже — строка «У вас в наличии». При покупке — на сколько штук хватит наличных'},
+  {4, 'price', 'Цена за 1 штуку', nil},
+  {8, 'sum', 'Сумма до вычетов', 'Цена, умноженная на количество'},
+  {16, 'cuts', 'Курс и комиссии по строкам', 'Комиссия продажи, курс, сумма после обмена и комиссия обмена'},
+  {32, 'one', 'Итог за 1 штуку', 'Сколько выходит с одной штуки после курса и комиссий'},
+  {64, 'notes', 'Подсказки', 'Как цена стоит против других лавок и предупреждения'},
+}
+
+function F.shop_row_on(key)
+  for _, r in ipairs(F.SHOP_ROWS) do
+    if r[2] == key then return math.floor((tonumber(cfg.shop_rows) or 0) / r[1]) % 2 == 1 end
+  end
+  return false
+end
+
+function F.shop_row_set(key, on)
+  for _, r in ipairs(F.SHOP_ROWS) do
+    if r[2] == key and F.shop_row_on(key) ~= on then
+      cfg.shop_rows = (tonumber(cfg.shop_rows) or 0) + (on and r[1] or -r[1])
+      dirty = true
+    end
+  end
+end
+
+function F.shop_pcs(n)
+  if not n then return 'нет данных' end
+  return (F.fmt_money(n) or tostring(n)):gsub('^%D+', ''):gsub(' руб%.$', '') .. ' шт'
+end
+
+-- The lines of the window: {label, value, style}; style 'total' is the big last line.
+-- info: have (pieces in the bag), want (pieces the stall still buys); nil is "not known".
+function F.shop_calc_rows(c, info)
+  info = info or {}
+  local rows = {}
+  local function add(a, b, st) rows[#rows + 1] = {a, b, st} end
+  local function m(n, vc) return F.fmt_cur(n, vc) or '—' end
+  local on = F.shop_row_on
+  if c.kind == 'buy' then
+    if on('want') then add('Лавка скупает', F.shop_pcs(info.want)) end
+    if on('have') then add('У тебя есть', F.shop_pcs(info.have)) end
+    if on('price') then add('За 1 шт', m(c.price, c.vc)) end
+    if c.src == 'typed' or (info.want and info.have and info.want < info.have) then add('Продаёшь', F.shop_pcs(c.qty)) end
+    if on('sum') and c.qty > 1 then add('Сумма', m(c.sum, c.vc)) end
+    if on('cuts') then
+      if c.tax > 0 then add('Комиссия продажи ' .. F.shop_pct(c.tax_pct), '-' .. m(c.tax, c.vc), 'minus') end
+      if c.rate then
+        add('Курс', F.shop_rate_text(c.rate))
+        add('После обмена', m(c.conv, false))
+        if c.fee > 0 then add('Комиссия обмена ' .. F.shop_pct(c.fee_pct), '-' .. m(c.fee, false), 'minus') end
+      end
+    end
+    if on('one') and c.qty > 1 and (c.tax > 0 or c.rate) then add('На руки за 1 шт', m(c.total / c.qty, c.total_vc)) end
+    add(c.qty > 1 and ('Итого за ' .. F.shop_pcs(c.qty)) or 'Итого на руки', m(c.total, c.total_vc), 'total')
+  else
+    if on('want') then add('Лавка продаёт', F.shop_pcs(info.want)) end
+    if on('have') and info.afford then add('Твоих денег хватит на', F.shop_pcs(info.afford)) end
+    if on('price') then add('За 1 шт', m(c.price, c.vc)) end
+    if c.qty > 1 then add('Покупаешь', F.shop_pcs(c.qty)) end
+    if on('sum') and c.qty > 1 then add('Сумма', m(c.sum, c.vc)) end
+    if on('cuts') and c.rate then
+      add('Курс покупки', F.shop_rate_text(c.rate))
+      add('Нужно долларов', m(c.conv, false))
+      if c.fee > 0 then add('Комиссия обмена ' .. F.shop_pct(c.fee_pct), '+' .. m(c.fee, false), 'minus') end
+    end
+    if on('one') and c.qty > 1 and c.rate then add('Выходит за 1 шт', m(c.total / c.qty, c.total_vc)) end
+    add(c.qty > 1 and ('К оплате за ' .. F.shop_pcs(c.qty)) or 'К оплате', m(c.total, c.total_vc), 'total')
+  end
+  return rows
+end
+
+-- The game's dialog that comes right after the click: it says how many pieces the stall still
+-- buys. Lines about the price are not read, so a price is never taken for a count.
+F.SHOP_WANT_PAT = {'количеств[оа][^%d\n]-(%d[%d%.]*)', 'скупа[её]т[^%d\n]-(%d[%d%.]*)', 'осталось[^%d\n]-(%d[%d%.]*)',
+  'нужно[^%d\n]-(%d[%d%.]*)', 'требуется[^%d\n]-(%d[%d%.]*)', 'до%s+(%d[%d%.]*)%s*шт', '(%d[%d%.]*)%s*шт'}
+
+-- The dialog of a stall, as the server writes it:
+--   Игрок покупает: 6389 шт.   (or "Игрок продаёт" when the stall sells)
+--   У вас в наличии: 765 шт.
+--   Стоимость: :CASHV:2.700 за 1 шт.   (:CASHV: is VC$, :CASH: is $)
+function F.shop_dialog_read(text)
+  local plain = (tostring(text or ''):gsub('{%x%x%x%x%x%x}', ''))
+  local function num(v) return v and tonumber((v:gsub('[%.,%s]', ''))) or nil end
+  local out = {}
+  out.want = num(plain:match('Игрок покупает:%s*(%d[%d%.]*)') or plain:match('Игрок продаёт:%s*(%d[%d%.]*)')
+    or plain:match('Игрок продает:%s*(%d[%d%.]*)'))
+  out.have = num(plain:match('У вас в наличии:%s*(%d[%d%.]*)'))
+  local cur, price = plain:match('Стоимость:%s*:CASH(V?):%s*(%d[%d%.]*)')
+  if price then out.price, out.vc = num(price), cur == 'V' end
+  if not out.want then out.want = F.shop_want_parse(plain) end
+  return out
+end
+
+function F.shop_want_parse(text)
+  local plain = F.lower_fast((tostring(text or ''):gsub('{%x%x%x%x%x%x}', '')))
+  for _, pat in ipairs(F.SHOP_WANT_PAT) do
+    for line in (plain .. '\n'):gmatch('(.-)\r?\n') do
+      if not (line:find('$', 1, true) or line:find('цен', 1, true) or line:find('стоим', 1, true) or line:find('руб', 1, true)
+        or line:find('сервер', 1, true) or line:find('ячейк', 1, true) or line:find('наличи', 1, true) or line:find('cash', 1, true)) then
+        local n = line:match(pat)
+        n = n and tonumber((n:gsub('%.', '')))
+        if n and n > 0 and n < 1e7 then return n end
+      end
+    end
+  end
+  return nil
+end
+
+-- The window lives as long as the game's dialog of the picked item. A sale shows the dialog
+-- again right away, so the window waits a moment before it goes.
+F.SHOP_CLOSE_WAIT = 0.6
+
+function F.shop_dialog_closed()
+  local p = F.shop_pick
+  if p and p.dlg and not p.closing then p.closing = os.clock() end
+end
+
+function F.shop_dialog(title, text)
+  local p = F.shop_pick
+  if not p or os.clock() - p.at > 6 then return end
+  local body = F.game_text(text or '')
+  local d = F.shop_dialog_read(body)
+  p.want = d.want or p.want
+  if d.have then p.have_dlg = d.have end
+  if d.price and d.price > 0 then p.price, p.vc = d.price, d.vc end
+  p.at = os.clock()
+  p.dlg, p.live, p.closing = true, nil, nil
+  -- The first dialogs go to a file: the real wording, to read the count right.
+  F._shop_dlg = (F._shop_dlg or 0) + 1
+  if F._shop_dlg > 15 then return end
+  pcall(function()
+    local f = io.open(F.cfg_dir() .. '\\fhelp_shop_dialog_debug.txt', F._shop_dlg == 1 and 'w' or 'a')
+    if not f then return end
+    f:write('--- ', os.date('%H:%M:%S'), '  ', F.game_text(title or ''), '  (лавке нужно: ', tostring(p.want), ', у тебя: ', tostring(p.have_dlg), ', цена: ', tostring(d.price), ')\n', body:sub(1, 1500), '\n')
+    f:close()
+  end)
+end
+
+function F.shop_pct(v)
+  return (string.format('%.2f', v):gsub('0+$', ''):gsub('%.$', '')) .. '%'
+end
+
+-- How many pieces: what is typed into the game's dialog, if it is a plain number.
+function F.shop_dialog_qty()
+  local ok, on = pcall(sampIsDialogActive)
+  if not ok or not on then return nil, false end
+  local fine, text = pcall(sampGetCurrentDialogEditboxText)
+  local n = fine and type(text) == 'string' and text:match('^%s*(%d%d?%d?%d?%d?%d?%d?)%s*$')
+  return tonumber(n), true
+end
+
+F.SHOP_SAMPLE = {kind = 'buy', id = 0, price = 100000, sample = true, have = 25, want = 40, qty = 25, src = 'bag'}
+F.SHOP_SAMPLE_SELL = {kind = 'sell', id = 0, price = 100000, sample = true, want = 40, afford = 12, qty = 5, src = 'typed'}
+
+function F.shop_calc_view()
+  if cfg.shop_calc ~= 1 then return nil end
+  if show then
+    -- With the menu open on the stalls page the window shows an example and can be moved.
+    if page ~= 'shops' then return nil end
+    return F.shop_sample == 'sell' and F.SHOP_SAMPLE_SELL or F.SHOP_SAMPLE
+  end
+  local p = F.shop_pick
+  if not p then return nil end
+  local qty, dialog = F.shop_dialog_qty()
+  if dialog then
+    p.at = os.clock()
+    if p.dlg then p.live = true end
+  elseif p.live and not p.closing then
+    -- The dialog was on screen and is gone, however it was closed.
+    p.closing = os.clock()
+  end
+  if p.closing and os.clock() - p.closing > F.SHOP_CLOSE_WAIT then
+    F.shop_pick = nil
+    return nil
+  end
+  -- How many: what is typed into the game's dialog; else all the player has of it, but not
+  -- more than the stall still buys; else one.
+  -- What the game's dialog says is the truth; the bag as it was read is only a guess before it.
+  p.have = p.kind == 'buy' and (p.have_dlg or F.shop_have(p.id)) or nil
+  local all = (p.have or 0) > 0 and p.have or nil
+  if all and p.want then all = math.min(all, p.want) end
+  if qty then p.qty, p.src = qty, 'typed'
+  elseif all then p.qty, p.src = all, 'bag'
+  else p.qty, p.src = 1, nil end
+  p.afford = nil
+  if p.kind == 'sell' and p.price > 0 then
+    -- The cash fHelper knows is of the city the player is in: it counts only against the same currency.
+    local vc = p.vc
+    if vc == nil then vc = F.shop_vc() end
+    local cash = tonumber(cfg.money_real) or 0
+    if cash > 0 and vc == F.here_vc() then p.afford = math.floor(cash / p.price) end
+  end
+  if os.clock() - p.at > (tonumber(cfg.shop_calc_keep) or 40) then
+    F.shop_pick = nil
+    return nil
+  end
+  return p
+end
+
+function F.shop_calc_on()
+  if hidden then return false end
+  local ok, pause = pcall(isPauseMenuActive)
+  if ok and pause then return false end
+  return F.shop_calc_view() ~= nil
+end
+
+function F.shop_calc_notes(p, c)
+  local notes = {}
+  if c.vc and not c.rate then
+    notes[#notes + 1] = (c.kind == 'buy' and 'Курс продажи' or 'Курс покупки') .. ' не задан: меню → Лавки → «Расчёт у лавки»'
+  end
+  if not F.shop_row_on('notes') then return notes end
+  if c.kind == 'buy' then
+    if p.have == 0 then notes[#notes + 1] = 'В инвентаре этого предмета нет: расчёт за 1 шт'
+    elseif p.src == 'typed' and p.have and p.qty > p.have then notes[#notes + 1] = 'Введено больше, чем у тебя есть'
+    elseif p.src == 'typed' and p.want and p.qty > p.want then notes[#notes + 1] = 'Введено больше, чем лавка скупает'
+    elseif p.src == 'bag' and p.want and p.have and p.want < p.have then
+      notes[#notes + 1] = 'Лавке нужно меньше, чем у тебя есть: останется ' .. F.shop_pcs(p.have - p.want)
+    end
+  end
+  if c.kind == 'sell' and F.shop_row_on('notes') then
+    if p.want and p.src == 'typed' and p.qty > p.want then notes[#notes + 1] = 'Введено больше, чем лавка продаёт'
+    elseif p.afford and p.qty > p.afford then notes[#notes + 1] = 'Наличных на столько не хватает' end
+  end
+  if not p.sample then
+    local ok, text = pcall(F.shop_cmp, {id = p.id, k = p.kind, price = p.price})
+    if ok and text then notes[#notes + 1] = 'Против других лавок: ' .. text end
+  end
+  return notes
+end
+
+function F.draw_shop_calc()
+  local p = F.shop_calc_view()
+  if not p then return end
+  local vc = p.vc
+  if vc == nil then vc = F.shop_vc() end
+  local c = F.shop_calc(p.kind, p.price, p.qty or 1, vc, p.src)
+  local rows = F.shop_calc_rows(c, p)
+  local notes = F.shop_calc_notes(p, c)
+  local k = math.max(0.7, math.min(1.8, tonumber(cfg.shop_calc_scale) or 1))
+  local alpha = math.max(0.3, math.min(1, tonumber(cfg.shop_calc_alpha) or 0.92))
+  F.use_font(font_main)
+  local io = imgui.GetIO()
+  local sw, sh = io.DisplaySize.x, io.DisplaySize.y
+  if sw < 100 then sw = 1366 end
+  if sh < 100 then sh = 768 end
+  local ww = math.floor(math.max(260, math.min(520, tonumber(cfg.shop_calc_w) or 340)) * k)
+  local head, row, big, pad, note_h = 48 * k, 24 * k, 38 * k, 12 * k, 20 * k
+  local wh = head + (#rows - 1) * row + big + #notes * note_h + (#notes > 0 and 4 * k or 0) + 12 * k
+  local x, y = cfg.shop_calc_x, cfg.shop_calc_y
+  if x < 0 then x = sw - ww - 24 end
+  if y < 0 then y = sh * 0.22 end
+  x = math.max(0, math.min(sw - ww, x))
+  y = math.max(0, math.min(sh - wh, y))
+  local WF = imgui.WindowFlags
+  local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse + WF.NoCollapse
+    + WF.NoSavedSettings + WF.NoFocusOnAppearing + WF.NoBringToFrontOnFocus + WF.NoNavInputs
+    + WF.NoNavFocus + WF.NoMove + (WF.NoBackground or 0)
+  if not show then flags = flags + WF.NoMouseInputs end
+  imgui.SetNextWindowPos(imgui.ImVec2(x, y), imgui.Cond.Always)
+  imgui.SetNextWindowSize(imgui.ImVec2(ww, wh), imgui.Cond.Always)
+  imgui.PushStyleColor(imgui.Col.WindowBg, F.vec4(0, 0, 0, 0))
+  imgui.PushStyleColor(imgui.Col.Border, F.vec4(0, 0, 0, 0))
+  imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, 0)
+  imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
+  imgui.Begin('fhelp-shopcalc', nil, flags)
+  F.round_rect(x, y, ww, wh, F.col('bg', math.floor(255 * alpha)), F.col('accent', 90), 14 * k)
+  if show then
+    imgui.SetCursorScreenPos(imgui.ImVec2(x, y))
+    imgui.InvisibleButton('##shopcalcdrag', imgui.ImVec2(ww, wh))
+    local active = imgui.IsItemActive()
+    if active and imgui.IsMouseDragging(0) then
+      cfg.shop_calc_x = math.max(0, math.min(sw - ww, x + io.MouseDelta.x))
+      cfg.shop_calc_y = math.max(0, math.min(sh - wh, y + io.MouseDelta.y))
+      F._shop_calc_moved = true
+    elseif F._shop_calc_moved and not active then
+      F._shop_calc_moved = nil
+      dirty = true
+    end
+  end
+  local function tw_of(font, str) return F.text_w(font, str) * k end
+  local function fit(font, str, w) return F.fit_text(font, str, w / k) end
+  local tx = x + pad
+  if not p.sample and cfg.shop_calc_pic == 1 then
+    local sz = 32 * k
+    F.lib_pic(F.item_pic_of(p.id), x + pad, y + (head - sz) / 2, sz)
+    tx = tx + sz + 10 * k
+  end
+  local tw = ww - (tx - x) - pad
+  F.text_at(font_bold, 16, tx, y + 6 * k, F.col('text'), fit(font_bold, p.sample and 'Пример расчёта' or F.item_name(p.id), tw), nil, k)
+  F.text_at(font_main, 16, tx, y + 25 * k, F.col('text', 130),
+    fit(font_main, p.sample and (c.kind == 'buy' and 'пример продажи · перетащи' or 'пример покупки · перетащи') or (c.kind == 'buy' and 'лавка скупает у тебя' or 'лавка продаёт тебе'), tw), nil, k)
+  local ry = y + head
+  for _, r in ipairs(rows) do
+    if r[3] == 'total' then
+      imgui.GetWindowDrawList():AddLine(imgui.ImVec2(x + pad, ry + 4 * k), imgui.ImVec2(x + ww - pad, ry + 4 * k), F.col('text', 40), 1)
+      local vw = tw_of(font_bold, r[2]) * 18 / 16
+      F.text_at(font_main, 16, x + pad, ry + 14 * k, F.col('text', 200), fit(font_main, r[1], ww - pad * 3 - vw), nil, k)
+      F.text_at(font_bold, 18, x + ww - pad - vw, ry + 12 * k, F.col('accent_hi'), r[2], nil, k)
+      ry = ry + big
+    else
+      local vw = tw_of(font_main, r[2])
+      F.text_at(font_main, 16, x + pad, ry + 3 * k, F.col('text', 150), fit(font_main, r[1], ww - pad * 3 - vw), nil, k)
+      F.text_at(font_main, 16, x + ww - pad - vw, ry + 3 * k, r[3] == 'minus' and F.col('bad') or F.col('text', 230), r[2], nil, k)
+      ry = ry + row
+    end
+  end
+  for i, note in ipairs(notes) do
+    F.text_at(font_main, 16, x + pad, ry + 2 * k + (i - 1) * note_h, F.col('text', 120), fit(font_main, note, ww - pad * 2), nil, k)
+  end
+  imgui.End()
+  imgui.PopStyleVar(2)
+  imgui.PopStyleColor(2)
+  F.done_font(font_main)
+end
+
+function F.shop_calc_ui()
+  if not ui.shop_scale then return end
+  ui.shop_scale[0] = (tonumber(cfg.shop_calc_scale) or 1) * 100
+  ui.shop_alpha[0] = (tonumber(cfg.shop_calc_alpha) or 0.92) * 100
+  ui.shop_w[0] = tonumber(cfg.shop_calc_w) or 340
+  ui.shop_keep[0] = tonumber(cfg.shop_calc_keep) or 40
+end
+
+-- A number of the settings typed into a field: empty is zero, a comma is a point.
+function F.shop_num_field(key, hint, w, max)
+  local buf = ui[key]
+  F._shop_buf = F._shop_buf or {}
+  if not F._shop_buf[key] then
+    F._shop_buf[key] = true
+    local v = tonumber(cfg[key]) or 0
+    F.buf_set(buf, v > 0 and (string.format('%.4f', v):gsub('0+$', ''):gsub('%.$', '')) or '', 16)
+  end
+  F.field('##' .. key, hint, buf, 16, w, key)
+  local text = F.trim(F.buf_get(buf)):gsub(',', '.'):gsub('%%', '')
+  local v = tonumber(text) or 0
+  v = math.max(0, math.min(max, v))
+  if v ~= cfg[key] then
+    cfg[key] = v
+    dirty = true
+  end
+end
+
+function F.shop_calc_card()
+  F.card_begin('Расчёт у лавки', 'Нажми на предмет в лавке: рядом появится окошко с ценой, комиссией и итогом', 'ICON_FA_CALCULATOR')
+  F.chest_flag('shopcalc', 'Показывать окошко расчёта', 'shop_calc', 'Появляется, когда нажимаешь на предмет в чужой лавке, и пропадает, когда закрываешь её')
+  if cfg.shop_calc ~= 1 then
+    F.card_end()
+    return
+  end
+  local fw = math.min(F.s(220), F.inner_w())
+  imgui.Spacing()
+  F.hint('Комиссия с продажи в лавку, %. Если сервер ничего не берёт, оставь пустым:')
+  F.shop_num_field('shop_tax', 'например 3', fw, 100)
+  if not F.is_rod() then
+    F.divider()
+    F.hint('В какой валюте цены лавки:')
+    local pick = F.segment('shopcur', {{'0', 'По городу'}, {'1', 'Доллары $'}, {'2', 'Vice City VC$'}}, tostring(cfg.shop_cur or 0), math.min(F.s(480), F.inner_w()))
+    if pick then
+      cfg.shop_cur = tonumber(pick)
+      dirty = true
+    end
+    F.hint('Когда игра сама пишет валюту в окне продажи, берётся она. Этот выбор — для случая, когда не написала.')
+    F.hint('Сейчас считается: ' .. (F.shop_vc() and 'VC$, с пересчётом в доллары' or 'доллары, пересчёт не нужен') .. '.')
+    imgui.Spacing()
+    F.hint('Курс: сколько долларов дают за 1 VC$:')
+    F.shop_num_field('shop_rate', 'например 91.5', fw, 1e9)
+    F.hint('Комиссия обмена VC$ на доллары, %:')
+    F.shop_num_field('shop_fee', 'например 5', fw, 100)
+    local last = tonumber(cfg.vc_rate_last) or 0
+    if last > 0 then
+      imgui.Spacing()
+      F.hint('Твой последний обмен: ' .. F.shop_rate_text(last) .. ' — это то, что пришло на руки, комиссия уже внутри.')
+      if F.button('Взять этот курс##shoprate', 200, 0) then
+        cfg.shop_rate, cfg.shop_fee = last, 0
+        F._shop_buf = nil
+        dirty = true
+      end
+    end
+  end
+  if not F.is_rod() then
+    F.divider()
+    F.hint('Покупка в лавке. Чтобы купить за VC$, их сначала покупают за доллары — тут курс другой.')
+    F.hint('Курс покупки: сколько долларов стоит 1 VC$:')
+    F.shop_num_field('shop_rate_buy', 'например 140', fw, 1e9)
+    F.hint('Комиссия при покупке VC$, %:')
+    F.shop_num_field('shop_fee_buy', 'например 5', fw, 100)
+    local lastb = tonumber(cfg.vc_rate_buy_last) or 0
+    if lastb > 0 then
+      imgui.Spacing()
+      F.hint('Твоя последняя покупка VC$: ' .. F.shop_rate_text(lastb) .. ' — столько она стоила на деле, комиссия уже внутри.')
+      if F.button('Взять этот курс##shopratebuy', 200, 0) then
+        cfg.shop_rate_buy, cfg.shop_fee_buy = lastb, 0
+        F._shop_buf = nil
+        dirty = true
+      end
+    end
+  end
+  F.divider()
+  local c = F.shop_calc('buy', 100000, 1, F.shop_vc())
+  local parts = {'Пример: лавка скупает за ' .. (F.fmt_cur(100000, c.vc) or '')}
+  if c.tax > 0 then parts[#parts + 1] = 'комиссия продажи -' .. (F.fmt_cur(c.tax, c.vc) or '') end
+  if c.rate then
+    parts[#parts + 1] = 'после обмена ' .. (F.fmt_cur(c.conv, false) or '')
+    if c.fee > 0 then parts[#parts + 1] = 'комиссия обмена -' .. (F.fmt_cur(c.fee, false) or '') end
+  end
+  parts[#parts + 1] = 'на руки ' .. (F.fmt_cur(c.total, c.total_vc) or '')
+  F.hint(table.concat(parts, '  →  '))
+  local cb = F.shop_calc('sell', 100000, 1, F.shop_vc())
+  local pb = {'Пример: лавка продаёт за ' .. (F.fmt_cur(100000, cb.vc) or '')}
+  if cb.rate then
+    pb[#pb + 1] = 'нужно долларов ' .. (F.fmt_cur(cb.conv, false) or '')
+    if cb.fee > 0 then pb[#pb + 1] = 'комиссия обмена +' .. (F.fmt_cur(cb.fee, false) or '') end
+  end
+  pb[#pb + 1] = 'к оплате ' .. (F.fmt_cur(cb.total, cb.total_vc) or '')
+  F.hint(table.concat(pb, '  →  '))
+  F.hint('Количество: всё, что лежит у тебя в инвентаре, но не больше, чем лавка скупает. Если в окне игры введено своё количество, считается оно.')
+  F.card_end()
+  F.shop_calc_look()
+end
+
+-- How the window looks: what it shows, its size, where it stands.
+function F.shop_calc_look()
+  F.card_begin('Окошко расчёта', 'Что в нём показывать, размер и место. Пока открыта эта вкладка, окошко видно с примером', 'ICON_FA_SLIDERS_H')
+  F.hint('Какой пример показывать, пока открыта вкладка:')
+  F.shop_sample = F.segment('shopsample', {{'buy', 'Продажа в лавку'}, {'sell', 'Покупка в лавке'}}, F.shop_sample or 'buy',
+    math.min(F.s(420), F.inner_w())) or F.shop_sample or 'buy'
+  imgui.Spacing()
+  F.hint('Строки:')
+  for _, r in ipairs(F.SHOP_ROWS) do
+    if F.switch('shoprow' .. r[2], r[3], F.shop_row_on(r[2]), r[4]) then F.shop_row_set(r[2], not F.shop_row_on(r[2])) end
+  end
+  F.hint('Итог показывается всегда. Без «Вычетов по строкам» комиссия и курс всё равно учтены в итоге.')
+  F.divider()
+  F.chest_flag('shopcalcpic', 'Картинка предмета', 'shop_calc_pic')
+  F.chest_flag('shopcalcsell', 'Показывать и для товаров, которые лавка продаёт', 'shop_calc_sell', 'Тогда окошко считает, сколько заплатишь ты')
+  F.divider()
+  if F.slider_row('shopscale', 'Размер', ui.shop_scale, 70, 180, '%.0f%%') then
+    cfg.shop_calc_scale = math.max(0.7, math.min(1.8, ui.shop_scale[0] / 100))
+    dirty = true
+  end
+  if F.slider_row('shopw', 'Ширина', ui.shop_w, 260, 520, '%.0f') then
+    cfg.shop_calc_w = math.floor(math.max(260, math.min(520, ui.shop_w[0])))
+    dirty = true
+  end
+  if F.slider_row('shopalpha', 'Плотность фона', ui.shop_alpha, 30, 100, '%.0f%%') then
+    cfg.shop_calc_alpha = math.max(0.3, math.min(1, ui.shop_alpha[0] / 100))
+    dirty = true
+  end
+  if F.slider_row('shopkeep', 'Сколько секунд держать после нажатия', ui.shop_keep, 10, 180, '%.0f с') then
+    cfg.shop_calc_keep = math.floor(math.max(10, math.min(180, ui.shop_keep[0])))
+    dirty = true
+  end
+  F.hint('Окошко живёт вместе с окном продажи игры: закрыл его — пропало. Секунды — на случай, когда окно продажи не открылось.')
+  imgui.Spacing()
+  if F.button('Вернуть на место##shopcalcpos', 190, 0) then
+    cfg.shop_calc_x, cfg.shop_calc_y = -1, -1
+    dirty = true
+  end
+  F.same_if_fit(F.s(190))
+  if F.button('Сбросить вид##shopcalcdef', 190, 0) then
+    for _, key in ipairs({'shop_rows', 'shop_calc_scale', 'shop_calc_alpha', 'shop_calc_w', 'shop_calc_keep', 'shop_calc_sell', 'shop_calc_pic',
+      'shop_calc_x', 'shop_calc_y'}) do cfg[key] = F.CFG_DEF[key] end
+    F.shop_calc_ui()
+    dirty = true
+  end
+  F.hint('Двигать: тяни окошко мышью, пока открыта эта вкладка.')
+  F.card_end()
 end
 
 -- Wanted items. A wish is an item and a price: to buy it not dearer, or to sell it not cheaper.
@@ -7003,7 +7644,7 @@ function F.want_bar_on()
   if hidden or cfg.want_pin ~= 1 or #F.wants == 0 then return false end
   local ok, pause = pcall(isPauseMenuActive)
   if ok and pause then return false end
-  if show and not (page == 'exp' and F.exp_tab == 'shops') then return false end
+  if show and page ~= 'shops' then return false end
   return #F.want_view() > 0
 end
 
@@ -7107,10 +7748,9 @@ end
 
 function F.draw_exp()
   F.page_head('Экспериментальный режим', 'Функции, которые ещё обкатываются')
-  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'shops', 'Лавки'}, {'mem', 'Память'}}, F.exp_tab or 'proj', nil, F.news_tabs('exp')) or F.exp_tab or 'proj'
+  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'mem', 'Память'}}, F.exp_tab or 'proj', nil, F.news_tabs('exp')) or F.exp_tab or 'proj'
   imgui.Spacing()
   if F.exp_tab == 'cars' then F.draw_cars()
-  elseif F.exp_tab == 'shops' then F.draw_shops()
   elseif F.exp_tab == 'mem' then F.draw_exp_mem()
   else F.draw_exp_proj() end
 end
@@ -7940,10 +8580,11 @@ end
 F.REP_KEEP = 12
 F.REP_STALL, F.REP_BIG = 0.1, 0.5
 F.REP_WARM = 20
-F.REP_SKIP = {rep_seen = true, open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
+F.REP_SKIP = {vc_rate_last = true, vc_rate_buy_last = true, rep_seen = true, open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
   alt_money_real = true, alt_bank = true, alt_depo = true, loc2_money = true, loc2_bank = true, loc2_depo = true}
 F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
-  bars = 'плашки смены, машины, розыска и времени', calc = 'калькулятор и закрепы'}
+  bar_want = 'плашка розыска', bar_shift = 'плашка смены', bar_time = 'плашка времени', bar_car = 'плашка машины', bar_calc = 'окошко расчёта у лавки',
+  calc = 'калькулятор и закрепы'}
 
 --@full{
 F.REP_UPD = {idle = 'ещё не проверялось', off = 'выключено', checking = 'идёт проверка', fail = 'нет связи с GitHub',
@@ -8060,6 +8701,11 @@ function F.rep_frame(t, paused)
       ping = m.pn > 0 and m.psum / m.pn or nil, ping_max = m.pn > 0 and m.pmax or nil}
     if #r.mins > 90 then table.remove(r.mins, 1) end
     if st.free and (not r.min_free or st.free < r.min_free) then r.min_free = st.free end
+    -- Where the free memory stood when the measuring began; a big jump up starts the count again.
+    if st.free then
+      if not r.free0 or st.free - (r.free_last or st.free) > 300 then r.free0, r.free0_t = st.free, os.time() end
+      r.free_last = st.free
+    end
     r.cur = {n = 0, sum = 0, stall = 0, max = 0, cost0 = r.cost, pn = 0, psum = 0, pmax = 0}
   end
 end
@@ -8445,6 +9091,16 @@ function F.rep_data()
   end
   local st = F.mem_st or {}
   d.free, d.total, d.map, d.rate = st.free, st.total, st.map, F.mem_rate
+  if r.free0 and st.free and os.time() - r.free0_t >= 1800 then
+    d.gone, d.gone_from, d.gone_t = r.free0 - st.free, r.free0, r.free0_t
+    d.rate_all = d.gone / ((os.time() - r.free0_t) / 3600)
+  end
+  -- The steepest ten minutes of the kept ones: where the memory really went.
+  local mins = r.mins
+  for i = 11, #mins do
+    local a, b = mins[i - 10], mins[i]
+    if a.free and b.free and (not d.drop or a.free - b.free > d.drop) then d.drop, d.drop_at = a.free - b.free, b.t end
+  end
   d.lua = collectgarbage('count') / 1024
   return d
 end
@@ -8453,6 +9109,10 @@ end
 function F.rep_notes(d, now, scripts, hw)
   local out = {}
   local function add(s) out[#out + 1] = s end
+  if (d.died or 0) > 0 then
+    add(string.format('fHelper падал и запускался заново: %d %s с запуска игры%s — это первое, что стоит прислать автору', d.died,
+      F.rep_plural(d.died, 'раз', 'раза', 'раз'), d.died_why and (', причина: ' .. d.died_why) or ''))
+  end
   if d.errs > 0 then add(string.format('fHelper поймал ошибок: %d (разных %d) — они перечислены ниже, это первое, что стоит прислать автору', d.errs, d.err_kinds)) end
   if d.free and d.free < F.MEM_WARN then add(string.format('У игры осталось %.0f МБ памяти: скоро фризы и квадраты вместо текста, поможет перезаход', d.free)) end
   if d.map and d.map.big < 200 and not (d.free and d.free < F.MEM_WARN) then
@@ -8506,7 +9166,8 @@ function F.rep_notes(d, now, scripts, hw)
     if tk.slow >= 3 and (not slow or tk.max > slow.max) then slow = {name = name, max = tk.max, n = tk.slow} end
   end
   if slow then
-    add(string.format('Фоновая задача fHelper «%s» бывает долгой: до %.0f мс, %d раз дольше 20 мс', slow.name, slow.max * 1000, slow.n))
+    add(string.format('Фоновая задача fHelper «%s» бывает долгой: до %.0f мс, %d %s дольше 20 мс', slow.name, slow.max * 1000, slow.n,
+      F.rep_plural(slow.n, 'раз', 'раза', 'раз')))
   end
   return out
 end
@@ -8539,7 +9200,7 @@ function F.rep_head(kind, why, d, now, hw, notes)
   end
   if d.cost_ms then L(string.format('fHelper на кадр: %.2f мс (%.1f%% времени кадра)', d.cost_ms, d.cost_share or 0)) end
   if d.free then L(string.format('Память игры: свободно %.0f из %.0f МБ, fHelper %.0f МБ', d.free, d.total or 0, d.lua)) end
-  L('Ошибок fHelper: ' .. d.errs)
+  L('Ошибок fHelper: ' .. d.errs .. ((d.died or 0) > 0 and (', падений с перезапуском: ' .. d.died) or ''))
   L('')
   if #notes == 0 then L('Что заметно: замечаний нет, fHelper работает ровно.')
   else
@@ -8556,7 +9217,12 @@ function F.rep_build(kind, why)
   pcall(function()
     for _, line in ipairs(F.ml_log_since(0)) do
       local low = line:lower()
-      if low:find('fhelp', 1, true) then mine[#mine + 1] = line
+      if low:find('fhelp', 1, true) then
+        mine[#mine + 1] = line
+        if low:find('(error)', 1, true) and low:find('fhelper:', 1, true) then
+          if low:find('script died', 1, true) then d.died = (d.died or 0) + 1
+          else d.died_why = line:gsub('^%[[^%]]*%]%s*%(error%)%s*', ''):sub(1, 200) end
+        end
       elseif low:find('(error)', 1, true) then
         bad[#bad + 1] = line
         if low:find('script died', 1, true) then now.died = (now.died or 0) + 1 end
@@ -8639,8 +9305,8 @@ function F.rep_build(kind, why)
   table.sort(parts, function(a, b) return a.p.sum > b.p.sum end)
   for _, x in ipairs(parts) do
     local p = x.p
-    L(string.format('  %s: в среднем %s, дольше всего %s, вызовов %d, дольше 20 мс %d раз',
-      F.REP_PARTS[x.name] or x.name, F.rep_ms(p.sum / math.max(1, p.n)), F.rep_ms(p.max), p.n, p.slow))
+    L(string.format('  %s: в среднем %s, дольше всего %s, вызовов %d, дольше 20 мс %d %s',
+      F.REP_PARTS[x.name] or x.name, F.rep_ms(p.sum / math.max(1, p.n)), F.rep_ms(p.max), p.n, p.slow, F.rep_plural(p.slow, 'раз', 'раза', 'раз')))
   end
   if #parts == 0 then L('  Замеров пока нет.') end
   local pages = {}
@@ -8660,8 +9326,9 @@ function F.rep_build(kind, why)
     L('Фоновая работа по задачам, самые долгие:')
     for i = 1, math.min(8, #tasks) do
       local tk = tasks[i].t
-      L(string.format('  %s: дольше всего %s%s, в среднем %s, вызовов %d, дольше 20 мс %d раз', tasks[i].name, F.rep_ms(tk.max),
-        tk.max_at and tk.max > 0.005 and (' в ' .. os.date('%H:%M:%S', tk.max_at)) or '', F.rep_ms(tk.sum / math.max(1, tk.n)), tk.n, tk.slow))
+      L(string.format('  %s: дольше всего %s%s, в среднем %s, вызовов %d, дольше 20 мс %d %s', tasks[i].name, F.rep_ms(tk.max),
+        tk.max_at and tk.max > 0.005 and (' в ' .. os.date('%H:%M:%S', tk.max_at)) or '', F.rep_ms(tk.sum / math.max(1, tk.n)), tk.n, tk.slow,
+        F.rep_plural(tk.slow, 'раз', 'раза', 'раз')))
     end
   end
   L(string.format('Своя память fHelper: %.1f МБ, картинок предметов загружено: %s', d.lua, tostring((F.mem_st or {}).pics or 0)))
@@ -8673,7 +9340,14 @@ function F.rep_build(kind, why)
       L(string.format('Самый большой свободный кусок: %.0f МБ', d.map.big))
       L(string.format('Игра держит %.0f МБ, файлы %.0f МБ, запас %.0f МБ', d.map.priv, d.map.mapped + d.map.image, d.map.reserved))
     end
-    if d.rate then L(string.format('Уходит %.0f МБ в час', d.rate)) end
+    if d.rate then L(string.format('За последние полчаса уходит %.0f МБ в час', d.rate)) end
+    if d.rate_all then
+      L(string.format('За весь замер (с %s): было %.0f МБ, ушло %.0f МБ, в среднем %.0f МБ в час',
+        os.date('%H:%M', d.gone_t), d.gone_from, d.gone, d.rate_all))
+    end
+    if d.drop and d.drop >= 50 then
+      L(string.format('Самая быстрая убыль за последние полтора часа: %.0f МБ за 10 минут к %s', d.drop, os.date('%H:%M', d.drop_at)))
+    end
     pcall(function()
       local used, limit = F.mem_game()
       if used then L(string.format('Мир игры (модели и текстуры): %.0f из %.0f МБ', used, limit or 0)) end
@@ -8685,7 +9359,11 @@ function F.rep_build(kind, why)
   local errs = {}
   for _, e in pairs(r.errs) do errs[#errs + 1] = e end
   table.sort(errs, function(a, b) return a.idx < b.idx end)
-  if #errs == 0 then L('Ни одной с запуска.') end
+  if #errs == 0 then L('Пойманных ни одной с запуска скрипта.') end
+  if (d.died or 0) > 0 then
+    L(string.format('Падений с перезапуском за этот запуск игры: %d%s. Строки — внизу, в разделе про moonloader.log',
+      d.died, d.died_why and (', последняя причина: ' .. d.died_why) or ''))
+  end
   for _, e in ipairs(errs) do
     L(string.format('  [%s] %s: %s%s', os.date('%H:%M:%S', e.first), e.where, e.text,
       e.n > 1 and string.format('  (всего %d, последний раз в %s)', e.n, os.date('%H:%M:%S', e.last)) or ''))
@@ -9131,6 +9809,20 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.13', '12.11.2026', {
+    {'add', 'Лавки: окошко расчёта — нажми на предмет в лавке, и рядом видно цену, комиссию, курс VC$ к доллару и сколько придёт на руки'},
+    {'add', 'Лавки: комиссия продажи, курс и комиссия обмена настраиваются, курс можно взять из своего последнего обмена'},
+    {'add', 'Лавки: в окошке — сколько лавка скупает, сколько у тебя есть, цена за штуку и итог за всё твоё количество уже с вычетом комиссии и курса'},
+    {'add', 'Лавки: окошко считает и покупку — сколько лавка продаёт, на сколько штук хватит наличных и сколько это в долларах по курсу покупки'},
+    {'add', 'Лавки: окошко настраивается целиком — какие строки показывать, размер, ширина, плотность фона, место и сколько секунд держать'},
+    {'chg', 'Лавки: вкладка переехала из «Эксперимента» в основное меню'},
+  }},
+  {'1.19.12', '12.11.2026', {
+    {'fix', 'Скрипт больше не падает на окне «Добро пожаловать», если в библиотеке значков нет нужного значка'},
+    {'fix', 'Настройки: отчёт о работе считает и падения самого fHelper с перезапуском, с причиной'},
+    {'chg', 'Настройки: в отчёте память игры показана за весь замер и самая быстрая убыль за 10 минут, а не только за последние полчаса'},
+    {'chg', 'Настройки: в отчёте плашки смены, машины, розыска и времени замеряются по отдельности'},
+  }},
   {'1.19.11', '12.11.2026', {
     {'add', 'Лавки: «Выгодно перепродать» — где купить предмет дешевле, чем его скупает другая лавка, с выгодой за штуку и маршрутом'},
     {'add', 'Лавки: у каждой цены видно, как она стоит против других лавок — «дешевле всех» или на сколько процентов дороже лучшей'},
@@ -9420,7 +10112,7 @@ end
 -- and its tab carry a pulsing dot, and the first visit shows what changed there, once.
 F.NEWS_WHERE = {
   {'Лесоруб', 'income:work'}, {'Смена', 'income:work'}, {'Смены', 'income:work'}, {'Доходы', 'income'},
-  {'Память', 'exp:mem'}, {'Лавки', 'exp:shops'}, {'Машины', 'exp:cars'},
+  {'Память', 'exp:mem'}, {'Лавки', 'shops'}, {'Машины', 'exp:cars'},
   {'Скрипты', 'scripts'}, {'Настройки', 'settings'}, {'Библиотека', 'items'}, {'Предметы', 'items'},
   {'Сундуки', 'chests'}, {'Чат', 'chat'}, {'Бинды', 'binds'}, {'Заметки', 'notes'}, {'Калькулятор', 'calc'},
   {'Крафт', 'craft'}, {'Клавиши', 'hotkeys'}, {'Экран', 'screen'}, {'Журнал', 'logs'}, {'Главная', 'home'},
@@ -9428,7 +10120,7 @@ F.NEWS_WHERE = {
 F.NEWS_TABS = {
   income = {over = 'Обзор', pay = 'Пейдеи', work = 'Работа', sell = 'Продажи', buy = 'Покупки', spend = 'Расходы',
     other = 'Прочее', items = 'Предметы'},
-  exp = {proj = 'Проект', cars = 'Машины', shops = 'Лавки', mem = 'Память'},
+  exp = {proj = 'Проект', cars = 'Машины', mem = 'Память'},
 }
 
 function F.note_where(row)
@@ -9706,7 +10398,7 @@ function F.news_frame()
       F._wel_want = nil
       local nick = live.online and live.nick ~= '—' and live.nick or nil
       local lines = F.welcome_lines(now, w.last)
-      modal = {kind = 'welcome', wide = true, icon = 'ICON_FA_HAND_SPARKLES', lines = lines, close = 'Поехали',
+      modal = {kind = 'welcome', wide = true, icon = 'ICON_FA_HAND_PEACE', lines = lines, close = 'Поехали',
         title = 'Добро пожаловать' .. (nick and (', ' .. nick) or ''),
         body_h = math.max(110, math.min(300, 30 + #lines * 44)),
         btn = F.news_map().n > 0 and {label = 'Что нового', w = 150, fn = F.patch_open} or nil}
@@ -9846,12 +10538,20 @@ function F.led_exchange(raw)
   local n = F.led_num
   local v, d = s:match('Вы успешно приобрели%s*:CASHV:([%d][%d%.,]*)%s*за%s*:CASH:([%d][%d%.,]*)')
   if v then
+    if (n(v) or 0) > 0 and (n(d) or 0) > 0 then
+      cfg.vc_rate_buy_last = math.floor(n(d) / n(v) * 10000 + 0.5) / 10000
+      dirty = true
+    end
     F.led_add('buy', n(d), 'Покупка VC$', 0, F.fmt_cur(n(v), true) or '', 'sa')
     F.led_add('other', n(v), 'Обмен: из $', 0, F.fmt_cur(n(d), false) or '', 'vc')
     return true
   end
   v, d = s:match('Вы успешно обменяли%s*:CASHV:([%d][%d%.,]*)%s*на%s*:CASH:([%d][%d%.,]*)')
   if v then
+    if (n(v) or 0) > 0 and (n(d) or 0) > 0 then
+      cfg.vc_rate_last = math.floor(n(d) / n(v) * 10000 + 0.5) / 10000
+      dirty = true
+    end
     F.led_add('sell', n(d), 'Обмен VC$', 0, F.fmt_cur(n(v), true) or '', 'sa')
     F.led_add('buy', n(v), 'Обмен: в $', 0, F.fmt_cur(n(d), false) or '', 'vc')
     return true
@@ -17677,6 +18377,7 @@ function F.draw_contents(ww, wh)
   elseif page == 'craft' then draw_id, draw_fn = '##craft', F.draw_craft
   elseif page == 'hotkeys' then draw_id, draw_fn = '##hot', F.draw_hotkeys
   elseif page == 'screen' then draw_id, draw_fn = '##screen', F.draw_screen
+  elseif page == 'shops' then draw_id, draw_fn = '##shops', F.draw_shops_page
   elseif page == 'exp' then draw_id, draw_fn = '##exp', F.draw_exp
   elseif page == 'logs' then draw_id, draw_fn = '##logs', F.draw_logs_page
   elseif page == 'settings' then draw_id, draw_fn = '##setp', F.draw_settings_page
@@ -17776,16 +18477,19 @@ if imgui_ok then
   F.pin_frame = imgui.OnFrame(function() return F.pins_on() end, F.rep_wrap('calc', F.draw_pins))
   F.pin_frame.HideCursor = true
   F.pin_frame.LockPlayer = false
-  F.want_frame = imgui.OnFrame(function() return F.want_bar_on() end, F.rep_wrap('bars', F.draw_want_bar))
-  F.shift_frame = imgui.OnFrame(function() return F.shift_bar_on() end, F.rep_wrap('bars', F.draw_shift_bar))
+  F.want_frame = imgui.OnFrame(function() return F.want_bar_on() end, F.rep_wrap('bar_want', F.draw_want_bar))
+  F.shift_frame = imgui.OnFrame(function() return F.shift_bar_on() end, F.rep_wrap('bar_shift', F.draw_shift_bar))
   F.want_frame.HideCursor = true
   F.want_frame.LockPlayer = false
   F.shift_frame.HideCursor = true
   F.shift_frame.LockPlayer = false
-  F.time_frame = imgui.OnFrame(function() return F.time_on() end, F.rep_wrap('bars', F.draw_time))
+  F.time_frame = imgui.OnFrame(function() return F.time_on() end, F.rep_wrap('bar_time', F.draw_time))
   F.time_frame.HideCursor = true
   F.time_frame.LockPlayer = false
-  F.car_frame = imgui.OnFrame(function() return F.car_bar_on() end, F.rep_wrap('bars', F.draw_car_bar))
+  F.car_frame = imgui.OnFrame(function() return F.car_bar_on() end, F.rep_wrap('bar_car', F.draw_car_bar))
+  F.shop_calc_frame = imgui.OnFrame(function() return F.shop_calc_on() end, F.rep_wrap('bar_calc', F.draw_shop_calc))
+  F.shop_calc_frame.HideCursor = true
+  F.shop_calc_frame.LockPlayer = false
   F.car_frame.HideCursor = true
   F.car_frame.LockPlayer = false
   F.toast_frame = imgui.OnFrame(function() return F.toast_on() end, F.rep_wrap('toasts', F.draw_toasts))
@@ -17922,7 +18626,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 38
+F.BUILD = 40
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -18394,6 +19098,7 @@ function main()
     ui.time_scale[0] = cfg.time_scale * 100
     ui.shift_scale[0] = cfg.shift_scale * 100
     ui.shift_alpha[0] = cfg.shift_alpha * 100
+    F.shop_calc_ui()
     F.toast_ui()
   end
   if cfg.off == 1 then
@@ -18579,6 +19284,8 @@ function onSendPacket(id, bs)
     pcall(F.car_sent, bs)
     pcall(raknetBitStreamResetReadPointer, bs)
     pcall(F.gas_sent, bs)
+    pcall(raknetBitStreamResetReadPointer, bs)
+    pcall(F.shop_sent, bs)
     pcall(raknetBitStreamResetReadPointer, bs)
   end
 end
