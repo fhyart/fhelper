@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.14'
+local VER = '1.19.15'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(41)
+script_version_number(42)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -120,6 +120,8 @@ local cfg = {
   time_y = 94,
   time_scale = 1,
   car_on = 1,
+  bag_on = 1,
+  smooth = 1,
   car_bar = 1,
   inc_per = 1,
   inc_from = 0,
@@ -164,6 +166,7 @@ local cfg = {
   shop_calc_y = -1,
   vc_rate_last = 0,
   shop_rate_buy = 0,
+  calc_ex = 0,
   shop_fee_buy = 0,
   vc_rate_buy_last = 0,
   chest_on = 1,
@@ -218,7 +221,7 @@ local CFG_NUM = {
   {'time_on', 0, 1}, {'time_mode', 0, 2}, {'time_utc', -12, 14}, {'time_clock', 0, 1}, {'time_sec', 0, 1},
   {'time_date', 0, 1}, {'time_wday', 0, 1}, {'time_zone', 0, 1}, {'time_h12', 0, 1}, {'time_fmt', 0, 3},
   {'time_place', 0, 1}, {'time_x', 0, 100}, {'time_y', 0, 100}, {'time_scale', 0.6, 2},
-  {'car_on', 0, 1}, {'car_bar', 0, 1},
+  {'car_on', 0, 1}, {'car_bar', 0, 1}, {'bag_on', 0, 1}, {'smooth', 0, 1},
   {'inc_per', 1, 7}, {'inc_from', 0, 999999999999}, {'inc_to', 0, 999999999999},
   {'toast_on', 0, 1}, {'toast_pay', 0, 1}, {'toast_inc', 0, 1}, {'toast_exp', 0, 1}, {'toast_item', 0, 1},
   {'toast_car', 0, 1}, {'toast_sys', 0, 1}, {'toast_min', 0, 1e12}, {'toast_place', 0, 4},
@@ -228,7 +231,7 @@ local CFG_NUM = {
   {'upd_on', 0, 1}, {'upd_skip', 0, 1e9}, {'shop_on', 0, 1}, {'shop_days', 1, 14},
   {'shop_calc', 0, 1}, {'shop_tax', 0, 100}, {'shop_rate', 0, 1e9}, {'shop_fee', 0, 100}, {'shop_cur', 0, 2},
   {'shop_calc_x', -1, 10000}, {'shop_calc_y', -1, 10000}, {'vc_rate_last', 0, 1e9},
-  {'shop_rate_buy', 0, 1e9}, {'shop_fee_buy', 0, 100}, {'vc_rate_buy_last', 0, 1e9},
+  {'shop_rate_buy', 0, 1e9}, {'calc_ex', 0, 2}, {'shop_fee_buy', 0, 100}, {'vc_rate_buy_last', 0, 1e9},
   {'shop_rows', 0, 127}, {'shop_calc_scale', 0.7, 1.8}, {'shop_calc_alpha', 0.3, 1}, {'shop_calc_w', 260, 520},
   {'shop_calc_keep', 10, 180}, {'shop_calc_sell', 0, 1}, {'shop_calc_pic', 0, 1},
   {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},  {'toast_chest', 0, 1},
@@ -327,6 +330,7 @@ if imgui_ok then
   ui.time_y = imgui.new.float(94)
   ui.time_scale = imgui.new.float(100)
   ui.car_q = imgui.new.char[80]()
+  ui.bag_q = imgui.new.char[80]()
   ui.car_alias = imgui.new.char[60]()
   ui.item_q = imgui.new.char[80]()
   ui.shop_q = imgui.new.char[80]()
@@ -341,6 +345,8 @@ if imgui_ok then
   ui.shop_keep = imgui.new.float(40)
   ui.want_q = imgui.new.char[80]()
   ui.want_price = imgui.new.char[32]()
+  ui.want_ench = imgui.new.char[8]()
+  ui.want_qual = imgui.new.char[8]()
   ui.shift_goal = imgui.new.char[32]()  ui.shift_scale = imgui.new.float(100)
   ui.shift_alpha = imgui.new.float(90)
   ui.wood_pw = imgui.new.char[32]()
@@ -364,12 +370,12 @@ local NAV = {
   {'chat', 'ICON_FA_COMMENTS', 'Чат'},
   {'items', 'ICON_FA_BOXES', 'Предметы'},
   {'shops', 'ICON_FA_STORE', 'Лавки'},
+  {'store', 'ICON_FA_WAREHOUSE', 'Хранилище'},
   {'scripts', 'ICON_FA_CODE', 'Скрипты'},
   {'binds', 'ICON_FA_BOLT', 'Бинды'},
   {'notes', 'ICON_FA_STICKY_NOTE', 'Заметки'},
   {'calc', 'ICON_FA_CALCULATOR', 'Калькулятор'},
   {'craft', 'ICON_FA_HAMMER', 'Крафт'},
-  {'hotkeys', 'ICON_FA_KEYBOARD', 'Клавиши'},
   {'screen', 'ICON_FA_DESKTOP', 'Экран'},
   {'exp', 'ICON_FA_FLASK', 'Эксперимент'},
   {'logs', 'ICON_FA_FILE_ALT', 'Журнал'},
@@ -2240,6 +2246,7 @@ function F.hook_chat()
     local ok, err = pcall(F.time_sync, text)
     if not ok then F.feed_err('время', err) end
     ok, err = pcall(F.shop_dialog, title, text)
+    pcall(F.bag_dialog, text)
     if not ok then F.feed_err('лавки', err) end
   end
   -- Any answer to a dialog (a button, Esc) closes it: the calc by the stall goes with it.
@@ -3698,6 +3705,80 @@ function F.segment(id, items, cur, w, dots)
   return pick
 end
 
+-- Sections of a page: a row of buttons in place of one long sheet. One section is on screen
+-- at a time, so a page is not scrolled through. Returns the key of the chosen one; the choice
+-- lives until the script restarts. A short row does not stretch over the whole page.
+-- Smooth scrolling. ImGui moves a list by a whole step the moment the wheel turns. Here the
+-- list takes the wheel itself (its window is opened with F.smooth_flag(), so ImGui leaves the
+-- wheel alone): a step becomes a target, and the list glides to it over a few frames. Called
+-- right after the BeginChild of a list. ImGui applies a new position at the next frame, so
+-- the wheel must not be left to it: its own step would show for one frame before the glide.
+-- The scrollbar and a jump made by the page itself end the glide.
+F.SMOOTH_RATE = 14
+
+function F.smooth_flag()
+  return cfg.smooth == 1 and (imgui.WindowFlags.NoScrollWithMouse or 0) or 0
+end
+
+function F.smooth(key)
+  if cfg.smooth ~= 1 then return end
+  F._smooth = F._smooth or {}
+  local st = F._smooth[key]
+  local cur = imgui.GetScrollY()
+  if not st then
+    st = {set = cur}
+    F._smooth[key] = st
+  end
+  local io = imgui.GetIO()
+  local wheel = tonumber(io.MouseWheel) or 0
+  if wheel ~= 0 and imgui.IsWindowHovered() then
+    -- The same step ImGui makes: five lines, but not more than two thirds of the window.
+    local step = math.floor(math.min(5 * imgui.GetFontSize(), imgui.GetWindowHeight() * 0.67))
+    st.target = math.max(0, math.min(imgui.GetScrollMaxY(), (st.target or cur) - wheel * step))
+  elseif st.target and (imgui.IsMouseDown(0) or math.abs(cur - st.set) > 1.5) then
+    st.target = nil
+  end
+  if not st.target then
+    st.set = cur
+    return
+  end
+  local d = st.target - cur
+  if math.abs(d) < 1 then
+    st.set, st.target = st.target, nil
+    imgui.SetScrollY(st.set)
+    return
+  end
+  local dt = math.max(0.001, math.min(0.1, tonumber(io.DeltaTime) or 0.016))
+  local move = d * (1 - math.exp(-dt * F.SMOOTH_RATE))
+  if math.abs(move) < 1 then move = d > 0 and 1 or -1 end
+  st.set = cur + move
+  imgui.SetScrollY(st.set)
+end
+
+function F.sections(id, list, dots)
+  F._sec = F._sec or {}
+  local cur = F._sec[id]
+  local known = false
+  for i = 1, #list do
+    if list[i][1] == cur then known = true break end
+  end
+  if not known then cur = list[1][1] end
+  local w = math.min(F.inner_w(), #list * F.s(176))
+  local pick = F.segment('sec' .. id, list, cur, w, dots)
+  if pick then
+    cur = pick
+    F.hot_field = nil
+  end
+  F._sec[id] = cur
+  imgui.Spacing()
+  return cur
+end
+
+function F.section_set(id, key)
+  F._sec = F._sec or {}
+  F._sec[id] = key
+end
+
 function F.pill_w(text)
   return F.text_w(font_main, text) + F.s(26)
 end
@@ -3989,14 +4070,21 @@ function F.paint_top(ww, wp, side_w)
   if cfg.rep_seen ~= 1 then F.pulse_dot(bx + 25, iy + 7, 4) end
 end
 
+function F.side_row_h(h, wide, n)
+  local card = wide and F.s(62) or 0
+  local ih = math.floor((h - 16 - card) / n) - 3
+  if card > 0 and ih < F.s(30) then ih = math.floor((h - 16) / n) - 3 end
+  return math.max(F.s(18), math.min(F.s(40), ih))
+end
+
 function F.paint_side(h, wide)
   local wp = imgui.GetWindowPos()
   local dl = imgui.GetWindowDrawList()
   local pad = 10
   local bw = imgui.GetWindowWidth() - pad * 2
-  -- Rows shrink so the whole list fits, on a small screen and at a big scale too.
-  local room = h - 16 - (wide and F.s(62) or 0)
-  local ih = math.max(F.s(28), math.min(F.s(40), math.floor(room / #NAV) - 3))
+  -- Rows shrink so the whole list fits, on a small screen and at a big scale too. When they
+  -- would get too tight, the status card at the bottom gives its place to them.
+  local ih = F.side_row_h(h, wide, #NAV)
   local y = wp.y + 10
   for i = 1, #NAV do
     local item = NAV[i]
@@ -4371,8 +4459,15 @@ function F.bind_arg_title(b)
   return b.arg
 end
 
+F.BIND_SECS = {{'binds', 'Бинды'}, {'keys', 'Клавиши'}}
+
 function F.draw_binds()
-  F.page_head('Бинды', 'Клавиша или сочетание: открыть раздел, отправить команду или запустить скрипт')
+  F.page_head('Бинды', 'Свои бинды и клавиши fHelper: открыть раздел, отправить команду, запустить скрипт')
+  if F.sections('binds', F.BIND_SECS) == 'keys' then
+    F.bind_hot = false
+    F.hotkeys_body()
+    return
+  end
   local editing = F.bind_edit
   F.card_begin(editing and 'Изменить бинд' or 'Новый бинд', nil, editing and 'ICON_FA_PEN' or 'ICON_FA_PLUS_CIRCLE')
   local waiting = capture and capture_what == 'bind'
@@ -4524,6 +4619,10 @@ end
 
 function F.draw_hotkeys()
   F.page_head('Клавиши', 'Открытие меню, скрытие интерфейса и управление')
+  F.hotkeys_body()
+end
+
+function F.hotkeys_body()
   F.card_begin('Горячие клавиши', nil, 'ICON_FA_KEYBOARD')
   local set, clear, waiting = F.key_row('menu', 'Открыть меню', 'То же, что команда /fhelp', cfg.key, 'menu')
   if set then
@@ -4791,8 +4890,19 @@ function F.apply_limiter(force)
   end
 end
 
+F.SCREEN_SECS = {{'hud', 'Плашка FPS'}, {'time', 'Время'}, {'gfx', 'Графика'}}
+
 function F.draw_screen()
   F.page_head('Экран', 'Плашка с FPS и трафиком, время, графика')
+  local sec = F.sections('screen', F.SCREEN_SECS)
+  if sec == 'time' then
+    F.time_card()
+    return
+  end
+  if sec == 'gfx' then
+    F.screen_gfx()
+    return
+  end
   F.card_begin('Плашка', 'Её можно перетащить мышью, пока меню открыто', 'ICON_FA_TACHOMETER_ALT')
   if F.switch('hfps', 'FPS', cfg.hud_fps == 1) then
     cfg.hud_fps = cfg.hud_fps == 1 and 0 or 1
@@ -4839,7 +4949,9 @@ function F.draw_screen()
     end
   end
   F.card_end()
-  F.time_card()
+end
+
+function F.screen_gfx()
   F.card_begin('Графика', nil, 'ICON_FA_DESKTOP')
   if F.switch('drawon', 'Своя дальность прорисовки', cfg.draw_on == 1) then
     cfg.draw_on = cfg.draw_on == 1 and 0 or 1
@@ -5165,6 +5277,24 @@ function F.json_value(s, p)
   return tonumber(num), p + #num
 end
 
+-- The body of an inventory event as a table. The cars, the stalls, the own inventory, the
+-- chests and the sawmill all read the same packet: it is parsed once and shared, and nobody
+-- changes what comes out. The cache lives for one packet.
+function F.inv_json(body)
+  local c = F._inv_json
+  if not c then
+    c = {}
+    F._inv_json = c
+  end
+  local v = c[body]
+  if v ~= nil then return v or nil end
+  v = F.json_value(body, 1)
+  if type(v) == 'table' and v.action == nil then v = v[1] end
+  if type(v) == 'string' then v = F.json_value(v, 1) end
+  c[body] = v == nil and false or v
+  return v
+end
+
 function F.car_new_inv()
   F.inv = {blocks = {}, buttons = 0, at = 0}
 end
@@ -5202,6 +5332,23 @@ function F.car_info(d)
   return true
 end
 
+-- One slot of any block of the inventory window, as fHelper keeps it. enchant is the level of
+-- sharpening, background the colour of the cell (it goes with the class of quality), strength
+-- the wear in percent.
+function F.inv_slot(row, item)
+  local r = {
+    item = item, amount = tonumber(row.amount) or 1,
+    text = row.text ~= nil and F.game_text(tostring(row.text)) or '', time = tonumber(row.time) or 0,
+  }
+  local ench = math.floor(tonumber(row.enchant) or 0)
+  if ench > 0 then r.ench = ench end
+  local bg = tonumber(row.background)
+  if bg and bg ~= 0 then r.bg = string.format('%06X', math.floor((bg % 4294967296) / 256)) end
+  local str = tonumber(row.strength)
+  if str then r.str = math.floor(str) end
+  return r
+end
+
 function F.car_merge(id, act, rows)
   local inv, now = F.inv, os.clock()
   local b = inv.blocks[id]
@@ -5217,10 +5364,7 @@ function F.car_merge(id, act, rows)
     if slot then
       local item = tonumber(row.item)
       if item and item > 0 then
-        b.slots[slot] = {
-          item = item, amount = tonumber(row.amount) or 1,
-          text = row.text ~= nil and F.game_text(tostring(row.text)) or '', time = tonumber(row.time) or 0,
-        }
+        b.slots[slot] = F.inv_slot(row, item)
       else
         b.slots[slot] = nil
       end
@@ -5253,9 +5397,7 @@ function F.car_packet(text)
     return
   end
   for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
-    local v = F.json_value(body, 1)
-    if type(v) == 'table' and v.action == nil then v = v[1] end
-    if type(v) == 'string' then v = F.json_value(v, 1) end
+    local v = F.inv_json(body)
     if type(v) == 'table' then F.car_event(v, body) end
   end
 end
@@ -5390,7 +5532,8 @@ function F.car_store(car)
       if open then new.total = new.total + 1 end
     end
     for slot, r in pairs(b.slots) do
-      new.items[#new.items + 1] = {slot = slot, item = r.item, amount = r.amount, text = r.text, time = r.time}
+      new.items[#new.items + 1] = {slot = slot, item = r.item, amount = r.amount, text = r.text, time = r.time,
+        ench = r.ench, bg = r.bg, str = r.str}
     end
     table.sort(new.items, function(x, y) return x.slot < y.slot end)
     F.car_diff(car, id, car.blocks[id], new, now)
@@ -5426,7 +5569,7 @@ function F.car_save()
     for id, b in pairs(c.blocks) do
       row('B', c.id, id, b.at, b.total)
       for _, r in ipairs(b.items) do
-        row('I', c.id, id, r.slot, r.item, r.amount, r.time, r.text)
+        row('I', c.id, id, r.slot, r.item, r.amount, r.time, r.text, r.ench or '', r.bg or '', r.str or '')
       end
     end
     for _, l in ipairs(c.log) do
@@ -5460,6 +5603,7 @@ function F.car_load()
       if b and item then
         b.items[#b.items + 1] = {
           slot = tonumber(c[4]) or 0, item = item, amount = tonumber(c[6]) or 1, time = tonumber(c[7]) or 0, text = c[8] or '',
+          ench = tonumber(c[9]), bg = (c[10] or '') ~= '' and c[10] or nil, str = tonumber(c[11]),
         }
       end
     elseif car and c[1] == 'L' then
@@ -5569,7 +5713,7 @@ end
 function F.car_scan()
   if F.car_busy then return end
   if cfg.car_on ~= 1 then
-    F.notify('Сканер машин выключен в разделе «Эксперимент»')
+    F.notify('Сканер машин выключен: Хранилище → Машины → Сканер')
     return
   end
   if not F.inv.open then
@@ -5704,13 +5848,15 @@ function F.car_group(car, blocks)
     local b = car.blocks[id]
     if b then
       for _, r in ipairs(b.items) do
-        local key = r.item .. '|' .. r.text
+        local key = r.item .. '|' .. r.text .. '|' .. (r.ench or 0) .. '|' .. (r.bg or '') .. '|' .. tostring(r.q) .. '|' .. (r.str or '')
         local e = at[key]
         if e then
-          e.amount = e.amount + r.amount
+          e.amount, e.slots = e.amount + r.amount, e.slots + 1
+          e.noamt = e.noamt or r.noamt
           if r.time > 0 and (e.time == 0 or r.time < e.time) then e.time = r.time end
         else
-          e = {it = F.car_lib(r.item), amount = r.amount, text = r.text, time = r.time}
+          e = {it = F.car_lib(r.item), amount = r.amount, text = r.text, time = r.time, slots = 1, noamt = r.noamt,
+            ench = r.ench, bg = r.bg, str = r.str, q = r.q, qn = r.qn, block = id, where = car.where or F.car_name(car)}
           at[key] = e
           out[#out + 1] = e
         end
@@ -5729,20 +5875,36 @@ function F.car_item(e, x, y, w, h, hovered)
   F.lib_pic(it, x + (w - sz) / 2, y + F.s(6), sz)
   local one, two = F.lib_lines(it, w - F.s(10))
   local ty = y + F.s(66)
-  F.text_at(font_main, 14, x + (w - F.text_w(font_main, one) * 0.875) / 2, ty, F.col('text'), one)
-  F.text_at(font_main, 14, x + (w - F.text_w(font_main, two) * 0.875) / 2, ty + F.s(16), F.col('text', 170), two)
-  local badge = e.amount > 1 and ('x' .. tostring(e.amount)) or e.text
+  F.text_at(font_main, 14, x + (w - (it.w1 or 0)) / 2, ty, F.col('text'), one)
+  if two ~= '' then F.text_at(font_main, 14, x + (w - (it.w2 or 0)) / 2, ty + F.s(16), F.col('text', 170), two) end
+  local badge = e.amount > 1 and ('x' .. tostring(e.amount) .. (e.noamt and '+' or '')) or e.text
+  if e.noamt and e.amount <= 1 then badge = e.slots > 1 and ('слотов: ' .. e.slots) or '' end
   if badge ~= '' then
-    badge = F.fit_text(font_main, badge, w - F.s(20))
-    local bw = F.text_w(font_main, badge) * 0.875 + F.s(12)
+    if e._bsrc ~= badge or e._bw_at ~= w or e._bscale ~= cfg.scale then
+      e._bsrc, e._bw_at, e._bscale = badge, w, cfg.scale
+      e._badge = F.fit_text(font_main, badge, w - F.s(20))
+      e._bw = F.text_w(font_main, e._badge) * 0.875 + F.s(12)
+    end
+    badge = e._badge
+    local bw = e._bw
     F.round_rect(x + w - bw - F.s(4), y + F.s(4), bw, F.s(20), F.col('accent', 225), nil, 6)
     F.text_at(font_main, 14, x + w - bw + F.s(2), y + F.s(6), F.col('ink'), badge)
   end
+  if e.ench then
+    local up = '+' .. e.ench
+    if e._uw_s ~= cfg.scale then e._uw, e._uw_s = F.text_w(font_main, up) * 0.875 + F.s(10), cfg.scale end
+    local uw = e._uw
+    F.round_rect(x + F.s(4), y + F.s(4), uw, F.s(20), F.col('side', 235), F.col('accent', 160), 6)
+    F.text_at(font_main, 14, x + F.s(9), y + F.s(6), F.col('accent_hi'), up)
+  end
   if hovered then
-    local tip = it.name
-    if e.amount > 1 then tip = tip .. '\nКоличество: ' .. tostring(e.amount) end
+    local tip = it.name .. (e.ench and (' +' .. e.ench) or '')
+    if e.noamt then tip = tip .. '\nКоличество игра ещё не прислала'
+    elseif e.amount > 1 then tip = tip .. '\nКоличество: ' .. tostring(e.amount) end
+    local q = F.shop_q_text(e)
+    if q then tip = tip .. '\n' .. q end
     if e.time > 0 then tip = tip .. '\n' .. F.car_left(e.time) end
-    F.tip(tip .. '\nНажми, чтобы скопировать код')
+    F.tip(tip .. '\nНажми, чтобы осмотреть')
   end
 end
 
@@ -5754,12 +5916,17 @@ function F.car_grid(prefix, list)
   local ch = math.floor(F.s(106))
   local p = imgui.GetCursorScreenPos()
   local rows = math.ceil(#list / cols)
-  for i = 1, #list do
+  -- Only the rows inside the window are drawn: a full inventory is hundreds of cards.
+  local top = imgui.GetWindowPos().y
+  local bottom = top + (imgui.GetWindowHeight and imgui.GetWindowHeight() or 100000)
+  local first = math.max(0, math.floor((top - p.y) / (ch + gap)))
+  local last = math.min(rows - 1, math.floor((bottom - p.y) / (ch + gap)))
+  for i = first * cols + 1, math.min(#list, (last + 1) * cols) do
     local x = p.x + (i - 1) % cols * (cw + gap)
     local y = p.y + math.floor((i - 1) / cols) * (ch + gap)
     local clicked, hovered = F.hotspot(prefix .. i, x, y, cw, ch)
     F.car_item(list[i], x, y, cw, ch, hovered)
-    if clicked then F.note_copy(list[i].it.token) end
+    if clicked then F.store_open(list[i]) end
   end
   F.advance(p, w, math.max(1, rows * (ch + gap) - gap))
 end
@@ -5927,7 +6094,552 @@ function F.car_found(q)
   F.card_end()
 end
 
+-- The player's own inventory. The server sends its blocks whenever the inventory window opens:
+-- 1 the bag, 2 what is worn, 22 skins, 10 weapons, 17 improvements. fHelper keeps the last
+-- list of each, so it can be looked through and searched with the game's window closed.
+F.BAG_BLOCKS = {
+  {1, 'Инвентарь', 'ICON_FA_BOX_OPEN'}, {2, 'Надето', 'ICON_FA_TSHIRT'}, {22, 'Скины', 'ICON_FA_USER'},
+  {10, 'Оружие', 'ICON_FA_CROSSHAIRS'}, {17, 'Улучшения', 'ICON_FA_ARROW_CIRCLE_UP'},
+}
+F.BAG_NAME = {}
+for _, b in ipairs(F.BAG_BLOCKS) do F.BAG_NAME[b[1]] = b[2] end
+F.BAG_LOG = 80
+F.BAG_MERGE = 600
+F.bag = {blocks = {}, log = {}, rev = 0}
+F.bag_live = {blocks = {}, at = 0}
+
+function F.bag_dump(body)
+  F._bag_dumps = (F._bag_dumps or 0) + 1
+  if F._bag_dumps > 12 then return end
+  pcall(function()
+    local f = io.open(F.cfg_dir() .. '\\fhelp_bag_debug.txt', F._bag_dumps == 1 and 'w' or 'a')
+    if not f then return end
+    f:write(body:sub(1, 2500), '\n')
+    f:close()
+  end)
+end
+
+function F.bag_packet(text)
+  if cfg.bag_on ~= 1 or not text:find('playerInventory', 1, true) then return end
+  for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
+    local t = tonumber(body:match('"type"%s*:%s*(%d+)'))
+    if t and F.BAG_NAME[t] and body:find('"items"', 1, true) then
+      local v = F.inv_json(body)
+      if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table'
+        and F.BAG_NAME[tonumber(v.data.type) or 0] and type(v.data.items) == 'table' then
+        F.bag_dump(body)
+        F.bag_merge(tonumber(v.data.type), v.action, v.data.items)
+      end
+    end
+  end
+end
+
+function F.bag_merge(id, act, rows)
+  local live, now = F.bag_live, os.clock()
+  local b = live.blocks[id]
+  -- A whole list comes in parts right after each other; a later one is a new snapshot.
+  -- The server sends the whole list once, when the player enters the game; after that only the
+  -- slots that changed (action 2), often with nothing but their marks. So a change without a
+  -- list goes on top of what is kept from the last time, or starts a list of the slots seen.
+  if act == 0 and (not b or b.partial or now - b.at > 1) then
+    b = {slots = {}, known = {}, prev = b and b.slots}
+    live.blocks[id] = b
+  elseif not b then
+    b = {slots = {}, known = {}}
+    local kept = F.bag.blocks[id]
+    if kept then
+      b.partial, b.total = kept.partial, kept.total
+      for _, r in ipairs(kept.items) do
+        b.slots[r.slot] = {item = r.item, amount = r.amount, text = r.text, time = r.time, ench = r.ench, bg = r.bg, str = r.str,
+          q = r.q, qn = r.qn, noamt = r.noamt}
+        b.known[r.slot] = true
+      end
+    else
+      b.partial = true
+    end
+    live.blocks[id] = b
+  end
+  for _, row in pairs(rows) do
+    local slot = type(row) == 'table' and tonumber(row.slot)
+    if slot then
+      local item = tonumber(row.item)
+      if item and item > 0 then
+        local r = F.inv_slot(row, item)
+        -- What the game's window said about the same thing in the same slot stays with it.
+        local o = b.slots[slot] or (b.prev and b.prev[slot])
+        if o and o.item == r.item and o.ench == r.ench then r.q, r.qn = o.q, o.qn end
+        -- A change names only what changed: what it leaves out stays as it was.
+        local same = act == 2 and o and o.item == item and o or nil
+        if row.amount == nil then
+          if same then r.amount, r.noamt = same.amount, same.noamt
+          elseif act == 2 then r.noamt = true end
+        end
+        if same then
+          if row.enchant == nil then r.ench = same.ench end
+          if row.background == nil then r.bg = same.bg end
+          if row.strength == nil then r.str = same.str end
+          if row.text == nil then r.text = same.text end
+          if row.time == nil then r.time = same.time end
+          if r.ench == same.ench then r.q, r.qn = same.q, same.qn end
+        end
+        b.slots[slot] = r
+      else
+        b.slots[slot] = nil
+      end
+      -- In a change "available: 0" is a passing mark (a stall is open), not a closed slot.
+      if row.available ~= nil and act == 0 then b.known[slot] = row.available ~= 0 and row.available ~= false
+      elseif b.known[slot] == nil then b.known[slot] = true end
+    end
+  end
+  b.at, b.dirty, live.at, live.dirty = now, true, now, true
+end
+
+function F.bag_tally(block)
+  local t = {}
+  for _, r in ipairs(block and block.items or {}) do t[r.item] = (t[r.item] or 0) + r.amount end
+  return t
+end
+
+-- What changed since the last list; the same item changing again soon is one line.
+function F.bag_diff(id, old, new, now)
+  if not old then return end
+  local log = F.bag.log
+  local function note(item, d)
+    local last = log[#log]
+    if last and last.block == id and last.item == item and now - last.t < F.BAG_MERGE then
+      last.delta, last.t = last.delta + d, now
+      if last.delta == 0 then table.remove(log) end
+    else
+      log[#log + 1] = {t = now, block = id, item = item, delta = d}
+    end
+  end
+  local a, b = F.bag_tally(old), F.bag_tally(new)
+  for item, n in pairs(b) do
+    if n ~= (a[item] or 0) then note(item, n - (a[item] or 0)) end
+  end
+  for item, n in pairs(a) do
+    if not b[item] then note(item, -n) end
+  end
+  while #log > F.BAG_LOG do table.remove(log, 1) end
+end
+
+function F.bag_store()
+  local live, now, n = F.bag_live, os.time(), 0
+  live.dirty = false
+  for id, b in pairs(live.blocks) do
+    if b.dirty then
+      b.dirty = false
+      local new = {at = now, total = 0, items = {}, partial = b.partial}
+      for _, open in pairs(b.known) do
+        if open then new.total = new.total + 1 end
+      end
+      -- Without the whole list the number of open slots is not known: the last known one stays.
+      if b.total and (b.partial or new.total < b.total) then new.total = math.max(b.total, 0) end
+      if b.partial then new.total = 0 end
+      for slot, r in pairs(b.slots) do
+        new.items[#new.items + 1] = {slot = slot, item = r.item, amount = r.amount, text = r.text, time = r.time,
+          ench = r.ench, bg = r.bg, str = r.str, q = r.q, qn = r.qn, noamt = r.noamt}
+      end
+      table.sort(new.items, function(x, y) return x.slot < y.slot end)
+      -- Slots found one by one are not things that came: the history starts from a whole list.
+      local old = F.bag.blocks[id]
+      -- The game often sends the same slots again with nothing new in them: then nothing is
+      -- rebuilt, redrawn or written.
+      if not F.bag_same(old, new) then
+        if not new.partial and old and not old.partial then F.bag_diff(id, old, new, now) end
+        F.bag.blocks[id] = new
+        n = n + 1
+      end
+    end
+  end
+  if n > 0 then
+    F.bag.rev = F.bag.rev + 1
+    F.bag_dirty = true
+  end
+  return n
+end
+
+F.BAG_FIELDS = {'slot', 'item', 'amount', 'text', 'time', 'ench', 'bg', 'str', 'q', 'qn', 'noamt'}
+
+function F.bag_same(a, b)
+  if not a or not b or #a.items ~= #b.items or a.total ~= b.total or a.partial ~= b.partial then return false end
+  local fields = F.BAG_FIELDS
+  for i = 1, #a.items do
+    local x, y = a.items[i], b.items[i]
+    for k = 1, #fields do
+      if x[fields[k]] ~= y[fields[k]] then return false end
+    end
+  end
+  return true
+end
+
+F.BAG_SAVE_EVERY = 90
+
+function F.bag_flush()
+  if not F.bag_dirty then return end
+  F.bag_dirty = false
+  F._bag_saved = os.clock()
+  pcall(F.bag_save)
+end
+
+function F.bag_tick()
+  local live = F.bag_live
+  local now = os.clock()
+  if live.dirty and now - live.at > 0.8 then F.bag_store() end
+  if F.bag_dirty and now - (F._bag_saved or 0) > F.BAG_SAVE_EVERY then F.bag_flush() end
+end
+
+function F.bag_save()
+  local lines = {}
+  local function row(...)
+    local cells = {...}
+    for i = 1, select('#', ...) do cells[i] = F.car_cell(cells[i]) end
+    lines[#lines + 1] = table.concat(cells, '\t', 1, select('#', ...))
+  end
+  for id, b in pairs(F.bag.blocks) do
+    row('B', id, b.at, b.total, b.partial and 1 or 0)
+    for _, r in ipairs(b.items) do
+      row('I', id, r.slot, r.item, r.amount, r.time, r.ench or '', r.bg or '', r.str or '', r.q or '', r.qn or '', r.text, r.noamt and 1 or 0)
+    end
+  end
+  for _, l in ipairs(F.bag.log) do row('L', l.t, l.block, l.item, l.delta) end
+  F.write_lines('fhelp_bag.txt', lines)
+end
+
+function F.bag_load()
+  F.bag = {blocks = {}, log = {}, rev = (F.bag and F.bag.rev or 0) + 1}
+  F.bag_live = {blocks = {}, at = 0}
+  for _, line in ipairs(F.read_lines('fhelp_bag.txt')) do
+    local c = {}
+    for cell in (line .. '\t'):gmatch('(.-)\t') do c[#c + 1] = cell end
+    if c[1] == 'B' and tonumber(c[2]) then
+      F.bag.blocks[tonumber(c[2])] = {at = tonumber(c[3]) or 0, total = tonumber(c[4]) or 0, items = {}, partial = c[5] == '1' or nil}
+    elseif c[1] == 'I' then
+      local b = F.bag.blocks[tonumber(c[2]) or -1]
+      local item = tonumber(c[4])
+      if b and item then
+        b.items[#b.items + 1] = {
+          slot = tonumber(c[3]) or 0, item = item, amount = tonumber(c[5]) or 1, time = tonumber(c[6]) or 0,
+          ench = tonumber(c[7]), bg = (c[8] or '') ~= '' and c[8] or nil, str = tonumber(c[9]), q = tonumber(c[10]),
+          qn = (c[11] or '') ~= '' and c[11] or nil, text = c[12] or '', noamt = c[13] == '1' or nil,
+        }
+      end
+    elseif c[1] == 'L' then
+      F.bag.log[#F.bag.log + 1] = {t = tonumber(c[2]) or 0, block = tonumber(c[3]) or 0, item = tonumber(c[4]) or 0, delta = tonumber(c[5]) or 0}
+    end
+  end
+end
+
+function F.bag_clear()
+  F.bag = {blocks = {}, log = {}, rev = F.bag.rev + 1}
+  F.bag_live = {blocks = {}, at = 0}
+  pcall(F.bag_save)
+  F.notify('Запись инвентаря удалена', true)
+end
+
+-- A click on a slot of the own inventory, and the game's window that may follow it: the class
+-- and the rating of quality are written only there.
+function F.bag_click(text)
+  local slot = tonumber(text:match('"slot"%s*:%s*(%d+)'))
+  local t = tonumber(text:match('"type"%s*:%s*(%d+)'))
+  local b = t and F.BAG_NAME[t] and F.bag_live.blocks[t]
+  local r = b and slot and b.slots[slot]
+  F.bag_pick = r and {block = t, slot = slot, item = r.item, at = os.clock()} or nil
+end
+
+function F.bag_dialog(text)
+  local p = F.bag_pick
+  if not p or cfg.bag_on ~= 1 or os.clock() - p.at > 6 then return end
+  F.bag_pick = nil
+  local it = F.shop_item_read(F.game_text(text or ''))
+  if not it.q and not it.qn then return end
+  local b = F.bag_live.blocks[p.block]
+  local r = b and b.slots[p.slot]
+  if not r or r.item ~= p.item then return end
+  if r.bg and it.qn then F.shop_qn_learn(r.bg, it.qn) end
+  if r.q == it.q and r.qn == it.qn then return end
+  r.q, r.qn = it.q, it.qn
+  local kept = F.bag.blocks[p.block]
+  for _, x in ipairs(kept and kept.items or {}) do
+    if x.slot == p.slot and x.item == p.item then x.q, x.qn = it.q, it.qn end
+  end
+  F.bag.rev = F.bag.rev + 1
+  pcall(F.bag_save)
+end
+
+F.BAG_SORT = {{'slot', 'Как в игре'}, {'name', 'По названию'}, {'qty', 'По количеству'}, {'ench', 'По заточке'}}
+
+-- The inventory as cards: equal things together, filtered by a piece of the name or an ID.
+function F.bag_view(block, q, sort)
+  local key = table.concat({F.bag.rev, tostring(block), q, sort, F.shop_rev}, '|')
+  if F._bag_vk == key then return F._bag_v end
+  local ids = {}
+  for _, b in ipairs(F.BAG_BLOCKS) do
+    if block == 'all' or block == b[1] then ids[#ids + 1] = b[1] end
+  end
+  local list = F.car_group({blocks = F.bag.blocks, where = 'У тебя'}, ids)
+  local low = F.lower_fast(q)
+  local id = tonumber((low:match('^:item(%d+):$')) or low)
+  local out = {}
+  for i, e in ipairs(list) do
+    e.where = 'У тебя: ' .. F.lower_fast(F.BAG_NAME[e.block] or '')
+    e.ord = i
+    if low == '' or (id and e.it.id == id) or F.lower_fast(e.it.name):find(low, 1, true) then out[#out + 1] = e end
+  end
+  if sort == 'name' then
+    table.sort(out, function(a, b) if a.it.name ~= b.it.name then return a.it.name < b.it.name end return a.ord < b.ord end)
+  elseif sort == 'qty' then
+    table.sort(out, function(a, b) if a.amount ~= b.amount then return a.amount > b.amount end return a.ord < b.ord end)
+  elseif sort == 'ench' then
+    table.sort(out, function(a, b)
+      if (a.ench or 0) ~= (b.ench or 0) then return (a.ench or 0) > (b.ench or 0) end
+      return a.ord < b.ord
+    end)
+  end
+  F._bag_vk, F._bag_v = key, out
+  return out
+end
+
+function F.bag_stats()
+  local key = F.bag.rev .. '|' .. F.shop_rev
+  if F._bag_sk == key then return F._bag_s end
+  local st = {used = 0, total = 0, qty = 0, kinds = 0, ench = 0, timed = 0, worth = 0, priced = 0, at = 0, top = {}, dear = {}}
+  for _, b in pairs(F.bag.blocks) do
+    st.used, st.total = st.used + #b.items, st.total + math.max(b.total, #b.items)
+    st.at = math.max(st.at, b.at)
+  end
+  local list = F.bag_view('all', '', 'slot')
+  st.kinds = #list
+  for _, e in ipairs(list) do
+    st.qty = st.qty + e.amount
+    if e.ench then st.ench = st.ench + e.slots end
+    if e.noamt then st.noamt = (st.noamt or 0) + 1 end
+    if e.time > 0 then st.timed = st.timed + 1 end
+    local price = F.store_price(e.it.id)
+    if price then
+      e.worth = price * e.amount
+      st.worth, st.priced = st.worth + e.worth, st.priced + 1
+      st.dear[#st.dear + 1] = e
+    end
+    st.top[#st.top + 1] = e
+  end
+  table.sort(st.top, function(a, b) return a.amount > b.amount end)
+  table.sort(st.dear, function(a, b) return a.worth > b.worth end)
+  F._bag_sk, F._bag_s = key, st
+  return st
+end
+
+function F.bag_seen()
+  return next(F.bag.blocks) ~= nil
+end
+
+function F.bag_partial()
+  for _, b in pairs(F.bag.blocks) do
+    if b.partial then return true end
+  end
+  return false
+end
+
+F.BAG_PARTIAL_TEXT = 'Запись неполная. Весь инвентарь игра присылает один раз, при входе на сервер, а fHelper запустился позже: '
+  .. 'сейчас видно только то, что менялось. Перезайди на сервер, и запись станет полной.'
+
+function F.bag_items_sec()
+  if not F.bag_seen() then
+    F.empty('ICON_FA_BOX_OPEN', 'Инвентарь ещё не записан', cfg.bag_on == 1 and 'Игра присылает его при входе на сервер: перезайди один раз, и он появится здесь'
+      or 'Запись выключена: включи её в разделе «Настройки»')
+    return
+  end
+  if F.bag_partial() then
+    F.hint_bad(F.BAG_PARTIAL_TEXT)
+    imgui.Spacing()
+  end
+  F.field('##bagq', 'Поиск по своим вещам: название или ID', ui.bag_q, 80, F.inner_w(), 'bag_q')
+  imgui.Spacing()
+  if F._bag_pk ~= F.bag.rev then
+    local list = {{'all', 'Всё'}}
+    for _, b in ipairs(F.BAG_BLOCKS) do
+      local kept = F.bag.blocks[b[1]]
+      if kept then list[#list + 1] = {b[1], b[2] .. ' · ' .. #kept.items} end
+    end
+    F._bag_pk, F._bag_pills = F.bag.rev, list
+  end
+  local pills = F._bag_pills
+  local known = false
+  for _, pl in ipairs(pills) do if pl[1] == F.bag_tab then known = true end end
+  if not known then F.bag_tab = 'all' end
+  local pick = F.pill_row('##bagblk', pills, F.bag_tab)
+  if pick then F.bag_tab = pick end
+  imgui.Spacing()
+  F.bag_sort = F.segment('bagsort', F.BAG_SORT, F.bag_sort or 'slot', math.min(F.s(560), F.inner_w())) or F.bag_sort or 'slot'
+  imgui.Spacing()
+  local list = F.bag_view(F.bag_tab, F.trim(F.buf_get(ui.bag_q)), F.bag_sort)
+  if #list == 0 then
+    F.empty('ICON_FA_SEARCH', 'Ничего не нашлось', 'Поиск идёт по последней записи инвентаря')
+    return
+  end
+  local b = F.bag_tab ~= 'all' and F.bag.blocks[F.bag_tab] or nil
+  local st = F.bag_stats()
+  F.hint((b and (#b.items .. (b.total > #b.items and (' из ' .. b.total .. ' слотов') or ' предм.') .. ', запись ' .. F.car_ago(b.at))
+    or ('Разных предметов: ' .. #list .. ', запись ' .. F.car_ago(st.at))) .. '. Нажми на предмет, чтобы осмотреть.')
+  F.car_grid('##bag', list)
+end
+
+function F.bag_sum_sec()
+  if not F.bag_seen() then
+    F.empty('ICON_FA_CHART_PIE', 'Пока нечего считать', 'Инвентарь появится после входа на сервер')
+    return
+  end
+  if F.bag_partial() then
+    F.hint_bad(F.BAG_PARTIAL_TEXT .. ' Числа ниже — только по тому, что уже видно.')
+    imgui.Spacing()
+  end
+  local st = F.bag_stats()
+  F.tile_grid('bagsum', {
+    {'ICON_FA_TH', 'Занято слотов', st.total > st.used and (st.used .. ' из ' .. st.total) or tostring(st.used)},
+    {'ICON_FA_LAYER_GROUP', 'Разных предметов', tostring(st.kinds)},
+    {'ICON_FA_BOXES', 'Всего штук', F.num_text(st.qty)},
+    {'ICON_FA_ARROW_UP', 'Заточенных', tostring(st.ench)},
+    {'ICON_FA_HOURGLASS_HALF', 'Со сроком', tostring(st.timed)},
+    {'ICON_FA_COINS', 'Оценка по лавкам', st.priced > 0 and (F.fmt_money(st.worth) or '—') or '—'},
+  }, 190)
+  F.hint(st.priced > 0 and ('Оценка — по обычной цене в лавках, которые ты открывал: нашлась цена для ' .. st.priced .. ' из ' .. st.kinds
+    .. ' предметов. Заточка и качество в ней не учтены.') or 'Оценки нет: в записанных лавках этих предметов не было. Открой лавки на рынке, и она появится.')
+  imgui.Spacing()
+  if #st.dear > 0 then
+    F.card_begin('Самое дорогое', 'По цене лавок, умноженной на количество', 'ICON_FA_GEM')
+    for i = 1, math.min(#st.dear, 8) do
+      local e = st.dear[i]
+      F.item_row(e.it.name .. (e.ench and (' +' .. e.ench) or ''), e.it.id, F.num_text(e.amount) .. ' шт  ·  ' .. (F.fmt_money(e.worth / e.amount) or '') .. ' за штуку',
+        F.fmt_money(e.worth) or '', 7000 + i, 'Осмотреть', function() F.store_open(e) end)
+    end
+    F.card_end()
+  end
+  F.card_begin('Больше всего', nil, 'ICON_FA_BOXES')
+  for i = 1, math.min(#st.top, 8) do
+    local e = st.top[i]
+    F.item_row(e.it.name, e.it.id, e.where .. (e.slots > 1 and ('  ·  слотов: ' .. e.slots) or ''), '×' .. F.num_text(e.amount), 7100 + i,
+      'Осмотреть', function() F.store_open(e) end)
+  end
+  F.card_end()
+end
+
+function F.bag_log_sec()
+  F.card_begin('Что менялось', 'Между открытиями инвентаря. Одно и то же подряд сложено в одну строку', 'ICON_FA_HISTORY')
+  local log = F.bag.log
+  if #log == 0 then F.hint('Изменений пока нет: они появятся, когда инвентарь откроется ещё раз с другим содержимым.') end
+  for i = #log, math.max(1, #log - 59), -1 do
+    local l = log[i]
+    local it = F.car_lib(l.item)
+    F.item_row(it.name, l.item, os.date('%d.%m %H:%M', l.t) .. '  ·  ' .. (F.BAG_NAME[l.block] or tostring(l.block)),
+      (l.delta > 0 and '+' or '-') .. F.num_text(math.abs(l.delta)), 7200 + i)
+  end
+  F.card_end()
+end
+
+function F.bag_set_sec()
+  F.card_begin('Запись инвентаря', 'Запоминает твои вещи, чтобы смотреть их с закрытым инвентарём', 'ICON_FA_BOX_OPEN')
+  F.chest_flag('bagon', 'Записывать инвентарь', 'bag_on', 'fHelper ничего не запрашивает сам: читает только то, что игра прислала, когда ты открыл инвентарь')
+  F.hint('Весь инвентарь игра присылает один раз, при входе на сервер, а дальше только то, что изменилось. fHelper запоминает список и сам держит его свежим.')
+  F.hint('Если fHelper запустился или перезагрузился уже в игре, полного списка у него нет до следующего входа на сервер.')
+  F.hint('Заточка и прочность видны сразу. Класс и рейтинг качества игра пишет только в окне предмета: нажми на предмет в игре, и они запомнятся.')
+  if F.bag_seen() then
+    imgui.Spacing()
+    if F.button('Очистить запись##bagclr', 200, 0, 'danger') then
+      F.ask('Удалить запись инвентаря и историю изменений?', 'Удалить', 'fn', {fn = F.bag_clear})
+    end
+  end
+  F.card_end()
+end
+
+F.STORE_SECS = {{'inv', 'Инвентарь'}, {'cars', 'Машины'}}
+F.BAG_SECS = {{'items', 'Предметы'}, {'sum', 'Сводка'}, {'log', 'История'}, {'set', 'Настройки'}}
+F.CAR_SECS = {{'items', 'Содержимое'}, {'car', 'Запись машины'}, {'log', 'История'}, {'set', 'Сканер'}}
+
+function F.draw_store()
+  F.page_head('Хранилище', 'Твой инвентарь и багажники машин: что где лежит, заточка, качество и цена по лавкам')
+  local sec = F.sections('store', F.STORE_SECS)
+  if sec == 'cars' then
+    F.draw_cars()
+    return
+  end
+  local sub = F.sections('storebag', F.BAG_SECS)
+  if sub == 'sum' then F.bag_sum_sec()
+  elseif sub == 'log' then F.bag_log_sec()
+  elseif sub == 'set' then F.bag_set_sec()
+  else F.bag_items_sec() end
+end
+
+-- The car chosen by the row of pills, nil when there is none yet.
+function F.car_pick_row()
+  if #F.cars == 0 then
+    F.empty('ICON_FA_CAR', 'Машин пока нет', 'Сядь в машину, открой багажник и нажми «Сканировать» или введи /fcar')
+    return nil
+  end
+  local list, car = {}, nil
+  for _, c in ipairs(F.cars) do
+    list[#list + 1] = {c.id, F.car_name(c)}
+    if c.id == F.car_sel then car = c end
+  end
+  car = car or F.cars[1]
+  F.car_sel = car.id
+  local pick = F.pill_row('##carlist', list, F.car_sel)
+  if pick then
+    F.car_sel, F.car_ask = pick, nil
+    for _, c in ipairs(F.cars) do
+      if c.id == pick then car = c end
+    end
+  end
+  imgui.Spacing()
+  return car
+end
+
+function F.car_head_text(car)
+  local parts = {}
+  if car.plate ~= '' then parts[#parts + 1] = car.plate end
+  parts[#parts + 1] = 'скан ' .. F.car_ago(car.scanned)
+  if car.health ~= '' then parts[#parts + 1] = 'состояние ' .. car.health .. '%' end
+  if car.oil ~= '' then parts[#parts + 1] = 'топливо ' .. car.oil .. '%' end
+  return table.concat(parts, '  ·  ')
+end
+
 function F.draw_cars()
+  local sub = F.sections('storecar', F.CAR_SECS)
+  if sub == 'set' then
+    F.car_set_card()
+    return
+  end
+  if sub == 'items' and #F.cars > 0 then
+    F.field('##carq', 'Поиск предмета по всем машинам: название или ID', ui.car_q, 80, F.inner_w(), 'car_q')
+    imgui.Spacing()
+    local q = F.trim(F.buf_get(ui.car_q))
+    if q ~= '' then
+      F.car_found(q)
+      return
+    end
+  end
+  local car = F.car_pick_row()
+  if not car then return end
+  if sub == 'car' then
+    F.card_begin(F.car_name(car), F.car_head_text(car), 'ICON_FA_CAR')
+    F.car_actions(car)
+    F.card_end()
+  elseif sub == 'log' then
+    F.car_history(car)
+  else
+    F.hint(F.car_head_text(car) .. '. Нажми на предмет, чтобы осмотреть.')
+    local pills = {{'all', 'Все'}}
+    for _, sc in ipairs(F.CAR_SECTIONS) do pills[#pills + 1] = {sc[1], sc[2]} end
+    if F.car_tab == 'log' then F.car_tab = 'all' end
+    local pick = F.pill_row('##carsec', pills, F.car_tab or 'all')
+    if pick then F.car_tab = pick end
+    imgui.Spacing()
+    for _, sc in ipairs(F.CAR_SECTIONS) do
+      if (F.car_tab or 'all') == 'all' or F.car_tab == sc[1] then F.car_section(car, sc) end
+    end
+  end
+end
+
+function F.car_set_card()
   F.card_begin('Сканер машин', 'Запоминает, что лежит в багажнике и стоит на машине', 'ICON_FA_CAR')
   if F.switch('caron', 'Сканер', cfg.car_on == 1) then
     cfg.car_on = cfg.car_on == 1 and 0 or 1
@@ -5942,30 +6654,6 @@ function F.draw_cars()
     if F.inv.open and F.accent_button(F.car_busy and 'Читаю##carmenu' or 'Сканировать##carmenu', 170, 0) then F.car_scan() end
   end
   F.card_end()
-  if #F.cars == 0 then
-    F.empty('ICON_FA_CAR', 'Машин пока нет', 'После первого скана машина появится здесь')
-    return
-  end
-  F.field('##carq', 'Поиск предмета по всем машинам: название или ID', ui.car_q, 80, F.inner_w(), 'car_q')
-  imgui.Spacing()
-  local q = F.trim(F.buf_get(ui.car_q))
-  if q ~= '' then
-    F.car_found(q)
-    return
-  end
-  local list, car = {}, nil
-  for _, c in ipairs(F.cars) do
-    list[#list + 1] = {c.id, F.car_name(c)}
-    if c.id == F.car_sel then car = c end
-  end
-  car = car or F.cars[1]
-  F.car_sel = car.id
-  local pick = F.pill_row('##carlist', list, F.car_sel)
-  if pick then
-    F.car_sel, F.car_ask = pick, nil
-  end
-  imgui.Spacing()
-  F.car_page(car)
 end
 
 -- Stalls: what a stall shows when it is opened. The server sends nothing about stalls nobody opened.
@@ -6005,16 +6693,113 @@ function F.shop_slot(row)
       price, qty = amount > 0 and amount or nil, 1
     end
   end
-  return {id = id, qty = qty, price = price}
+  local r = {id = id, qty = qty, price = price}
+  -- enchant is the level of sharpening (+N); background is the colour of the cell, RGBA.
+  local ench = math.floor(tonumber(row.enchant) or 0)
+  if ench > 0 then r.ench = ench end
+  local bg = tonumber(row.background)
+  if bg and bg ~= 0 then r.bg = string.format('%06X', math.floor((bg % 4294967296) / 256)) end
+  return r
+end
+
+-- The class of quality and its rating the server writes only in the window of the item:
+--   Класс качества аксессуара: Легендарный (1009)
+--   Редкость: Легендарный  /  Текущий бонус качества: +259 ед.
+function F.shop_item_read(text)
+  local plain = (tostring(text or ''):gsub('{%x%x%x%x%x%x}', ''))
+  local out = {}
+  local name, n = plain:match('Класс качества[^:\n]*:%s*([^\n%(]-)%s*%((%d+)%)')
+  if name then
+    out.qn, out.q = name, tonumber(n)
+  else
+    out.qn = plain:match('Класс качества[^:\n]*:%s*([^\n]+)') or plain:match('Редкость:%s*([^\n]+)')
+    out.q = tonumber(plain:match('бонус качества:%s*%+?(%d+)'))
+  end
+  if out.qn then
+    out.qn = F.utf_cut(F.trim((out.qn:gsub('|', '/'))), 40)
+    if out.qn == '' then out.qn = nil end
+  end
+  return out
+end
+
+-- The colour of the cell goes with the class of quality: a class seen once in a window is
+-- known by its colour in every list after that.
+F.SHOP_QN = {A47932 = 'Легендарный'}
+F.shop_qnames = {}
+
+function F.shop_qn_load()
+  F.shop_qnames = {}
+  for k, v in pairs(F.SHOP_QN) do F.shop_qnames[k] = v end
+  for _, line in ipairs(F.read_lines('fhelp_shop_q.txt')) do
+    local bg, name = line:match('^Q|(%x%x%x%x%x%x)|(.+)$')
+    if bg then F.shop_qnames[bg] = name end
+  end
+end
+
+function F.shop_qn_learn(bg, name)
+  if not bg or not name or F.shop_qnames[bg] == name then return end
+  F.shop_qnames[bg] = name
+  local out = {}
+  for k, v in pairs(F.shop_qnames) do
+    if F.SHOP_QN[k] ~= v then out[#out + 1] = 'Q|' .. k .. '|' .. v end
+  end
+  table.sort(out)
+  pcall(F.write_lines, 'fhelp_shop_q.txt', out)
+  F.shop_rev = F.shop_rev + 1
+end
+
+function F.shop_qn(r)
+  return r.qn or (r.bg and F.shop_qnames[r.bg]) or nil
+end
+
+-- «Легендарный 1009», «Легендарный», «качество 259» or nil.
+function F.shop_q_text(r)
+  local qn = F.shop_qn(r)
+  if qn then return qn .. (r.q and (' ' .. r.q) or '') end
+  return r.q and ('качество ' .. r.q) or nil
+end
+
+function F.shop_tags(r)
+  local t = {}
+  if r.ench then t[#t + 1] = 'заточка +' .. r.ench end
+  local q = F.shop_q_text(r)
+  if q then t[#t + 1] = q end
+  return table.concat(t, '  ·  ')
+end
+
+function F.shop_label(r)
+  return F.item_label(r.id) .. (r.ench and (' +' .. r.ench) or '')
+end
+
+function F.shop_key(r)
+  return r.k .. '|' .. r.id .. '|' .. tostring(r.price) .. '|' .. (r.ench or 0) .. '|' .. (r.bg or '')
+end
+
+-- A stall opened again: what the windows of its items said the last time stays with the same goods.
+function F.shop_inherit(list, old)
+  if not old then return end
+  local pool = {}
+  for _, r in ipairs(old.items) do
+    if r.q or r.qn then
+      local key = F.shop_key(r)
+      pool[key] = pool[key] or {}
+      for _ = 1, math.min(r.qty, 60) do table.insert(pool[key], r) end
+    end
+  end
+  for _, r in ipairs(list) do
+    if not r.q and not r.qn then
+      local t = pool[F.shop_key(r)]
+      local o = t and table.remove(t, 1)
+      if o then r.q, r.qn = o.q, o.qn end
+    end
+  end
 end
 
 function F.shop_packet(text)
   if (cfg.shop_on ~= 1 and cfg.shop_calc ~= 1) or not text:find('playerInventory', 1, true) then return end
   for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
     if body:find('"type"%s*:%s*13%D') or body:find('"type"%s*:%s*28%D') then
-      local v = F.json_value(body, 1)
-      if type(v) == 'table' and v.action == nil then v = v[1] end
-      if type(v) == 'string' then v = F.json_value(v, 1) end
+      local v = F.inv_json(body)
       if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table' then
         local kind = F.SHOP_KIND[tonumber(v.data.type)]
         if kind and type(v.data.items) == 'table' then
@@ -6023,9 +6808,7 @@ function F.shop_packet(text)
         end
       end
     elseif cfg.shop_calc == 1 and body:find('"type"%s*:%s*1%D') then
-      local v = F.json_value(body, 1)
-      if type(v) == 'table' and v.action == nil then v = v[1] end
-      if type(v) == 'string' then v = F.json_value(v, 1) end
+      local v = F.inv_json(body)
       if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table'
         and tonumber(v.data.type) == 1 and type(v.data.items) == 'table' then
         F.shop_bag_merge(v.action, v.data.items)
@@ -6110,14 +6893,20 @@ function F.shop_merge(kind, act, rows)
   end
   local b = cur.blocks[kind]
   if act == 0 and (not b or now - b.at > 1) then
-    b = {slots = {}, at = now}
+    b = {slots = {}, at = now, prev = b and b.slots}
     cur.blocks[kind] = b
   elseif not b then
     return
   end
   for _, row in pairs(rows) do
     local slot = type(row) == 'table' and tonumber(row.slot)
-    if slot then b.slots[slot] = F.shop_slot(row) end
+    if slot then
+      local r = F.shop_slot(row)
+      -- The same goods in the same slot keep what the window of the item said.
+      local o = b.slots[slot] or (b.prev and b.prev[slot])
+      if r and o and o.id == r.id and o.price == r.price and o.ench == r.ench then r.q, r.qn = o.q, o.qn end
+      b.slots[slot] = r
+    end
   end
   b.at, cur.at, cur.dirty = now, now, true
 end
@@ -6134,12 +6923,12 @@ end
 function F.shop_group(list)
   local out, at = {}, {}
   for _, r in ipairs(list) do
-    local key = r.k .. '|' .. r.id .. '|' .. tostring(r.price)
+    local key = F.shop_key(r) .. '|' .. tostring(r.q) .. '|' .. tostring(r.qn)
     local g = at[key]
     if g then
       g.qty = g.qty + r.qty
     else
-      g = {k = r.k, id = r.id, qty = r.qty, price = r.price}
+      g = {k = r.k, id = r.id, qty = r.qty, price = r.price, ench = r.ench, bg = r.bg, q = r.q, qn = r.qn}
       at[key] = g
       out[#out + 1] = g
     end
@@ -6178,9 +6967,12 @@ function F.shop_commit(cur)
       table.sort(slots)
       for _, s in ipairs(slots) do
         local r = b.slots[s]
-        list[#list + 1] = {k = kind, id = r.id, qty = r.qty, price = r.price}
+        list[#list + 1] = {k = kind, id = r.id, qty = r.qty, price = r.price, ench = r.ench, bg = r.bg, q = r.q, qn = r.qn}
       end
     end
+  end
+  for _, s in ipairs(F.shops) do
+    if s.key == key then F.shop_inherit(list, s) break end
   end
   local title = p.label and F.utf_cut(p.label, 90) or 'Лавка без подписи'
   local shop = {key = key, num = num, t = os.date('%Y-%m-%d %H:%M:%S'), x = p.lx or p.x, y = p.ly or p.y, z = p.lz or p.z,
@@ -6196,18 +6988,26 @@ function F.shop_commit(cur)
   local ok, err = pcall(F.want_check, shop, old)
   if not ok then F.log_line('Хочу найти: ' .. tostring(err)) end
   local st = F.shop_stats(shop)
+  local again = cur.again
+  cur.again = nil
+  if again then return end
   F.toast('shop', {key = 'shop' .. key, icon = 'ICON_FA_STORE', title = 'Лавка записана',
     text = (num and ('Лавка №' .. num) or title) .. '  ·  продаёт ' .. st.sell .. ', скупает ' .. st.buy, quiet = true})
 end
 
--- I2 lines: kind|id|slots|price. The first version wrote I lines with the price in place of the count.
+-- I2 lines: kind|id|slots|price, then for goods that have them |sharpening|cell colour|rating|class.
+-- The first version wrote I lines with the price in place of the count.
 function F.shop_save()
   local out = {}
   for _, s in ipairs(F.shops) do
     out[#out + 1] = table.concat({'S', s.key, s.t, string.format('%.1f', s.x or 0), string.format('%.1f', s.y or 0),
       string.format('%.1f', s.z or 0), (tostring(s.title):gsub('|', '/'))}, '|')
     for _, r in ipairs(s.items) do
-      out[#out + 1] = 'I2|' .. r.k .. '|' .. r.id .. '|' .. r.qty .. '|' .. (r.price and string.format('%.0f', r.price) or '-')
+      local line = 'I2|' .. r.k .. '|' .. r.id .. '|' .. r.qty .. '|' .. (r.price and string.format('%.0f', r.price) or '-')
+      if r.ench or r.bg or r.q or r.qn then
+        line = line .. '|' .. (r.ench or '') .. '|' .. (r.bg or '') .. '|' .. (r.q or '') .. '|' .. (r.qn or '')
+      end
+      out[#out + 1] = line
     end
   end
   F.write_lines('fhelp_shops.txt', out)
@@ -6215,6 +7015,7 @@ end
 
 function F.shop_load()
   F.shops = {}
+  pcall(F.shop_qn_load)
   local cut = os.date('%Y-%m-%d %H:%M:%S', os.time() - F.shop_days() * 86400)
   local cur, seen = nil, {}
   for _, line in ipairs(F.read_lines('fhelp_shops.txt')) do
@@ -6229,9 +7030,18 @@ function F.shop_load()
         F.shops[#F.shops + 1] = cur
       end
     elseif cur then
-      local k, id, q, pr = line:match('^I2|(%a+)|(%d+)|(%d+)|([%d%-]*)$')
-      if k then
-        cur.items[#cur.items + 1] = {k = k, id = tonumber(id), qty = math.max(1, tonumber(q) or 1), price = tonumber(pr)}
+      local k, id, q, pr, rest = line:match('^I2|(%a+)|(%d+)|(%d+)|([%d%-]*)(.*)$')
+      if k and (rest == '' or rest:sub(1, 1) == '|') then
+        local row = {k = k, id = tonumber(id), qty = math.max(1, tonumber(q) or 1), price = tonumber(pr)}
+        local e, bg, ql, qn = rest:match('^|(%d*)|(%x*)|(%d*)|(.*)$')
+        if e then
+          row.ench = tonumber(e)
+          if row.ench == 0 then row.ench = nil end
+          row.bg = #bg == 6 and bg or nil
+          row.q = tonumber(ql)
+          row.qn = qn ~= '' and qn or nil
+        end
+        cur.items[#cur.items + 1] = row
       else
         local ok_, oid, oam = line:match('^I|(%a+)|(%d+)|(%d+)|%d*$')
         if ok_ then cur.items[#cur.items + 1] = {k = ok_, id = tonumber(oid), qty = 1, price = tonumber(oam)} end
@@ -6279,7 +7089,8 @@ function F.shop_market()
   local m = {}
   for _, s in ipairs(F.shops) do
     for _, r in ipairs(s.items) do
-      if r.price and r.price > 0 and (r.k == 'sell' or r.k == 'buy') then
+      -- A sharpened thing costs its own money: it does not stand in one row with plain ones.
+      if r.price and r.price > 0 and (r.k == 'sell' or r.k == 'buy') and not r.ench then
         local e = m[r.id]
         if not e then
           e = {sell = {}, buy = {}}
@@ -6303,7 +7114,7 @@ end
 -- How the price of a row stands against the other stalls: the words and whether it is good.
 function F.shop_cmp(r)
   local e = F.shop_market()[r.id]
-  if not e or not r.price then return nil end
+  if not e or not r.price or r.ench then return nil end
   local list = e[r.k]
   if not list or #list < 2 then return nil end
   local best = list[1]
@@ -6412,7 +7223,7 @@ function F.shop_view(q, kind)
   for _, s in ipairs(F.shops) do
     for _, r in ipairs(s.items) do
       if r.k == kind then
-        local name = F.item_label(r.id)
+        local name = F.shop_label(r)
         if r.id == qid or F.lower_fast(name):find(low, 1, true) then rows[#rows + 1] = {shop = s, r = r, name = name} end
       end
     end
@@ -6522,11 +7333,15 @@ function F.shop_page(s)
     if r.k == F.shop_tab then
       n = n + 1
       local cmp = F.shop_cmp(r)
-      F.item_row(F.item_label(r.id), r.id, F.shop_qty_text(r) .. '  ·  ' .. (cmp or 'цена за штуку'), F.shop_price_text(r), 3000 + n)
+      local tags = F.shop_tags(r)
+      F.item_row(F.shop_label(r), r.id, F.shop_qty_text(r) .. (tags ~= '' and ('  ·  ' .. tags) or '') .. '  ·  ' .. (cmp or 'цена за штуку'),
+        F.shop_price_text(r), 3000 + n)
     end
   end
   if n == 0 then
     F.hint(F.shop_tab == 'sell' and 'Лавка ничего не продаёт.' or 'Лавка ничего не скупает.')
+  else
+    F.hint('Заточка видна сразу. Класс и рейтинг качества игра пишет только в окне предмета: нажми на предмет в лавке, и fHelper их запомнит.')
   end
   F.card_end()
 end
@@ -6574,8 +7389,9 @@ function F.shop_found(q)
     local s = h.shop
     local dist = F.shop_dist(s)
     local cmp = F.shop_cmp(h.r)
-    local sub = F.shop_name(s) .. '  ·  ' .. F.shop_qty_text(h.r) .. '  ·  ' .. F.ago(s.t) .. (dist ~= '' and ('  ·  ' .. dist) or '')
-      .. (cmp and ('  ·  ' .. cmp) or '')
+    local tags = F.shop_tags(h.r)
+    local sub = F.shop_name(s) .. (tags ~= '' and ('  ·  ' .. tags) or '') .. '  ·  ' .. F.shop_qty_text(h.r) .. '  ·  ' .. F.ago(s.t)
+      .. (dist ~= '' and ('  ·  ' .. dist) or '') .. (cmp and ('  ·  ' .. cmp) or '')
     F.item_row(h.name, h.r.id, sub, F.shop_price_text(h.r), i,
       s.num and ('Проложить маршрут: /findilavka ' .. s.num) or 'У этой лавки нет номера', function() F.shop_route(s) end)
   end
@@ -6615,6 +7431,8 @@ function F.shop_deals_card()
   F.card_end()
 end
 
+F.SHOP_SECS = {{'list', 'Лавки'}, {'want', 'Хочу найти'}, {'deals', 'Перепродажа'}, {'calc', 'Расчёт'}, {'set', 'Настройки'}}
+
 function F.draw_shops_page()
   F.page_head('Лавки', 'Цены лавок, которые ты открыл: поиск, сравнение и расчёт сделки')
   F.draw_shops()
@@ -6629,9 +7447,31 @@ function F.draw_shops()
     F.shop_page(sel)
     return
   end
-  F.shop_calc_card()
-  F.draw_wants()
-  F.card_begin('Лавки', 'Запоминает товары и цены лавок, которые ты открыл', 'ICON_FA_STORE')
+  local finds = #F.want_view()
+  local secs = {}
+  for i, v in ipairs(F.SHOP_SECS) do secs[i] = {v[1], v[2]} end
+  if finds > 0 then secs[2][2] = 'Хочу найти (' .. finds .. ')' end
+  F.shop_sec = F.shop_sec or 'list'
+  local pick = F.segment('shopsec', secs, F.shop_sec, F.inner_w(), finds > 0 and F.shop_sec ~= 'want' and {want = true} or nil)
+  if pick then F.shop_sec = pick end
+  imgui.Spacing()
+  if F.shop_sec == 'want' then F.draw_wants()
+  elseif F.shop_sec == 'deals' then F.shop_deals_card()
+  elseif F.shop_sec == 'calc' then F.shop_calc_sec()
+  elseif F.shop_sec == 'set' then F.shop_set_card()
+  else F.shop_list_sec() end
+end
+
+function F.shop_calc_sec()
+  F.shop_calc_tab = F.shop_calc_tab or 'rates'
+  local pick = F.segment('shopcalctab', {{'rates', 'Курсы и комиссии'}, {'look', 'Вид окошка'}}, F.shop_calc_tab, math.min(F.s(420), F.inner_w()))
+  if pick then F.shop_calc_tab = pick end
+  imgui.Spacing()
+  if F.shop_calc_tab == 'look' and cfg.shop_calc == 1 then F.shop_calc_look() else F.shop_calc_card() end
+end
+
+function F.shop_set_card()
+  F.card_begin('Запись лавок', 'Запоминает товары и цены лавок, которые ты открыл', 'ICON_FA_STORE')
   if F.switch('shopon', 'Записывать лавки', cfg.shop_on == 1) then
     cfg.shop_on = cfg.shop_on == 1 and 0 or 1
     dirty = true
@@ -6652,7 +7492,11 @@ function F.draw_shops()
     end
   end
   F.card_end()
+end
+
+function F.shop_list_sec()
   if #F.shops == 0 then
+    if cfg.shop_on ~= 1 then F.hint_bad('Запись лавок выключена: включи её в разделе «Настройки».') end
     F.empty('ICON_FA_STORE', 'Лавок пока нет', 'Открой любую лавку, и она появится здесь')
     return
   end
@@ -6663,7 +7507,6 @@ function F.draw_shops()
     F.shop_found(q)
     return
   end
-  F.shop_deals_card()
   F.shop_order = F.segment('shopsort', {{'new', 'Свежие'}, {'near', 'Ближние'}, {'big', 'Больше товаров'}}, F.shop_order or 'new',
     math.min(F.s(420), F.inner_w())) or F.shop_order or 'new'
   imgui.Spacing()
@@ -6688,6 +7531,7 @@ function F.shop_out(text)
     F.shop_pick = nil
     return
   end
+  if cfg.bag_on == 1 and text:find('lickOnBlock', 1, true) then pcall(F.bag_click, text) end
   if cfg.shop_calc ~= 1 or not text:find('lickOnBlock', 1, true) then return end
   local slot = tonumber(text:match('"slot"%s*:%s*(%d+)'))
   local kind = F.SHOP_KIND[tonumber(text:match('"type"%s*:%s*(%d+)')) or 0]
@@ -6700,7 +7544,7 @@ function F.shop_out(text)
     F.shop_pick = nil
     return
   end
-  F.shop_pick = {kind = kind, id = r.id, price = r.price, at = os.clock()}
+  F.shop_pick = {kind = kind, id = r.id, price = r.price, at = os.clock(), slot = slot, ench = r.ench, bg = r.bg, q = r.q, qn = r.qn}
   if not F._shop_pick_logged then
     F._shop_pick_logged = true
     F.log_line('Лавки: расчёт показан для «' .. F.item_name(r.id) .. '», цена ' .. (F.fmt_money(r.price) or '?'))
@@ -6734,6 +7578,14 @@ function F.shop_calc(kind, price, qty, vc, src)
       c.total, c.total_vc = c.conv - c.fee, false
     end
     c.lost = c.sum > 0 and c.rate == nil and c.tax / c.sum * 100 or nil
+    -- Dollars on hand, taken to Vice City: VC$ are bought there, at the rate of buying.
+    local rb = tonumber(cfg.shop_rate_buy) or 0
+    if not c.vc and rb > 0 and not F.is_rod() then
+      local pct = math.max(0, math.min(100, tonumber(cfg.shop_fee_buy) or 0))
+      local vcs = c.net / rb
+      c.alt = {rate = rb, vc = math.floor(vcs + 0.5), fee_pct = pct, fee = math.floor(vcs * pct / 100 + 0.5)}
+      c.alt.total = c.alt.vc - c.alt.fee
+    end
   else
     c.total, c.total_vc = c.sum, c.vc
     local rb = tonumber(cfg.shop_rate_buy) or 0
@@ -6743,6 +7595,14 @@ function F.shop_calc(kind, price, qty, vc, src)
       c.fee_pct = math.max(0, math.min(100, tonumber(cfg.shop_fee_buy) or 0))
       c.fee = math.floor(c.conv * c.fee_pct / 100 + 0.5)
       c.total, c.total_vc = c.conv + c.fee, false
+    end
+    -- Dollars to pay, counted in VC$: that many have to be sold, and the fee eats a part.
+    if not c.vc and rate > 0 and not F.is_rod() then
+      local pct = math.max(0, math.min(99, tonumber(cfg.shop_fee) or 0))
+      local vcs = c.sum / rate
+      c.alt = {rate = rate, vc = math.floor(vcs + 0.5), fee_pct = pct}
+      c.alt.total = math.floor(vcs / (1 - pct / 100) + 0.5)
+      c.alt.fee = c.alt.total - c.alt.vc
     end
   end
   return c
@@ -6758,7 +7618,7 @@ F.SHOP_ROWS = {
   {2, 'have', 'Сколько у тебя есть', 'При продаже — строка «У вас в наличии». При покупке — на сколько штук хватит наличных'},
   {4, 'price', 'Цена за 1 штуку', nil},
   {8, 'sum', 'Сумма до вычетов', 'Цена, умноженная на количество'},
-  {16, 'cuts', 'Курс и комиссии по строкам', 'Комиссия продажи, курс, сумма после обмена и комиссия обмена'},
+  {16, 'cuts', 'Курс и комиссии по строкам', 'Комиссия продажи и сумма после неё, курс, сумма в другой валюте и комиссия обмена'},
   {32, 'one', 'Итог за 1 штуку', 'Сколько выходит с одной штуки после курса и комиссий'},
   {64, 'notes', 'Подсказки', 'Как цена стоит против других лавок и предупреждения'},
 }
@@ -6799,7 +7659,18 @@ function F.shop_calc_rows(c, info)
     if c.src == 'typed' or (info.want and info.have and info.want < info.have) then add('Продаёшь', F.shop_pcs(c.qty)) end
     if on('sum') and c.qty > 1 then add('Сумма', m(c.sum, c.vc)) end
     if on('cuts') then
-      if c.tax > 0 then add('Комиссия продажи ' .. F.shop_pct(c.tax_pct), '-' .. m(c.tax, c.vc), 'minus') end
+      if c.tax > 0 then
+        add('Комиссия продажи ' .. F.shop_pct(c.tax_pct), '-' .. m(c.tax, c.vc), 'minus')
+        add('После комиссии', m(c.net, c.vc))
+      end
+      if c.alt then
+        add('Курс покупки VC$', F.shop_rate_text(c.alt.rate))
+        add('В Vice City это', m(c.alt.vc, true))
+        if c.alt.fee > 0 then
+          add('Комиссия обмена ' .. F.shop_pct(c.alt.fee_pct), '-' .. m(c.alt.fee, true), 'minus')
+          add('В Vice City на руки', m(c.alt.total, true))
+        end
+      end
       if c.rate then
         add('Курс', F.shop_rate_text(c.rate))
         add('После обмена', m(c.conv, false))
@@ -6818,6 +7689,14 @@ function F.shop_calc_rows(c, info)
       add('Курс покупки', F.shop_rate_text(c.rate))
       add('Нужно долларов', m(c.conv, false))
       if c.fee > 0 then add('Комиссия обмена ' .. F.shop_pct(c.fee_pct), '+' .. m(c.fee, false), 'minus') end
+    end
+    if on('cuts') and c.alt then
+      add('Курс продажи VC$', F.shop_rate_text(c.alt.rate))
+      add('В Vice City это', m(c.alt.vc, true))
+      if c.alt.fee > 0 then
+        add('Комиссия обмена ' .. F.shop_pct(c.alt.fee_pct), '+' .. m(c.alt.fee, true), 'minus')
+        add('Нужно VC$', m(c.alt.total, true))
+      end
     end
     if on('one') and c.qty > 1 and c.rate then add('Выходит за 1 шт', m(c.total / c.qty, c.total_vc)) end
     add(c.qty > 1 and ('К оплате за ' .. F.shop_pcs(c.qty)) or 'К оплате', m(c.total, c.total_vc), 'total')
@@ -6881,6 +7760,21 @@ function F.shop_dialog(title, text)
   if d.price and d.price > 0 then p.price, p.vc = d.price, d.vc end
   p.at = os.clock()
   p.dlg, p.live, p.closing = true, nil, nil
+  local it = F.shop_item_read(body)
+  if it.q or it.qn then
+    p.q, p.qn = it.q, it.qn
+    local cur = F.shop_cur
+    local b = cur and cur.blocks[p.kind]
+    local r = b and p.slot and b.slots[p.slot]
+    if r and r.id == p.id then
+      if r.bg and it.qn then F.shop_qn_learn(r.bg, it.qn) end
+      if r.q ~= it.q or r.qn ~= it.qn then
+        -- The stall is written again with what the window said, and the wishes are checked anew.
+        r.q, r.qn = it.q, it.qn
+        cur.dirty, cur.again = true, true
+      end
+    end
+  end
   -- The first dialogs go to a file: the real wording, to read the count right.
   F._shop_dlg = (F._shop_dlg or 0) + 1
   if F._shop_dlg > 15 then return end
@@ -6912,7 +7806,7 @@ function F.shop_calc_view()
   if cfg.shop_calc ~= 1 then return nil end
   if show then
     -- With the menu open on the stalls page the window shows an example and can be moved.
-    if page ~= 'shops' then return nil end
+    if page ~= 'shops' or F.shop_sec ~= 'calc' then return nil end
     return F.shop_sample == 'sell' and F.SHOP_SAMPLE_SELL or F.SHOP_SAMPLE
   end
   local p = F.shop_pick
@@ -6963,7 +7857,7 @@ end
 function F.shop_calc_notes(p, c)
   local notes = {}
   if c.vc and not c.rate then
-    notes[#notes + 1] = (c.kind == 'buy' and 'Курс продажи' or 'Курс покупки') .. ' не задан: меню → Лавки → «Расчёт у лавки»'
+    notes[#notes + 1] = (c.kind == 'buy' and 'Курс продажи' or 'Курс покупки') .. ' не задан: меню → Лавки → Расчёт'
   end
   if not F.shop_row_on('notes') then return notes end
   if c.kind == 'buy' then
@@ -6979,7 +7873,7 @@ function F.shop_calc_notes(p, c)
     elseif p.afford and p.qty > p.afford then notes[#notes + 1] = 'Наличных на столько не хватает' end
   end
   if not p.sample then
-    local ok, text = pcall(F.shop_cmp, {id = p.id, k = p.kind, price = p.price})
+    local ok, text = pcall(F.shop_cmp, {id = p.id, k = p.kind, price = p.price, ench = p.ench})
     if ok and text then notes[#notes + 1] = 'Против других лавок: ' .. text end
   end
   return notes
@@ -7043,9 +7937,17 @@ function F.draw_shop_calc()
     tx = tx + sz + 10 * k
   end
   local tw = ww - (tx - x) - pad
-  F.text_at(font_bold, 16, tx, y + 6 * k, F.col('text'), fit(font_bold, p.sample and 'Пример расчёта' or F.item_name(p.id), tw), nil, k)
-  F.text_at(font_main, 16, tx, y + 25 * k, F.col('text', 130),
-    fit(font_main, p.sample and (c.kind == 'buy' and 'пример продажи · перетащи' or 'пример покупки · перетащи') or (c.kind == 'buy' and 'лавка скупает у тебя' or 'лавка продаёт тебе'), tw), nil, k)
+  F.text_at(font_bold, 16, tx, y + 6 * k, F.col('text'),
+    fit(font_bold, p.sample and 'Пример расчёта' or (F.item_name(p.id) .. (p.ench and (' +' .. p.ench) or '')), tw), nil, k)
+  local under = c.kind == 'buy' and 'лавка скупает у тебя' or 'лавка продаёт тебе'
+  if p.sample then
+    under = c.kind == 'buy' and 'пример продажи · перетащи' or 'пример покупки · перетащи'
+  else
+    -- The class and the rating of quality, once the game's window has said them.
+    local q = F.shop_q_text(p)
+    if q then under = q .. '  ·  ' .. under end
+  end
+  F.text_at(font_main, 16, tx, y + 25 * k, F.col('text', 130), fit(font_main, under, tw), nil, k)
   local ry = y + head
   for _, r in ipairs(rows) do
     if r[3] == 'total' then
@@ -7117,7 +8019,7 @@ function F.shop_calc_card()
       dirty = true
     end
     F.hint('Когда игра сама пишет валюту в окне продажи, берётся она. Этот выбор — для случая, когда не написала.')
-    F.hint('Сейчас считается: ' .. (F.shop_vc() and 'VC$, с пересчётом в доллары' or 'доллары, пересчёт не нужен') .. '.')
+    F.hint('Сейчас считается: ' .. (F.shop_vc() and 'VC$, с пересчётом в доллары' or 'доллары; сколько это в VC$, окошко допишет по курсам ниже') .. '.')
     imgui.Spacing()
     F.hint('Курс: сколько долларов дают за 1 VC$:')
     F.shop_num_field('shop_rate', 'например 91.5', fw, 1e9)
@@ -7172,13 +8074,12 @@ function F.shop_calc_card()
   F.hint(table.concat(pb, '  →  '))
   F.hint('Количество: всё, что лежит у тебя в инвентаре, но не больше, чем лавка скупает. Если в окне игры введено своё количество, считается оно.')
   F.card_end()
-  F.shop_calc_look()
 end
 
 -- How the window looks: what it shows, its size, where it stands.
 function F.shop_calc_look()
-  F.card_begin('Окошко расчёта', 'Что в нём показывать, размер и место. Пока открыта эта вкладка, окошко видно с примером', 'ICON_FA_SLIDERS_H')
-  F.hint('Какой пример показывать, пока открыта вкладка:')
+  F.card_begin('Окошко расчёта', 'Что в нём показывать, размер и место. Пока открыт раздел «Расчёт», окошко видно с примером', 'ICON_FA_SLIDERS_H')
+  F.hint('Какой пример показывать, пока открыт раздел:')
   F.shop_sample = F.segment('shopsample', {{'buy', 'Продажа в лавку'}, {'sell', 'Покупка в лавке'}}, F.shop_sample or 'buy',
     math.min(F.s(420), F.inner_w())) or F.shop_sample or 'buy'
   imgui.Spacing()
@@ -7220,7 +8121,7 @@ function F.shop_calc_look()
     F.shop_calc_ui()
     dirty = true
   end
-  F.hint('Двигать: тяни окошко мышью, пока открыта эта вкладка.')
+  F.hint('Двигать: тяни окошко мышью, пока открыт этот раздел.')
   F.card_end()
 end
 
@@ -7239,12 +8140,13 @@ F.WANT_SIDE = {buy = 'sell', sell = 'buy'}
 function F.want_load()
   F.wants, F.want_seq = {}, 0
   for _, line in ipairs(F.read_lines('fhelp_wants.txt')) do
-    local id, item, mode, price, on, name = line:match('^W|(%d+)|(%d+)|(%a+)|(%d+)|([01])|(.*)$')
+    local id, item, mode, price, on, ench, qual, name = line:match('^W2|(%d+)|(%d+)|(%a+)|(%d+)|([01])|(%d+)|(%d+)|(.*)$')
+    if not id then id, item, mode, price, on, name = line:match('^W|(%d+)|(%d+)|(%a+)|(%d+)|([01])|(.*)$') end
     if id and F.WANT_SIDE[mode] and #F.wants < F.WANT_MAX then
       id = tonumber(id)
       F.want_seq = math.max(F.want_seq, id)
       F.wants[#F.wants + 1] = {id = id, item = tonumber(item), mode = mode, price = tonumber(price), on = on == '1',
-        name = F.note_unesc(name)}
+        ench = tonumber(ench) or 0, q = tonumber(qual) or 0, name = F.note_unesc(name)}
     end
   end
   F.want_rev = F.want_rev + 1
@@ -7253,7 +8155,8 @@ end
 function F.want_save()
   local out = {}
   for _, w in ipairs(F.wants) do
-    out[#out + 1] = table.concat({'W', w.id, w.item, w.mode, string.format('%.0f', w.price), w.on and 1 or 0, F.note_esc(w.name or '')}, '|')
+    out[#out + 1] = table.concat({'W2', w.id, w.item, w.mode, string.format('%.0f', w.price), w.on and 1 or 0,
+      w.ench or 0, w.q or 0, F.note_esc(w.name or '')}, '|')
   end
   F.write_lines('fhelp_wants.txt', out)
   F.want_rev = F.want_rev + 1
@@ -7264,10 +8167,17 @@ function F.want_name(w)
   return it and it.name or (w.name ~= '' and w.name) or F.item_label(w.item)
 end
 
-function F.want_ok(w, r)
+-- Does the row answer the wish; the second value says whether the rating is known for sure.
+-- The rating is written only in the window of the item: until it is opened the row counts as
+-- a find that has to be checked.
+function F.want_ok(w, r, any_q)
   if r.id ~= w.item or r.k ~= F.WANT_SIDE[w.mode] or not r.price then return false end
-  if w.mode == 'buy' then return r.price <= w.price end
-  return r.price >= w.price
+  if w.mode == 'buy' then
+    if r.price > w.price then return false end
+  elseif r.price < w.price then return false end
+  if (w.ench or 0) > 0 and (r.ench or 0) < w.ench then return false end
+  if (w.q or 0) > 0 and not any_q and r.q and r.q < w.q then return false end
+  return true, (w.q or 0) == 0 or r.q ~= nil
 end
 
 function F.want_better(w, a, b)
@@ -7276,12 +8186,43 @@ function F.want_better(w, a, b)
 end
 
 -- The best price for the wish in one stall, or nil.
+-- Returns the price, the row and whether its rating is known.
 function F.want_in(w, s)
-  local best
+  local best, row, sure
   for _, r in ipairs(s.items) do
-    if F.want_ok(w, r) and (not best or F.want_better(w, r.price, best)) then best = r.price end
+    local ok, known = F.want_ok(w, r)
+    if ok and (not best or F.want_better(w, r.price, best) or (r.price == best and known and not sure)) then
+      best, row, sure = r.price, r, known
+    end
   end
-  return best
+  return best, row, sure
+end
+
+-- The goods are there and the price fits, but the rating in the window is too low: the best of them.
+function F.want_low(w, s)
+  local top
+  if (w.q or 0) <= 0 then return nil end
+  for _, r in ipairs(s.items) do
+    if r.q and r.q < w.q and F.want_ok(w, r, true) and (not top or r.q > top) then top = r.q end
+  end
+  return top
+end
+
+function F.want_extra(r, sure)
+  local t = {}
+  if r then
+    local tags = F.shop_tags(r)
+    if tags ~= '' then t[#t + 1] = tags end
+  end
+  if sure == false then t[#t + 1] = 'рейтинг не проверен: нажми на предмет в лавке' end
+  return table.concat(t, '  ·  ')
+end
+
+function F.want_limits(w)
+  local t = {}
+  if (w.ench or 0) > 0 then t[#t + 1] = 'заточка от +' .. w.ench end
+  if (w.q or 0) > 0 then t[#t + 1] = 'рейтинг от ' .. w.q end
+  return table.concat(t, '  ·  ')
 end
 
 -- "Убрать" hides a find until the same stall shows a better price.
@@ -7293,8 +8234,8 @@ end
 function F.want_hits(w)
   local out = {}
   for _, s in ipairs(F.shops) do
-    local p = F.want_in(w, s)
-    if p and not F.want_hidden(w, s, p) then out[#out + 1] = {shop = s, price = p, w = w} end
+    local p, r, sure = F.want_in(w, s)
+    if p and not F.want_hidden(w, s, p) then out[#out + 1] = {shop = s, price = p, w = w, r = r, sure = sure} end
   end
   table.sort(out, function(a, b)
     if a.price ~= b.price then return F.want_better(w, a.price, b.price) end
@@ -7338,16 +8279,19 @@ function F.want_sound()
   end)
 end
 
-function F.want_alert(w, s, p)
-  local name = F.want_name(w)
+function F.want_alert(w, s, p, r, sure)
+  local name = F.want_name(w) .. (r and r.ench and (' +' .. r.ench) or '')
   local where = F.shop_name(s)
+  local q = r and F.shop_q_text(r)
+  local more = (q and ('  ·  ' .. q) or '') .. (sure == false and '  ·  рейтинг проверь в окне предмета' or '')
   F.toast('want', {
     force = true, key = 'want' .. w.id .. s.key, item = w.item, icon = 'ICON_FA_BULLSEYE', life = 15, quiet = true,
     title = (w.mode == 'buy' and 'Нашёл: ' or 'Скупают: ') .. name,
-    text = F.fmt_money(p) .. '  ·  ' .. where .. '  ·  ' .. F.want_diff_text(w, p),
+    text = F.fmt_money(p) .. '  ·  ' .. where .. '  ·  ' .. F.want_diff_text(w, p) .. more,
   })
   F.chat_brand((w.mode == 'buy' and 'Нашёл ' or 'Скупают ') .. '{E08A55}' .. name .. '{FFFFFF} за ' .. F.fmt_money(p)
-    .. ' в ' .. where .. (s.num and ('. Маршрут: /fwant route') or ''))
+    .. ' в ' .. where .. (q and (', ' .. q) or '') .. (sure == false and ', рейтинг не проверен' or '')
+    .. (s.num and ('. Маршрут: /fwant route') or ''))
   F.want_sound()
   F.want_last = {id = w.id, key = s.key}
 end
@@ -7356,14 +8300,21 @@ end
 function F.want_check(s, old)
   for _, w in ipairs(F.wants) do
     if w.on then
-      local p = F.want_in(w, s)
-      local was = old and F.want_in(w, old)
-      if p and (not was or F.want_better(w, p, was)) then
+      local p, r, sure = F.want_in(w, s)
+      local was, was_sure
+      if old then
+        local _
+        was, _, was_sure = F.want_in(w, old)
+      end
+      -- A find is told once more when the window of the item has confirmed its rating.
+      if p and (not was or F.want_better(w, p, was) or (sure and not was_sure)) then
         if F.want_hide then F.want_hide[w.id .. '|' .. s.key] = nil end
-        F.want_alert(w, s, p)
+        F.want_alert(w, s, p, r, sure)
       elseif was and not p then
+        local low = F.want_low(w, s)
         F.toast('want', {force = true, quiet = true, key = 'wantgone' .. w.id .. s.key, item = w.item, icon = 'ICON_FA_TIMES',
-          title = 'Больше нет: ' .. F.want_name(w), text = F.shop_name(s) .. ': продано или цена изменилась'})
+          title = (low and 'Не подходит: ' or 'Больше нет: ') .. F.want_name(w),
+          text = F.shop_name(s) .. (low and (': рейтинг ' .. low .. ', а нужен от ' .. w.q) or ': продано или цена изменилась')})
       end
     end
   end
@@ -7378,7 +8329,8 @@ function F.want_find(item, mode)
 end
 
 -- A new wish, or a new price for the same item and side. Says at once what the stalls already showed.
-function F.want_add(item, mode, price)
+-- ench and qual: from which sharpening and which rating of quality to tell; nil keeps what was set.
+function F.want_add(item, mode, price, ench, qual)
   item, price = tonumber(item), tonumber(price)
   if not item or item <= 0 or not F.WANT_SIDE[mode] or not price or price <= 0 then return nil, 'нужны предмет и цена' end
   local w = F.want_find(item, mode)
@@ -7389,6 +8341,8 @@ function F.want_add(item, mode, price)
     F.wants[#F.wants + 1] = w
   end
   w.price, w.on = math.floor(price + 0.5), true
+  w.ench = math.max(0, math.min(99, math.floor(tonumber(ench) or w.ench or 0)))
+  w.q = math.max(0, math.min(9999999, math.floor(tonumber(qual) or w.q or 0)))
   w.name = F.want_name(w)
   F.want_save()
   local hits = F.want_hits(w)
@@ -7478,20 +8432,27 @@ function F.want_cmd(arg)
     if f == 'продать' or f == 'sell' then mode, rest = 'sell', tail
     elseif f == 'купить' or f == 'buy' then rest = tail end
   end
+  -- «+10» is the sharpening to start from, «r1000» the rating of quality; both stand before the price.
+  local ench, qual
+  rest = (' ' .. rest):gsub('%s%+(%d+)%f[%s%z]', function(n) ench = tonumber(n) return '' end)
+  rest = rest:gsub('%s[rR](%d+)%f[%s%z]', function(n) qual = tonumber(n) return '' end)
+  rest = F.trim((rest:gsub('%sр(%d+)%f[%s%z]', function(n) qual = tonumber(n) return '' end)))
   local name, price_s = rest:match('^(.-)%s+(%S+)$')
   local price = price_s and F.calc_eval(price_s)
   if not name or name == '' or not price or price <= 0 then
-    F.chat_brand('Формат: /fwant <предмет> <цена>, например /fwant Ларец Олигарха 1.5кк')
+    F.chat_brand('Формат: /fwant <предмет> [+заточка] [rрейтинг] <цена>, например /fwant Ларец Олигарха 1.5кк или /fwant Маска Шрек +10 5кк')
     return
   end
   local it = F.want_lookup(name)
   if not it then
-    F.chat_brand('Не нашёл предмет «' .. name .. '». Попробуй точнее или выбери в меню: Эксперимент → Лавки')
+    F.chat_brand('Не нашёл предмет «' .. name .. '». Попробуй точнее или выбери в меню: Лавки → Хочу найти')
     return
   end
-  local w, err = F.want_add(it.id, mode, price)
+  local w, err = F.want_add(it.id, mode, price, ench, qual)
   if not w then F.chat_brand('Не добавил: ' .. err) return end
-  F.chat_brand((mode == 'buy' and 'Ищу: ' or 'Продаю: ') .. '{E08A55}' .. w.name .. '{FFFFFF} ' .. (mode == 'buy' and 'не дороже ' or 'не дешевле ') .. F.fmt_money(w.price))
+  local lim = F.want_limits(w)
+  F.chat_brand((mode == 'buy' and 'Ищу: ' or 'Продаю: ') .. '{E08A55}' .. w.name .. '{FFFFFF} ' .. (mode == 'buy' and 'не дороже ' or 'не дешевле ') .. F.fmt_money(w.price)
+    .. (lim ~= '' and (', ' .. lim:gsub('  ·  ', ', ')) or ''))
 end
 
 -- One find: picture, name, where and when, price; the route and hide icons on the right.
@@ -7515,6 +8476,8 @@ function F.want_hit_row(h, i, main)
   local tw = rx - tx - F.s(8)
   local dist = F.shop_dist(h.shop)
   local sub = F.shop_name(h.shop) .. '  ·  ' .. F.ago(h.shop.t) .. (dist ~= '' and ('  ·  ' .. dist) or '')
+  local extra = F.want_extra(h.r, h.sure)
+  if extra ~= '' then sub = extra .. '  ·  ' .. sub end
   if old then sub = sub .. '  ·  могли уже купить' end
   if main then
     F.text_at(font_main, 16, tx, p.y + F.s(5), F.col('text', a), F.fit_text(font_main, F.want_name(h.w), tw))
@@ -7547,6 +8510,8 @@ function F.want_row(wi, i)
   local tw = sw_x - tx - F.s(12)
   local hits = wi.on and F.want_hits(wi) or {}
   local sub = (wi.mode == 'buy' and 'Купить не дороже ' or 'Продать не дешевле ') .. F.fmt_money(wi.price)
+  local lim = F.want_limits(wi)
+  if lim ~= '' then sub = sub .. '  ·  ' .. lim end
   if not wi.on then sub = sub .. '  ·  выключено'
   elseif #hits > 0 then sub = sub .. '  ·  находок: ' .. #hits
   else sub = sub .. '  ·  пока не видел' end
@@ -7587,14 +8552,22 @@ function F.want_form()
     if not it then F.notify('Выбери предмет из списка', true)
     elseif not price or price <= 0 then F.notify('Укажи цену, например 1.5кк', true)
     else
-      local ok, err = F.want_add(it.id, F.want_mode, price)
+      local ok, err = F.want_add(it.id, F.want_mode, price, tonumber((F.buf_get(ui.want_ench):gsub('%D', ''))) or 0,
+        tonumber((F.buf_get(ui.want_qual):gsub('%D', ''))) or 0)
       if ok then
         F.want_pick = nil
         F.buf_set(ui.want_q, '', 80)
         F.buf_set(ui.want_price, '', 32)
+        F.buf_set(ui.want_ench, '', 8)
+        F.buf_set(ui.want_qual, '', 8)
       else F.notify('Не добавил: ' .. err, true) end
     end
   end
+  -- From which sharpening and which rating of quality to tell about a find; empty: any.
+  local hw = math.min(F.s(230), (w - 8) / 2)
+  F.field('##wantench', 'Заточка от: 10', ui.want_ench, 8, hw, 'want_ench')
+  imgui.SameLine(0, 8)
+  F.field('##wantqual', 'Рейтинг качества от: 1000', ui.want_qual, 8, hw, 'want_qual')
   local q = F.trim(F.buf_get(ui.want_q))
   if q ~= '' and not (pick and F.lower_fast(q) == pick.low) then
     local list = F.want_matches(q, 6)
@@ -7635,7 +8608,9 @@ function F.draw_wants()
   imgui.Spacing()
   F.chest_flag('wantpin', 'Находки на экране', 'want_pin', 'Плашка с находками, пока меню закрыто. Двигается, когда меню открыто на этой вкладке')
   F.chest_flag('wantsnd', 'Звук находки', 'want_sound', 'Отдельный звук, даже если у уведомлений звук выключен')
-  F.hint('Команды: /fwant <предмет> <цена>, /fwant продать <предмет> <цена>, /fwant route — маршрут к последней находке.')
+  F.hint('Заточка и рейтинг — необязательные: пусто значит любые. Чтобы поменять их у предмета из списка, добавь его ещё раз.')
+  F.hint('Заточку лавка показывает сразу. Рейтинг качества игра пишет только в окне предмета: fHelper скажет о находке, а рейтинг сверит, когда нажмёшь на предмет в лавке.')
+  F.hint('Команды: /fwant <предмет> <цена>, /fwant <предмет> +10 r1000 <цена>, /fwant продать <предмет> <цена>, /fwant route — маршрут к последней находке.')
   F.card_end()
 end
 
@@ -7720,6 +8695,7 @@ end
 function F.proj_set(key)
   if key == cfg.proj or not F.PROJ[key] then return end
   if F.int_dirty then F.int_save() end
+  pcall(F.bag_flush)
   if cfg.vc_here == 1 then F.here_set(false) end
   cfg.proj = key
   cfg.money_real, cfg.alt_money_real = cfg.alt_money_real, cfg.money_real
@@ -7748,10 +8724,15 @@ end
 
 function F.draw_exp()
   F.page_head('Экспериментальный режим', 'Функции, которые ещё обкатываются')
-  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'cars', 'Машины'}, {'mem', 'Память'}}, F.exp_tab or 'proj', nil, F.news_tabs('exp')) or F.exp_tab or 'proj'
+  -- The cars moved to their own page, «Хранилище»; an old link to the tab leads there.
+  if F.exp_tab == 'cars' then
+    F.exp_tab = 'proj'
+    F.section_set('store', 'cars')
+    page = 'store'
+  end
+  F.exp_tab = F.segment('exptab', {{'proj', 'Проект'}, {'mem', 'Память'}}, F.exp_tab or 'proj', nil, F.news_tabs('exp')) or F.exp_tab or 'proj'
   imgui.Spacing()
-  if F.exp_tab == 'cars' then F.draw_cars()
-  elseif F.exp_tab == 'mem' then F.draw_exp_mem()
+  if F.exp_tab == 'mem' then F.draw_exp_mem()
   else F.draw_exp_proj() end
 end
 
@@ -8336,6 +9317,7 @@ F.BAK_MERGE = {binds = F.bak_merge_binds, favs = F.bak_merge_favs, wants = F.bak
 function F.bak_flush()
   pcall(F.note_flush)
   if F.int_dirty then pcall(F.int_save) end
+  pcall(F.bag_flush)
   pcall(F.save_cfg)
 end
 
@@ -8579,12 +9561,12 @@ end
 -- settings changed from the defaults, the other scripts and the tail of the journals.
 F.REP_KEEP = 12
 F.REP_STALL, F.REP_BIG = 0.1, 0.5
-F.REP_WARM = 20
+F.REP_WARM = 60
 F.REP_SKIP = {vc_rate_last = true, vc_rate_buy_last = true, rep_seen = true, open = true, x = true, y = true, wel_at = true, inc_from = true, inc_to = true, last = true, seen_ver = true, money_real = true, bank = true, depo = true,
   alt_money_real = true, alt_bank = true, alt_depo = true, loc2_money = true, loc2_bank = true, loc2_depo = true}
 F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
   bar_want = 'плашка розыска', bar_shift = 'плашка смены', bar_time = 'плашка времени', bar_car = 'плашка машины', bar_calc = 'окошко расчёта у лавки',
-  calc = 'калькулятор и закрепы'}
+  calc = 'калькулятор и закрепы', events = 'разбор пакетов игры'}
 
 --@full{
 F.REP_UPD = {idle = 'ещё не проверялось', off = 'выключено', checking = 'идёт проверка', fail = 'нет связи с GitHub',
@@ -8655,6 +9637,27 @@ function F.rep_wrap(name, fn)
 end
 
 -- One frame of the game: the time since the previous one. A pause or a minimised game is not a stall.
+function F.rep_focus()
+  if not ffi_ok then return nil end
+  if F._fg_def == nil then
+    F._fg_def = pcall(ffi.cdef, [[
+      void* __stdcall GetForegroundWindow(void);
+      unsigned long __stdcall GetWindowThreadProcessId(void* hwnd, unsigned long* pid);
+      unsigned long __stdcall GetCurrentProcessId(void);
+    ]])
+  end
+  local ok, front = pcall(function()
+    local u32 = ffi.load('user32')
+    local hwnd = u32.GetForegroundWindow()
+    if hwnd == nil then return false end
+    local pid = ffi.new('unsigned long[1]')
+    u32.GetWindowThreadProcessId(hwnd, pid)
+    return pid[0] == ffi.C.GetCurrentProcessId()
+  end)
+  if not ok then return nil end
+  return front
+end
+
 function F.rep_frame(t, paused)
   if cfg.rep_on ~= 1 then return end
   local r = F.rep
@@ -8665,7 +9668,8 @@ function F.rep_frame(t, paused)
   if not last then return end
   local dt = t - last
   if dt <= 0 then return end
-  -- The first seconds after the script starts it loads its data: that is not the game stalling.
+  -- The first minute after the script starts the game loads the world and the script its data:
+  -- that is not the game stalling.
   if not r.warm then r.warm = last + F.REP_WARM end
   if t < r.warm then return end
   if paused or dt > 5 then
@@ -8691,7 +9695,11 @@ function F.rep_frame(t, paused)
     local mine = own >= dt * 0.4 or own >= 0.05
     if mine then s.ours = s.ours + 1 end
     local list = r.stalls
-    list[#list + 1] = {t = os.time(), dt = dt, own = own, top = top, mine = mine, page = show and F.rep_page_key() or nil}
+    local front = F.rep_focus()
+    if front == false then s.back = (s.back or 0) + 1 end
+    local chat, dlg = pcall(sampIsChatInputActive), pcall(sampIsDialogActive)
+    list[#list + 1] = {t = os.time(), dt = dt, own = own, top = top, mine = mine, page = show and F.rep_page_key() or nil,
+      front = front, chat = chat and sampIsChatInputActive() or false, dlg = dlg and sampIsDialogActive() or false}
     if #list > 25 then table.remove(list, 1) end
   end
   if m.sum >= 60 then
@@ -9298,10 +10306,14 @@ function F.rep_build(kind, why)
   end
   if #r.stalls > 0 then
     L(string.format('Последние фризы и кто в них виноват (по вине fHelper всего %d из %d):', d.ours or 0, d.stall))
+    if (r.all.back or 0) > 0 then
+      L(string.format('  Из них %d — когда игра была не на переднем плане (свёрнута или открыто другое окно): в фоне она рисует кадр редко, это не фриз.', r.all.back))
+    end
     for i = math.max(1, #r.stalls - 14), #r.stalls do
       local x = r.stalls[i]
-      L(string.format('  %s  %4.0f мс  fHelper занял %5.1f мс%s%s%s', os.date('%H:%M:%S', x.t), x.dt * 1000, x.own * 1000,
+      L(string.format('  %s  %4.0f мс  fHelper занял %5.1f мс%s%s%s%s', os.date('%H:%M:%S', x.t), x.dt * 1000, x.own * 1000,
         x.top and (' (больше всего: ' .. x.top .. ')') or '', x.page and (', открыто меню: ' .. F.news_title(x.page)) or '',
+        (x.front == false and ', игра была не на переднем плане' or '') .. (x.dlg and ', открыто окно игры' or '') .. (x.chat and ', открыт чат' or ''),
         x.mine and '  <- fHelper' or ''))
     end
   end
@@ -9343,6 +10355,14 @@ function F.rep_build(kind, why)
     end
   end
   L(string.format('Своя память fHelper: %.1f МБ, картинок предметов загружено: %s', d.lua, tostring((F.mem_st or {}).pics or 0)))
+  local ldb = F._lib
+  if ldb and (ldb.tex_n or 0) > 0 then
+    L(string.format('Картинки предметов в меню: показано %d, одна в среднем %.2f мс, дольше всего %.2f мс; за кадр не больше %d мс',
+      ldb.tex_n, ldb.tex_sum / ldb.tex_n * 1000, (ldb.tex_max or 0) * 1000, F.LIB_TEX_MS))
+  end
+  if ldb and (ldb.pic_n or 0) > 0 then
+    L(string.format('Новых картинок подготовлено: %d, одна в среднем %.0f мс', ldb.pic_n, ldb.pic_sum / ldb.pic_n * 1000))
+  end
 
   H('Память игры')
   if d.free then
@@ -9726,8 +10746,12 @@ end
 --@full}
 F.ABOUT_TEXT = F.ABOUT_TEXT .. 'Открыть меню: /fhelp.'
 
+F.SET_SECS = {{'look', 'Вид'}, {'beh', 'Поведение'}, {'toast', 'Уведомления'}, {'data', 'Данные'}, {'rep', 'Отчёт'}, {'about', 'О fHelper'}}
+
 function F.draw_settings_page()
   F.page_head('Настройки', 'Вид окна, сообщения и данные fHelper')
+  local sec = F.sections('set', F.SET_SECS)
+  if sec == 'look' then
   F.card_begin('Окно', nil, 'ICON_FA_WINDOW_MAXIMIZE')
   if F.slider_row('opacity', 'Непрозрачность', ui_opacity, F.OPACITY_MIN * 100, 100, '%.0f%%') then
     cfg.opacity = math.max(F.OPACITY_MIN, math.min(1, ui_opacity[0] / 100))
@@ -9749,6 +10773,8 @@ function F.draw_settings_page()
   end
   F.card_end()
   F.look_card()
+  end
+  if sec == 'beh' then
   F.card_begin('Поведение', nil, 'ICON_FA_SLIDERS_H')
   if F.switch('notify', 'Сообщения в чат', cfg.notify == 1, 'Короткие ответы fHelper в чате игры') then
     cfg.notify = cfg.notify == 1 and 0 or 1
@@ -9764,13 +10790,19 @@ function F.draw_settings_page()
     cfg.news_on = cfg.news_on == 1 and 0 or 1
     dirty = true
   end
+  if F.switch('smooth', 'Плавная прокрутка', cfg.smooth == 1, 'Страницы и списки едут за колесом мыши плавно, а не шагами') then
+    cfg.smooth = cfg.smooth == 1 and 0 or 1
+    F._smooth = nil
+    dirty = true
+  end
   if F.switch('welon', 'Приветствие', cfg.wel_on == 1, 'Окно «Добро пожаловать» при первом открытии меню после перерыва больше часа') then
     cfg.wel_on = cfg.wel_on == 1 and 0 or 1
     dirty = true
   end
   F.card_end()
-  F.toast_settings()
-  F.upd_card() --@full
+  end
+  if sec == 'toast' then F.toast_settings() end
+  if sec == 'data' then
   F.bak_card()
   F.card_begin('Данные', 'Всё хранится в moonloader\\config', 'ICON_FA_DATABASE')
   local m = F.mem_st or {}
@@ -9785,7 +10817,10 @@ function F.draw_settings_page()
     F.ask('Сбросить время в игре и трафик? Пейдеи, бинды и заметки останутся.', 'Сбросить', 'fn', {fn = F.reset_stats})
   end
   F.card_end()
-  F.rep_card()
+  end
+  if sec == 'rep' then F.rep_card() end
+  if sec ~= 'about' then return end
+  F.upd_card() --@full
   F.card_begin('О fHelper', 'Помощник для Arizona RP и Rodina RP', 'ICON_FA_INFO_CIRCLE')
   local p = imgui.GetCursorScreenPos()
   local x = p.x
@@ -9820,6 +10855,32 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.15', '12.11.2026', {
+    {'chg', 'Калькулятор: окошко на экране и закреплённые заметки стали легче — ответ и текст пересчитываются, только когда меняются'},
+    {'chg', 'Настройки: отчёт не считает фризы первой минуты после входа, когда игра догружает мир'},
+    {'add', 'Калькулятор: режим обмена VC$ — ответ сразу пересчитывается по твоему курсу продажи или покупки, с комиссией. Режим меняется нажатием на строку под ответом'},
+    {'add', 'Калькулятор: курсы и комиссии обмена VC$ настраиваются на вкладке, они общие с окошком расчёта у лавки'},
+    {'add', 'Лавки: окошко расчёта дописывает сумму после комиссии продажи, а у лавок с ценами в долларах — сколько это в VC$ и сколько останется после комиссии обмена'},
+    {'add', 'Лавки: у товара видна заточка (+N), а после нажатия на предмет в лавке — класс и рейтинг качества из окна игры'},
+    {'add', 'Лавки: в «Хочу найти» можно указать, с какой заточки и с какого рейтинга качества сообщать о находке'},
+    {'chg', 'Лавки: вкладка разбита на разделы — лавки, «Хочу найти», перепродажа, расчёт и настройки, листать больше не надо'},
+    {'chg', 'Предметы: в карточке предмета описание показано как в игре — абзацы, списки, цветные слова и пометки, а не один сплошной текст'},
+    {'chg', 'Предметы: бафы в карточке стоят первыми, каждый отдельной строкой — число крупно и для какой работы он'},
+    {'fix', 'Предметы: список больше не дёргает игру и мышь — картинки появляются понемногу, а не пачкой за один кадр, и не готовятся, пока листаешь'},
+    {'add', 'Хранилище: новая вкладка в меню — твой инвентарь и багажники машин в одном месте'},
+    {'chg', 'Бинды: «Клавиши» переехали сюда отдельным разделом, в меню слева стало на строку меньше'},
+    {'add', 'Настройки: плавная прокрутка — страницы и списки едут за колесом мыши плавно, без рывков. Выключается в «Поведении»'},
+    {'fix', 'Главная: список разделов слева снова влезает целиком при любом размере окна и масштабе'},
+    {'chg', 'Хранилище: пакеты инвентаря разбираются один раз на все разделы, запись на диск идёт не чаще раза в полторы минуты, а в сетке рисуются только видимые карточки'},
+    {'add', 'Хранилище: инвентарь записывается сам, когда ты его открываешь — поиск, сортировка, сводка с оценкой по лавкам и история изменений'},
+    {'add', 'Хранилище: нажатие на предмет открывает его осмотр — количество, заточка, класс и рейтинг качества, прочность, срок, где лежит и цена в лавках'},
+    {'chg', 'Хранилище: машины переехали сюда из «Эксперимента» и разбиты на разделы — содержимое, запись машины, история, сканер'},
+    {'chg', 'Настройки: страница разбита на разделы — вид, поведение, уведомления, данные, отчёт и «О fHelper»'},
+    {'chg', 'Экран: плашка FPS, время и графика — отдельными разделами'},
+    {'chg', 'Калькулятор: расчёт, история, обмен VC$ и окошко — отдельными разделами'},
+    {'chg', 'Сундуки: таймеры и настройки — отдельными разделами'},
+    {'chg', 'Доходы: в «Обзоре», «Работе» и «Предметах» появились свои разделы, длинную ленту листать больше не надо', 'income'},
+  }},
   {'1.19.14', '12.11.2026', {
     {'fix', 'Предметы: декодер картинок Windows запускается заранее, при старте скрипта, чтобы первая картинка не подвешивала игру'},
     {'chg', 'Смена: плашка смены и вкладка «Работа» стали в несколько раз легче — строки считаются раз в секунду, а не каждый кадр', 'income:work'},
@@ -10129,15 +11190,15 @@ end
 -- and its tab carry a pulsing dot, and the first visit shows what changed there, once.
 F.NEWS_WHERE = {
   {'Лесоруб', 'income:work'}, {'Смена', 'income:work'}, {'Смены', 'income:work'}, {'Доходы', 'income'},
-  {'Память', 'exp:mem'}, {'Лавки', 'shops'}, {'Машины', 'exp:cars'},
+  {'Память', 'exp:mem'}, {'Лавки', 'shops'}, {'Машины', 'store'}, {'Хранилище', 'store'}, {'Инвентарь', 'store'},
   {'Скрипты', 'scripts'}, {'Настройки', 'settings'}, {'Библиотека', 'items'}, {'Предметы', 'items'},
   {'Сундуки', 'chests'}, {'Чат', 'chat'}, {'Бинды', 'binds'}, {'Заметки', 'notes'}, {'Калькулятор', 'calc'},
-  {'Крафт', 'craft'}, {'Клавиши', 'hotkeys'}, {'Экран', 'screen'}, {'Журнал', 'logs'}, {'Главная', 'home'},
+  {'Крафт', 'craft'}, {'Клавиши', 'binds'}, {'Экран', 'screen'}, {'Журнал', 'logs'}, {'Главная', 'home'},
 }
 F.NEWS_TABS = {
   income = {over = 'Обзор', pay = 'Пейдеи', work = 'Работа', sell = 'Продажи', buy = 'Покупки', spend = 'Расходы',
     other = 'Прочее', items = 'Предметы'},
-  exp = {proj = 'Проект', cars = 'Машины', mem = 'Память'},
+  exp = {proj = 'Проект', mem = 'Память'},
 }
 
 function F.note_where(row)
@@ -10467,13 +11528,22 @@ end
 
 -- The interface gets the real sum as event.player.updateMoney. GTA's own value is capped.
 function F.cef_packet(bs)
+  local t0 = F.rep_clock()
+  F.cef_packet_run(bs)
+  F.rep_part('events', F.rep_clock() - t0)
+end
+
+function F.cef_packet_run(bs)
   local ok, text = pcall(F.cef_text, bs)
   pcall(raknetBitStreamResetReadPointer, bs)
   if not ok or type(text) ~= 'string' then return end
+  F._inv_json = nil
   local fine, err = pcall(F.car_packet, text)
   if not fine then F.feed_err('машины', err) end
   fine, err = pcall(F.shop_packet, text)
   if not fine then F.feed_err('лавки', err) end
+  fine, err = pcall(F.bag_packet, text)
+  if not fine then F.feed_err('инвентарь', err) end
   fine, err = pcall(F.chest_packet, text)
   if not fine then F.feed_err('сундуки', err) end
   fine, err = pcall(F.gas_packet, text)
@@ -12015,9 +13085,7 @@ function F.wood_packet(text)
   end
   if not text:find('playerInventory', 1, true) then return end
   for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
-    local v = F.json_value(body, 1)
-    if type(v) == 'table' and v.action == nil then v = v[1] end
-    if type(v) == 'string' then v = F.json_value(v, 1) end
+    local v = F.inv_json(body)
     if type(v) == 'table' then F.wood_inv_event(v) end
   end
 end
@@ -12575,10 +13643,15 @@ function F.shift_bar_card()
 end
 
 function F.income_work(from, to)
-  F.shift_card()
-  F.shift_history()
-  F.shift_bar_card()
-  F.income_list('work', from, to)
+  local sec = F.sections('incwork', F.INC_WORK_SECS)
+  if sec == 'hist' then
+    if F.shift_stats().all == 0 then
+      F.empty('ICON_FA_HISTORY', 'Смен пока нет', 'Закончи первую смену, и она появится здесь')
+    end
+    F.shift_history()
+  elseif sec == 'bar' then F.shift_bar_card()
+  elseif sec == 'ops' then F.income_list('work', from, to)
+  else F.shift_card() end
 end
 
 F.PERIODS = {
@@ -12736,10 +13809,27 @@ function F.led_row(r, i)
   F.advance(p, w, h - 4)
 end
 
+F.INC_OVER_SECS = {{'sum', 'Итоги'}, {'chart', 'График'}, {'cats', 'Статьи'}, {'ops', 'Операции'}}
+F.INC_WORK_SECS = {{'shift', 'Смена'}, {'hist', 'История смен'}, {'bar', 'Плашка'}, {'ops', 'Операции'}}
+F.INC_ITEM_SECS = {{'sum', 'Что пришло'}, {'log', 'По порядку'}}
+
 function F.income_over(from, to)
   local s = F.led_stats(from, to)
   -- The other city's accounts wait in loc2_* until the next flight.
   local here = (F.inc_cur() == 'vc') == F.here_vc()
+  local sec = F.sections('incover', F.INC_OVER_SECS)
+  if sec == 'chart' then
+    F.income_chart(s, from, to)
+    return
+  end
+  if sec == 'cats' then
+    F.income_cats(s)
+    return
+  end
+  if sec == 'ops' then
+    F.income_last(from, to)
+    return
+  end
   F.card_begin('Счета сейчас', not here and (F.inc_cur() == 'vc' and 'Vice City: как было, когда ты там был'
     or 'Сан-Андреас: как было перед вылетом') or nil, 'ICON_FA_WALLET')
   F.tile_grid('acc', {
@@ -12770,7 +13860,9 @@ function F.income_over(from, to)
   if F.button('Скопировать отчёт##increp', 200, 0) then F.note_copy(F.income_report(s, from, to)) end
   if imgui.IsItemHovered() then F.tip('Итоги, статьи доходов и расходов текстом') end
   F.card_end()
-  F.income_chart(s, from, to)
+end
+
+function F.income_cats(s)
   local function block(title, icon, list, total, col, none)
     F.card_begin(title, nil, icon)
     if #list == 0 then F.hint(none) end
@@ -12782,10 +13874,13 @@ function F.income_over(from, to)
   end
   block('Откуда деньги', 'ICON_FA_ARROW_DOWN', s.gin, s.inc, F.col('accent'), 'За этот период доходов нет.')
   block('Куда ушли', 'ICON_FA_ARROW_UP', s.gout, s.exp, F.col('bad'), 'За этот период расходов нет.')
+end
+
+function F.income_last(from, to)
   local view = F.led_view(nil, from, to, '')
-  F.card_begin('Последние операции', nil, 'ICON_FA_HISTORY')
+  F.card_begin('Последние операции', #view.rows > 30 and 'Показаны последние 30. Все — во вкладках «Работа», «Продажи», «Покупки», «Расходы», «Прочее»' or nil, 'ICON_FA_HISTORY')
   if #view.rows == 0 then F.hint('Операции появятся здесь, когда они пройдут в чате.') end
-  for i = 1, math.min(#view.rows, 12) do F.led_row(view.rows[i], i) end
+  for i = 1, math.min(#view.rows, 30) do F.led_row(view.rows[i], i) end
   F.card_end()
 end
 
@@ -13505,6 +14600,17 @@ function F.income_items(from, to)
     {'ICON_FA_HISTORY', 'Записей', tostring(view.n)},
   }, 200)
   imgui.Spacing()
+  local sec = F.sections('incitems', F.INC_ITEM_SECS)
+  if sec == 'log' then
+    F.card_begin('По порядку', view.n > #view.rows and ('Последние ' .. #view.rows .. ' из ' .. view.n) or nil, 'ICON_FA_HISTORY')
+    if #view.rows == 0 then F.hint('Записей за этот период нет.') end
+    for i = 1, #view.rows do
+      local r = view.rows[i]
+      F.item_row(r.name, r.id, F.short_stamp(r.t) .. '  ·  ' .. (F.ITL_SRC[r.src] or ''), '×' .. r.qty, 1000 + i)
+    end
+    F.card_end()
+    return
+  end
   F.card_begin('Что пришло', 'Одинаковые предметы сложены, больше всего сверху', 'ICON_FA_LAYER_GROUP')
   if #view.groups == 0 then
     F.empty('ICON_FA_BOX_OPEN', 'Предметов нет', F.itl_where == 'box'
@@ -13519,14 +14625,6 @@ function F.income_items(from, to)
   end
   if #view.groups > 60 then F.hint('И ещё предметов: ' .. (#view.groups - 60)) end
   F.card_end()
-  if #view.rows > 0 then
-    F.card_begin('По порядку', view.n > #view.rows and ('Последние ' .. #view.rows .. ' из ' .. view.n) or nil, 'ICON_FA_HISTORY')
-    for i = 1, #view.rows do
-      local r = view.rows[i]
-      F.item_row(r.name, r.id, F.short_stamp(r.t) .. '  ·  ' .. (F.ITL_SRC[r.src] or ''), '×' .. r.qty, 1000 + i)
-    end
-    F.card_end()
-  end
 end
 
 -- Chests with a cooldown. The inventory sends "time" for such an item: the moment it opens again.
@@ -13686,9 +14784,7 @@ function F.chest_packet(text)
   if not text:find('playerInventory', 1, true) or not text:find('"time"', 1, true) then return end
   for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
     if body:find('"time"%s*:%s*[1-9]') then
-      local v = F.json_value(body, 1)
-      if type(v) == 'table' and v.action == nil then v = v[1] end
-      if type(v) == 'string' then v = F.json_value(v, 1) end
+      local v = F.inv_json(body)
       if type(v) == 'table' and (v.action == 0 or v.action == 2) and type(v.data) == 'table'
         and tonumber(v.data.type) == 1 and type(v.data.items) == 'table' then
         F.chest_items(v.data.items)
@@ -13863,6 +14959,8 @@ function F.chest_row(e, i, now)
   return act
 end
 
+F.CHEST_SECS = {{'timers', 'Таймеры'}, {'set', 'Настройки'}}
+
 function F.draw_chests()
   F.page_head('Сундуки', 'Таймеры сундуков и тайников: fHelper скажет, когда их снова можно открыть')
   local st = F.chest_state()
@@ -13881,8 +14979,13 @@ function F.draw_chests()
     {'ICON_FA_CLOCK', 'Ближайший', next_e and F.left_text(next_e.ends - now) or '—'},
   }, 200)
   imgui.Spacing()
+  local sec = F.sections('chests', F.CHEST_SECS)
+  if sec == 'set' then
+    F.chest_set_card()
+    return
+  end
   if cfg.chest_on ~= 1 then
-    F.empty('ICON_FA_GIFT', 'Таймеры выключены', 'Включи их в карточке «Как работает» ниже')
+    F.empty('ICON_FA_GIFT', 'Таймеры выключены', 'Включи их в разделе «Настройки»')
   end
   F.card_begin('Таймеры', #list > 0 and 'Убрать таймер можно корзиной справа' or nil, 'ICON_FA_HOURGLASS_HALF')
   if #list == 0 then
@@ -13909,6 +15012,9 @@ function F.draw_chests()
     end
   end
   F.card_end()
+end
+
+function F.chest_set_card()
   F.card_begin('Как работает', 'Время берётся прямо из инвентаря, поэтому оно точное', 'ICON_FA_COG')
   F.chest_flag('chon', 'Следить за сундуками', 'chest_on', 'Запоминать таймеры сундуков, тайников, ящиков и ларцов')
   if cfg.chest_on == 1 then
@@ -15262,6 +16368,9 @@ end
 -- pictures stay off until the player turns them on again.
 function F.lib_lock_path() return F.cfg_dir() .. '\\fhelp_pics.lock' end
 
+F.LIB_PIC_GAP = 0.03
+F.LIB_PIC_HOLD = 0.2
+
 function F.lib_pic_tick()
   local db = F._lib
   if not db or not db.want or db.nowic then return end
@@ -15275,6 +16384,11 @@ function F.lib_pic_tick()
       return
     end
   end
+  -- Windows needs 30-50 ms for one picture. One every frame made the game and the mouse jerk,
+  -- so after a picture the game gets as much time for itself, and nothing is made while the
+  -- list is being scrolled.
+  local now = os.clock()
+  if now < (F._pic_next or 0) or now < (F._pic_hold or 0) then return end
   local best, at
   for zat, w in pairs(db.want) do
     if not best or w.frame > best.frame then best, at = w, zat end
@@ -15289,6 +16403,9 @@ function F.lib_pic_tick()
   end
   local ok, err = pcall(F.lib_pic_make, db, best.it)
   os.remove(F.lib_lock_path())
+  local took = os.clock() - now
+  F._pic_next = os.clock() + math.max(F.LIB_PIC_GAP, math.min(0.25, took))
+  db.pic_n, db.pic_sum = (db.pic_n or 0) + 1, (db.pic_sum or 0) + took
   if not ok then
     F.lib_pics(db).map[at] = false
     F.log_line('Библиотека: картинка не сделалась: ' .. tostring(err))
@@ -15873,6 +16990,8 @@ function F.mem_text()
   return s
 end
 
+F.LIB_TEX_MS = 3
+
 function F.lib_tex(it)
   if not it.pic_n or it.pic_n <= 0 then return nil end
   local db, frame = F.lib_db(), imgui.GetFrameCount()
@@ -15881,17 +17000,20 @@ function F.lib_tex(it)
     e.used = frame
     return e.tex
   end
-  -- Scrolling through the list must not stall the game.
-  if db.frame ~= frame then db.frame, db.budget = frame, 8 end
-  if db.budget <= 0 then return nil end
-  db.budget = db.budget - 1
+  -- Scrolling through the list must not stall the game. Making a texture takes the game a few
+  -- milliseconds, so a frame makes them only while they fit into F.LIB_TEX_MS; the rest wait
+  -- for the next frames as placeholders.
+  if db.frame ~= frame then db.frame, db.spent = frame, 0 end
+  if db.spent >= F.LIB_TEX_MS / 1000 then return nil end
+  local t0 = F.rep_clock()
   local png, busy = F.lib_png(db, it, frame)
-  if busy then
-    db.budget = db.budget + 1
-    return nil
-  end
+  if busy then return nil end
   local ok, tex = false, nil
   if png then ok, tex = pcall(imgui.CreateTextureFromFileInMemory, png, #png) end
+  local took = F.rep_clock() - t0
+  db.spent = db.spent + math.max(took, 0.0002)
+  db.tex_n, db.tex_sum = (db.tex_n or 0) + 1, (db.tex_sum or 0) + took
+  if took > (db.tex_max or 0) then db.tex_max = took end
   if not (ok and tex) and not db.pic_failed then
     db.pic_failed = true
     F.log_line('Библиотека: картинка не загрузилась: ' .. tostring(tex))
@@ -15924,7 +17046,8 @@ end
 
 -- The name on a card, in two lines at most.
 function F.lib_lines(it, w)
-  if it.line_w == w then return it.line1, it.line2 end
+  if it.line_w == w and it.line_s == cfg.scale then return it.line1, it.line2 end
+  it.line_s = cfg.scale
   local max_w = w / 0.875
   local one, rest = it.name, ''
   if F.text_w(font_main, one) > max_w then
@@ -15939,6 +17062,7 @@ function F.lib_lines(it, w)
     else rest = F.fit_text(font_main, it.name:sub(pos), max_w) end
   end
   it.line_w, it.line1, it.line2 = w, one, rest
+  it.w1, it.w2 = F.text_w(font_main, one) * 0.875, rest ~= '' and F.text_w(font_main, rest) * 0.875 or 0
   it.cut = one .. (rest == '' and '' or ' ' .. rest) ~= it.name
   return one, rest
 end
@@ -16141,14 +17265,14 @@ function F.lib_card(it, x, y, w, h, hovered)
     picked and F.col('accent', 150) or F.col('text', hovered and 34 or 14), 10)
   local sz = F.s(56)
   F.lib_pic(it, x + (w - sz) / 2, y + F.s(6), sz)
-  if it.id and F.lib_marks().fav[it.id] then
+  if it.id and F._libm and F._libm.fav[it.id] then
     local star = F.faico('ICON_FA_STAR')
     if star ~= '' then F.text_at(font_main, 14, x + F.s(7), y + F.s(5), F.col('accent_hi'), star) end
   end
   local one, two = F.lib_lines(it, w - F.s(10))
   local ty = y + F.s(66)
-  F.text_at(font_main, 14, x + (w - F.text_w(font_main, one) * 0.875) / 2, ty, F.col('text'), one)
-  F.text_at(font_main, 14, x + (w - F.text_w(font_main, two) * 0.875) / 2, ty + F.s(16), F.col('text', 170), two)
+  F.text_at(font_main, 14, x + (w - (it.w1 or 0)) / 2, ty, F.col('text'), one)
+  if two ~= '' then F.text_at(font_main, 14, x + (w - (it.w2 or 0)) / 2, ty + F.s(16), F.col('text', 170), two) end
   if hovered then
     if F.lib_mode == 'buff' and it.btip then F.tip(it.name .. '\n' .. it.btip)
     elseif F.int_pick then F.tip(it.name .. '\nНажми, чтобы вставить')
@@ -16164,12 +17288,17 @@ function F.lib_grid(v, w, h)
   local cw = math.floor((inner - gap * (cols - 1)) / cols)
   local ch = math.floor(F.s(106))
   local rh = ch + gap
-  imgui.BeginChild('##libgrid', imgui.ImVec2(w, h), false)
+  imgui.BeginChild('##libgrid', imgui.ImVec2(w, h), false, F.smooth_flag())
+  F.smooth('libgrid')
   if v.fresh then
     imgui.SetScrollY(0)
     v.fresh = false
   end
   local sy = imgui.GetScrollY()
+  if v._sy ~= sy then
+    if v._sy then F._pic_hold = os.clock() + F.LIB_PIC_HOLD end
+    v._sy = sy
+  end
   local base = imgui.GetCursorScreenPos()
   local rows = math.ceil(#v / cols)
   imgui.Dummy(imgui.ImVec2(1, math.max(1, rows * rh)))
@@ -16270,13 +17399,288 @@ function F.lib_desc(it)
   return it.desc
 end
 
+-- The description as the game keeps it: with colours, line breaks and emoji codes.
+function F.lib_raw(it)
+  if it.raw == nil then
+    it.raw = (it.desc_n or 0) > 0 and F.lib_read(it.desc_at, it.desc_n) or ''
+  end
+  return it.raw
+end
+
+-- The game writes a description as a dialog text: lines broken by hand in the middle of a
+-- sentence, lists with "- ", coloured words, emoji codes as bullets and marks. The card makes
+-- blocks of it: paragraphs, list items and notes, each a row of coloured pieces.
+F.DESC_DOTS = {['1f7e1'] = {250, 204, 21}, ['1f7e8'] = {250, 204, 21}, ['1f7e5'] = {239, 68, 68}, ['1f7eb'] = {180, 120, 70},
+  ['1f7ea'] = {168, 85, 247}, ['1f7e6'] = {59, 130, 246}, ['1f7e7'] = {249, 115, 22}, ['1f7e9'] = {34, 197, 94}, ['1fa77'] = {244, 114, 182}}
+F.DESC_BULLET = {boom = true, zap = true, crown = true, trophy = true, link = true, skull = true, gift = true, yum = true}
+F.DESC_NOTES = {pushpin = true, info = true}
+F.DESC_DROP = {nb = true, nc = true, nd = true, ne = true, nf = true}
+
+function F.desc_code(c)
+  return c:match('^u%x+$') or F.DESC_BULLET[c] or F.DESC_NOTES[c] or F.DESC_DROP[c]
+end
+
+-- Takes n bytes and the spaces around them off the start of a row of pieces.
+function F.desc_cut(runs, n)
+  local function ltrim()
+    while runs[1] do
+      runs[1][1] = runs[1][1]:gsub('^%s+', '')
+      if runs[1][1] ~= '' then break end
+      table.remove(runs, 1)
+    end
+  end
+  ltrim()
+  while n > 0 and runs[1] do
+    local t = runs[1][1]
+    if #t > n then
+      runs[1][1] = t:sub(n + 1)
+      n = 0
+    else
+      n = n - #t
+      table.remove(runs, 1)
+    end
+  end
+  ltrim()
+end
+
+function F.desc_blocks(raw, name)
+  local blocks, cur, col, gap, first = {}, nil, nil, false, true
+  local low_name = name and name ~= '' and F.lower_fast(name) or nil
+  raw = tostring(raw or ''):gsub('\r', '')
+  for line in (raw .. '\n'):gmatch('(.-)\n') do
+    local runs, plain, lead = {}, {}, nil
+    local marked = line:gsub('[%z\1-\8\11-\31]', ' '):gsub('\t', ' '):gsub('{(%x%x%x%x%x%x)}', '\1%1\2'):gsub('{}', '')
+      :gsub(':(%l[%l%d_]*):', function(c)
+        if F.desc_code(c) then return '\3' .. c .. '\2' end
+      end)
+    local pos = 1
+    while pos <= #marked do
+      local a = marked:find('[\1\3]', pos)
+      local text = marked:sub(pos, (a or #marked + 1) - 1)
+      if text ~= '' then
+        runs[#runs + 1] = {text, col}
+        plain[#plain + 1] = text
+      end
+      if not a then break end
+      local b = marked:find('\2', a, true) or #marked
+      local code = marked:sub(a + 1, b - 1)
+      if marked:byte(a) == 1 then col = code:upper()
+      elseif F.trim(table.concat(plain)) == '' then lead = lead or code end
+      pos = b + 1
+    end
+    local text = F.trim(table.concat(plain))
+    local skip = false
+    if text ~= '' and first then
+      first = false
+      -- The first line repeats the name the card already shows in its head.
+      skip = low_name ~= nil and #text <= #name + 60 and F.lower_fast(text):find(low_name, 1, true) ~= nil
+    end
+    if text == '' or skip then
+      cur = nil
+      gap = #blocks > 0
+    else
+      local kind, dot, num
+      local strip = 0
+      if lead then
+        if F.DESC_NOTES[lead] then kind = 'note'
+        elseif not F.DESC_DROP[lead] then kind, dot = 'li', F.DESC_DOTS[lead:sub(2)] or false end
+      end
+      if not kind then
+        local m = text:match('^%-%s+') or text:match('^–%s*') or text:match('^—%s*') or text:match('^•%s*')
+        local n = text:match('^(%d+[%.%)])%s')
+        if m then kind, strip = 'li', #m
+        elseif n then kind, num, strip = 'li', n, #n
+        elseif text:match('^%+%d') then kind = 'li' end
+      end
+      F.desc_cut(runs, strip)
+      local done = text:match('[%.!%?:;]$') ~= nil
+      if not kind and cur and (cur.kind == 'note' or text:sub(1, 1) == '(' or not cur.done) then
+        if runs[1] then runs[1][1] = ' ' .. runs[1][1] end
+        for _, r in ipairs(runs) do cur.runs[#cur.runs + 1] = r end
+        cur.done = done
+      elseif runs[1] then
+        cur = {kind = kind or 'p', runs = runs, dot = dot, num = num, gap = gap, done = done}
+        blocks[#blocks + 1] = cur
+        gap = false
+      end
+    end
+  end
+  return blocks
+end
+
+-- The colour of a piece on the card. White is the text of the theme, grey is dimmer text; a
+-- colour that would not be seen on the panel gives way to the accent.
+function F.desc_col(hex)
+  local n = hex and tonumber(hex, 16)
+  if not n then return F.col('text', 225) end
+  local r, g, b = F.hex3(n)
+  local hi, lo = math.max(r, g, b), math.min(r, g, b)
+  if hi - lo < 24 then
+    if lo > 0xD8 then return F.col('text', 225) end
+    return F.col('text', 160)
+  end
+  local pn = PAL.panel or PAL.text
+  local lum = 0.3 * r + 0.59 * g + 0.11 * b
+  local plum = 0.3 * pn[1] + 0.59 * pn[2] + 0.11 * pn[3]
+  if math.abs(lum - plum) < 60 then return F.col('accent_hi') end
+  return F.rgba(r, g, b, 255)
+end
+
+-- Where every piece stands at the width w: words are wrapped by measure, a list item hangs
+-- behind its bullet, a note sits in a box.
+function F.desc_layout(blocks, w)
+  local lh, sw = F.s(21), F.text_w(font_main, ' ')
+  local out = {runs = {}, decos = {}}
+  local y = 0
+  for bi, b in ipairs(blocks) do
+    if bi > 1 then y = y + (b.gap and F.s(12) or F.s(4)) end
+    local top = y
+    local x0, right = 0, 0
+    if b.kind == 'li' then
+      x0 = F.s(22)
+    elseif b.kind == 'note' then
+      x0, right = F.s(14), F.s(10)
+      y = y + F.s(8)
+    end
+    local maxw = math.max(F.s(60), w - x0 - right)
+    local x, last = 0, nil
+    for _, r in ipairs(b.runs) do
+      local key = r[2] or ''
+      local col = F.desc_col(r[2])
+      for sp, word in r[1]:gmatch('(%s*)(%S+)') do
+        local ww = F.text_w(font_main, word)
+        local gw = (sp ~= '' and x > 0) and sw or 0
+        if x > 0 and x + gw + ww > maxw then
+          y, x, gw, last = y + lh, 0, 0, nil
+        end
+        if last and last.key == key then
+          last.text = last.text .. (gw > 0 and ' ' or '') .. word
+        else
+          last = {x = x0 + x + gw, y = y, text = word, col = col, key = key}
+          out.runs[#out.runs + 1] = last
+        end
+        x = x + gw + ww
+      end
+    end
+    y = y + lh
+    if b.kind == 'li' then
+      if b.num then
+        out.runs[#out.runs + 1] = {x = 0, y = top, text = b.num, col = F.col('text', 140)}
+      else
+        local c = b.dot
+        out.decos[#out.decos + 1] = {kind = 'dot', x = F.s(8), y = top + lh / 2 - 1, col = c and F.rgba(c[1], c[2], c[3], 255) or F.col('accent')}
+      end
+    elseif b.kind == 'note' then
+      y = y + F.s(8)
+      out.decos[#out.decos + 1] = {kind = 'note', y = top, h = y - top}
+    end
+  end
+  out.h, out.w = y, w
+  return out
+end
+
+function F.desc_draw(lay, px, py)
+  for _, d in ipairs(lay.decos) do
+    if d.kind == 'dot' then
+      local r = F.s(3)
+      F.round_rect(px + d.x - r, py + d.y - r, r * 2, r * 2, d.col, nil, r)
+    else
+      F.round_rect(px, py + d.y, lay.w, d.h, F.col('accent', 26), nil, 10)
+      F.round_rect(px, py + d.y, F.s(4), d.h, F.col('accent'), nil, 2)
+    end
+  end
+  for _, r in ipairs(lay.runs) do
+    F.text_at(font_main, 16, px + r.x, py + r.y, r.col, r.text)
+  end
+end
+
+function F.desc_key(w)
+  return math.floor(w) .. '|' .. tostring(cfg.scale) .. '|' .. tostring(cfg.ui_bg) .. '|' .. tostring(cfg.ui_text) .. '|' .. tostring(cfg.ui_acc)
+end
+
+function F.item_desc_lay(it, w)
+  local key = F.desc_key(w)
+  if it._dlk == key then return it._dlay end
+  if not it._dblocks then
+    local raw = F.lib_raw(it)
+    if not raw or raw == '' then raw = F.lib_desc(it) or '' end
+    it._dblocks = F.desc_blocks(raw, it.name)
+  end
+  it._dlk, it._dlay = key, F.desc_layout(it._dblocks, w)
+  return it._dlay
+end
+
+-- The number a buff gives, to stand in front of its row: "+25%", "15%", "+3", "x2".
+function F.buff_value(text)
+  local v = text:match('[%+%-]%s?%d[%d%.,]*%s?%%') or text:match('%d[%d%.,]*%s?%%') or text:match('%+%s?%d[%d%.,]*')
+    or text:match('[xX]%d+') or text:match('х%d+')
+  if not v then return nil end
+  return (v:gsub('%s', ''):gsub('[%.,]$', ''))
+end
+
+function F.buff_jobs(low)
+  local t = {}
+  for _, b in ipairs(F.LIB_BUFFS) do
+    for _, word in ipairs(b[3]) do
+      if low:find(word, 1, true) then
+        t[#t + 1] = b[2]
+        break
+      end
+    end
+    if #t >= 3 then break end
+  end
+  return table.concat(t, '  ·  ')
+end
+
+-- Buffs: one row each, the number in front, the job it is for above the words.
+function F.ic_buffs(it, w)
+  local key = F.desc_key(w)
+  if it._blk ~= key then
+    local rows = {}
+    local vw = F.s(78)
+    for _, sg in ipairs(it.bsegs) do
+      local text = F.lib_clean(sg.text)
+      if text ~= '' then
+        local row = {val = F.buff_value(text), jobs = F.buff_jobs(sg.low or F.lower_fast(text))}
+        row.lay = F.desc_layout({{kind = 'p', runs = {{text}}}}, w - vw - F.s(14))
+        if row.val then row.val = F.fit_text(font_bold, row.val, vw - F.s(12)) end
+        rows[#rows + 1] = row
+      end
+    end
+    it._blk, it._brows = key, rows
+  end
+  local vw = F.s(78)
+  for _, row in ipairs(it._brows) do
+    local p = imgui.GetCursorScreenPos()
+    local jh = row.jobs ~= '' and F.s(19) or 0
+    local h = math.max(F.s(42), row.lay.h + jh + F.s(14))
+    F.round_rect(p.x, p.y, w, h, F.col('side', 120), nil, 10)
+    F.round_rect(p.x, p.y, vw, h, F.col('accent', 30), nil, 10)
+    if row.val then
+      F.text_at(font_bold, 18, p.x + (vw - F.text_w(font_bold, row.val)) / 2, p.y + (h - F.s(18)) / 2 - 1, F.col('accent_hi'), row.val)
+    else
+      local g = F.faico('ICON_FA_BOLT')
+      if g == '' then g = '+' end
+      F.text_at(font_main, 16, p.x + (vw - F.text_w(font_main, g)) / 2, p.y + (h - F.s(16)) / 2 - 1, F.col('accent_hi'), g)
+    end
+    local ty = p.y + (h - row.lay.h - jh) / 2
+    if jh > 0 then
+      F.text_at(font_main, 16, p.x + vw + F.s(10), ty, F.col('accent_hi', 200), F.fit_text(font_main, row.jobs, w - vw - F.s(20)))
+    end
+    F.desc_draw(row.lay, p.x + vw + F.s(10), ty + jh)
+    F.advance(p, w, h + F.s(6))
+  end
+end
+
 function F.lib_clean(s)
   s = tostring(s or ''):gsub('{%x%x%x%x%x%x}', ''):gsub(':u%x+:', ''):gsub('\r', '')
   return F.trim(s)
 end
 
 -- Opens the card of an item. list is the grid it came from, for the arrows; src is its entry there.
-function F.item_open(id, list, src)
+-- inst is the piece that was clicked in a trunk or in the inventory: its amount, sharpening,
+-- quality, where it lies. The card then starts with it.
+function F.item_open(id, list, src, inst)
   local it = F.car_lib(tonumber(id) or 0)
   if it.cat == 'twin' then
     local db = F.lib_db()
@@ -16289,7 +17693,7 @@ function F.item_open(id, list, src)
     end
   end
   local ok, frame = pcall(imgui.GetFrameCount)
-  modal = {kind = 'item', it = it, title = it.name, list = list, src = src or it, frame = ok and frame or 0}
+  modal = {kind = 'item', it = it, title = it.name, list = list, src = src or it, frame = ok and frame or 0, inst = inst}
   F.buf_set(ui.item_price, '', 32)
   pcall(F.lib_seen_add, it.id)
   return it
@@ -16443,27 +17847,76 @@ function F.ic_shops(f, kind)
   if best then head = head .. (kind == 'sell' and ', дешевле всего ' or ', дороже всего ') .. F.fmt_money(best) end
   F.ic_text(head, F.cvec('text', 0.75))
   for i = 1, math.min(#list, 4) do F.ic_shop_row(kind .. i, list[i]) end
-  if #list > 4 then F.hint('И ещё ' .. (#list - 4) .. '. Все — в Эксперимент → Лавки, поиск по названию.') end
+  if #list > 4 then F.hint('И ещё ' .. (#list - 4) .. '. Все — в меню «Лавки», поиск по названию.') end
 end
 
-function F.item_body(it)
+function F.store_open(e)
+  local id = e.it and e.it.id
+  if not id or id <= 0 then return end
+  F.item_open(id, nil, nil, e)
+end
+
+-- What the stalls ask for one piece: the usual price of the sellers, else of the buyers.
+function F.store_price(id)
+  local m = F.shop_market()[id]
+  if not m then return nil end
+  return m.sell_med or m.buy_med
+end
+
+function F.ic_inst(e)
+  local tiles = {}
+  local function add(icon, label, value) tiles[#tiles + 1] = {icon, label, value} end
+  add('ICON_FA_LAYER_GROUP', (e.slots or 1) > 1 and ('Количество, слотов: ' .. e.slots) or 'Количество',
+    e.noamt and 'игра не прислала' or (F.num_text(e.amount or 1) .. ' шт'))
+  if e.ench then add('ICON_FA_ARROW_UP', 'Заточка', '+' .. e.ench) end
+  local qn = F.shop_qn(e)
+  if qn then add('ICON_FA_GEM', 'Класс качества', qn) end
+  if e.q then add('ICON_FA_STAR', 'Рейтинг качества', tostring(e.q)) end
+  if e.str then add('ICON_FA_SHIELD_ALT', 'Прочность', e.str .. '%') end
+  if (e.time or 0) > 0 then add('ICON_FA_HOURGLASS_HALF', 'Срок', (F.car_left(e.time):gsub('^осталось ', ''))) end
+  if (e.text or '') ~= '' and e.text ~= '$' then add('ICON_FA_TAG', 'Надпись на ячейке', e.text) end
+  if e.where then add('ICON_FA_MAP_MARKER_ALT', 'Где лежит', e.where) end
+  local price = e.it and F.store_price(e.it.id)
+  if price then
+    add('ICON_FA_STORE', 'В лавках за штуку', F.fmt_money(price) or '—')
+    if (e.amount or 1) > 1 and not e.noamt then add('ICON_FA_COINS', 'За всё по лавкам', F.fmt_money(price * e.amount) or '—') end
+  end
+  F.ic_title('ICON_FA_SEARCH', 'Этот предмет', true)
+  F.tile_grid('inst', tiles, 190)
+  if not qn and not e.q then
+    F.hint('Класс и рейтинг качества игра пишет только в окне предмета: нажми на него в игре, и fHelper запомнит.')
+  elseif e.ench and price then
+    F.hint('Цена лавок — за обычный предмет, без учёта заточки.')
+  end
+end
+
+function F.item_body(it, inst)
   local desc = F.lib_clean(F.lib_desc(it))
   if it.bsegs == nil and not it._bscan and desc ~= '' then
     it._bscan = true
     pcall(F.lib_buff_scan, it, F.lib_desc(it))
   end
   local f = F.item_facts(it)
-  F.ic_title('ICON_FA_ALIGN_LEFT', 'Описание', true)
-  if desc ~= '' then F.ic_text(desc)
-  else F.ic_text('В файлах игры у этого предмета нет описания.', F.cvec('text', 0.55)) end
+  local bw = imgui.GetContentRegionAvail().x - 6
+  if inst then F.ic_inst(inst) end
+  -- What it gives stands first: that is what the card is opened for most often.
   if it.bsegs then
-    F.ic_title('ICON_FA_BOLT', 'Бафы')
-    for _, sg in ipairs(it.bsegs) do F.ic_text('•  ' .. F.lib_clean(sg.text), F.cvec('accent_hi')) end
+    F.ic_title('ICON_FA_BOLT', 'Что даёт', not inst)
+    F.ic_buffs(it, bw)
+  end
+  F.ic_title('ICON_FA_ALIGN_LEFT', 'Описание', not it.bsegs and not inst)
+  local lay = F.item_desc_lay(it, bw)
+  if lay.h > 0 then
+    local p = imgui.GetCursorScreenPos()
+    F.desc_draw(lay, p.x, p.y)
+    F.advance(p, bw, lay.h)
+  else
+    F.ic_text('В файлах игры у этого предмета нет описания.', F.cvec('text', 0.55))
   end
   F.ic_title('ICON_FA_STORE', 'В лавках')
   if #f.sell + #f.buy == 0 then
     F.hint(cfg.shop_on == 1 and ('В открытых тобой лавках не встречался. Лавки записываются сами, когда ты их открываешь, и хранятся ' .. F.shop_days() .. ' ' .. F.ru_count(F.shop_days(), 'день', 'дня', 'дней') .. '.')
-      or 'Запись лавок выключена: Эксперимент → Лавки.')
+      or 'Запись лавок выключена: Лавки → Настройки.')
   else
     F.ic_shops(f, 'sell')
     if #f.sell > 0 and #f.buy > 0 then imgui.Spacing() end
@@ -16599,12 +18052,13 @@ function F.item_card(m, ww, wh, wp)
   local btn_h = F.s(36)
   local foot = y + mh - pad - btn_h
   imgui.SetCursorScreenPos(imgui.ImVec2(x + pad, top))
-  imgui.BeginChild('##itemcard', imgui.ImVec2(mw - pad * 2 + 8, math.max(F.s(80), foot - 14 - top)), false)
+  imgui.BeginChild('##itemcard', imgui.ImVec2(mw - pad * 2 + 8, math.max(F.s(80), foot - 14 - top)), false, F.smooth_flag())
+  F.smooth('itemcard')
   if m.scrolled ~= it then
     imgui.SetScrollY(0)
     m.scrolled = it
   end
-  F.item_body(it)
+  F.item_body(it, m.inst)
   imgui.EndChild()
   if modal ~= m then return end
   local token = it.token
@@ -16682,17 +18136,22 @@ function F.draw_items()
     if pick then F.lib_buff = pick end
   else
     local mk = F.lib_marks()
-    local nf = 0
-    for _ in pairs(mk.fav) do nf = nf + 1 end
-    local cats = {}
-    for i = 1, #F.LIB_CATS do
-      local row = F.LIB_CATS[i]
-      if row[1] ~= 'frame' or not F.is_rod() then cats[#cats + 1] = row end
-      if row[1] == 'all' then
-        cats[#cats + 1] = {'fav', 'Избранное' .. (nf > 0 and (' · ' .. nf) or '')}
-        cats[#cats + 1] = {'seen', 'Недавние'}
+    local ck = mk.rev .. '|' .. tostring(cfg.proj)
+    if F._lib_cats_k ~= ck then
+      local nf = 0
+      for _ in pairs(mk.fav) do nf = nf + 1 end
+      local list = {}
+      for i = 1, #F.LIB_CATS do
+        local row = F.LIB_CATS[i]
+        if row[1] ~= 'frame' or not F.is_rod() then list[#list + 1] = row end
+        if row[1] == 'all' then
+          list[#list + 1] = {'fav', 'Избранное' .. (nf > 0 and (' · ' .. nf) or '')}
+          list[#list + 1] = {'seen', 'Недавние'}
+        end
       end
+      F._lib_cats_k, F._lib_cats = ck, list
     end
+    local cats = F._lib_cats
     local cat = F.pill_row('##libc', cats, F.lib_cat)
     if cat then F.lib_cat = cat end
   end
@@ -17260,7 +18719,8 @@ function F.notes_left()
   end
   imgui.Spacing()
   imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
-  imgui.BeginChild('##nlist', imgui.ImVec2(0, 0), false)
+  imgui.BeginChild('##nlist', imgui.ImVec2(0, 0), false, F.smooth_flag())
+  F.smooth('nlist')
   local q = F.lower_fast(F.trim(F.buf_get(ui.note_q)))
   local any = false
   for i = #F.note_items, 1, -1 do
@@ -17507,8 +18967,12 @@ function F.draw_pin(p, n, i)
       F.pin_set(p.id, 0)
     end
   end
-  local text = F.int_human(n.text)
-  p.text_h = imgui.CalcTextSize(text, nil, false, ww - pad * 2).y
+  if p._src ~= n.text or p._ww ~= ww or p._scale ~= cfg.scale then
+    p._src, p._ww, p._scale = n.text, ww, cfg.scale
+    p._text = F.int_human(n.text)
+    p.text_h = imgui.CalcTextSize(p._text, nil, false, ww - pad * 2).y
+  end
+  local text = p._text
   imgui.SetCursorPos(imgui.ImVec2(pad, head + pad))
   imgui.PushTextWrapPos(ww - pad)
   imgui.TextUnformatted(text)
@@ -17721,6 +19185,63 @@ function F.calc_press(key)
   end
 end
 
+-- The exchange of VC$. Mode 1: VC$ are sold for dollars, at the rate of selling, less its fee.
+-- Mode 2: VC$ are bought for dollars, at the rate of buying, less its fee. The rates are the
+-- ones the calc by the stall uses.
+F.CALC_EX = {{0, 'Без обмена'}, {1, 'Продаю VC$ → $'}, {2, 'Покупаю VC$ за $'}}
+
+function F.calc_ex_mode()
+  if F.is_rod() then return 0 end
+  local m = tonumber(cfg.calc_ex) or 0
+  return (m == 1 or m == 2) and m or 0
+end
+
+function F.calc_ex(v, mode)
+  v = tonumber(v)
+  if not v or mode == 0 then return nil end
+  local sell = mode == 1
+  local rate = tonumber(sell and cfg.shop_rate or cfg.shop_rate_buy) or 0
+  if rate <= 0 then return {mode = mode, norate = true} end
+  local pct = math.max(0, math.min(100, tonumber(sell and cfg.shop_fee or cfg.shop_fee_buy) or 0))
+  local conv = sell and v * rate or v / rate
+  local fee = conv * pct / 100
+  return {mode = mode, from = v, from_vc = sell, rate = rate, pct = pct, conv = conv, fee = fee, total = conv - fee, to_vc = not sell}
+end
+
+-- Two lines under the answer: what goes where, and what is left after the fee.
+function F.calc_ex_lines(v, mode)
+  local e = F.calc_ex(v, mode)
+  if not e then return nil end
+  local title = mode == 1 and 'Продаю VC$' or 'Покупаю VC$'
+  if e.norate then
+    return title .. ': курс не задан', 'Калькулятор → «Обмен VC$»'
+  end
+  local function m(n, vc) return F.fmt_cur(n, vc) or '—' end
+  local a = title .. ': ' .. m(e.from, e.from_vc) .. ' → ' .. m(e.conv, e.to_vc)
+  local b
+  if e.fee >= 0.5 then
+    b = 'комиссия ' .. F.shop_pct(e.pct) .. ' -' .. m(e.fee, e.to_vc) .. '  ·  на руки ' .. m(e.total, e.to_vc)
+  else
+    b = 'по курсу ' .. F.shop_rate_text(e.rate) .. ', без комиссии'
+  end
+  return a, b
+end
+
+-- The row is shown once the exchange is of any use: a mode is picked or a rate is set.
+function F.calc_ex_on()
+  if F.is_rod() then return false end
+  return F.calc_ex_mode() > 0 or (tonumber(cfg.shop_rate) or 0) > 0 or (tonumber(cfg.shop_rate_buy) or 0) > 0
+end
+
+function F.calc_ex_h()
+  return F.calc_ex_on() and F.s(42) or 0
+end
+
+function F.calc_ex_next()
+  cfg.calc_ex = (F.calc_ex_mode() + 1) % 3
+  dirty = true
+end
+
 F.CALC_KEYS = {
   {'C', '(', ')', '/'},
   {'7', '8', '9', '*'},
@@ -17747,17 +19268,47 @@ end
 
 function F.calc_screen(id, w)
   local text = F.buf_get(ui.calc)
-  local live_v = text ~= '' and F.calc_eval(text) or nil
   local p = imgui.GetCursorScreenPos()
   local h = F.s(66)
   F.round_rect(p.x, p.y, w, h, F.col('side'), F.col('text', 18), 12)
-  local shown = live_v or F.calc_last
-  local big = shown and F.calc_fmt(shown) or '0'
-  big = F.fit_text(font_title, big, w - F.s(24))
-  F.text_at(font_title, 22, p.x + w - F.s(12) - F.text_w(font_title, big), p.y + F.s(32), F.col('text'), big)
-  local top = F.calc_err or (text ~= '' and text or 'Результат')
-  F.text_at(font_main, 16, p.x + F.s(12), p.y + F.s(8), F.calc_err and F.col('bad') or F.col('text', 120), F.fit_text(font_main, top, w - F.s(24)))
+  -- Counting the expression and measuring the text every frame is the dear part: it is done
+  -- again only when the text, the last answer or the width changes.
+  local mode = F.calc_ex_mode()
+  local key = text .. '\0' .. tostring(F.calc_last) .. '\0' .. tostring(F.calc_err) .. '\0' .. w .. '\0' .. tostring(cfg.scale)
+    .. '\0' .. mode .. '\0' .. tostring(cfg.shop_rate) .. '\0' .. tostring(cfg.shop_fee) .. '\0' .. tostring(cfg.shop_rate_buy)
+    .. '\0' .. tostring(cfg.shop_fee_buy)
+  F._calc_scr = F._calc_scr or {}
+  local c = F._calc_scr[id]
+  if not c or c.key ~= key then
+    local live_v = text ~= '' and F.calc_eval(text) or nil
+    local shown = live_v or F.calc_last
+    local big = F.fit_text(font_title, shown and F.calc_fmt(shown) or '0', w - F.s(24))
+    c = {key = key, big = big, bw = F.text_w(font_title, big),
+      top = F.fit_text(font_main, F.calc_err or (text ~= '' and text or 'Результат'), w - F.s(24))}
+    local a, b = F.calc_ex_lines(shown or 0, mode)
+    if a then c.ex1, c.ex2 = F.fit_text(font_main, a, w - F.s(12)), F.fit_text(font_main, b, w - F.s(12)) end
+    F._calc_scr[id] = c
+  end
+  F.text_at(font_title, 22, p.x + w - F.s(12) - c.bw, p.y + F.s(32), F.col('text'), c.big)
+  F.text_at(font_main, 16, p.x + F.s(12), p.y + F.s(8), F.calc_err and F.col('bad') or F.col('text', 120), c.top)
   F.advance(p, w, h)
+  local eh = F.calc_ex_h()
+  if eh > 0 then
+    local q = imgui.GetCursorScreenPos()
+    local clicked, hovered = F.hotspot('##calcex' .. id, q.x, q.y, w, eh)
+    if hovered then
+      F.round_rect(q.x, q.y, w, eh, F.col('text', 14), nil, 8)
+      F.tip('Нажми, чтобы сменить режим: без обмена, продаю VC$, покупаю VC$')
+    end
+    if c.ex1 then
+      F.text_at(font_main, 16, q.x + F.s(6), q.y + F.s(3), F.col('accent_hi'), c.ex1)
+      F.text_at(font_main, 16, q.x + F.s(6), q.y + F.s(22), F.col('text', 150), c.ex2)
+    else
+      F.text_at(font_main, 16, q.x + F.s(6), q.y + F.s(12), F.col('text', 110), F.fit_text(font_main, 'Обмен VC$: выключен · нажми, чтобы включить', w - F.s(12)))
+    end
+    if clicked then F.calc_ex_next() end
+    F.advance(q, w, eh)
+  end
   local fh = imgui.GetFrameHeight()
   imgui.PushItemWidth(w - fh - 8)
   local enter = imgui.InputTextWithHint('##calc' .. id, '2.5кк * 3 + 10%', ui.calc, 160, imgui.InputTextFlags.EnterReturnsTrue)
@@ -17783,10 +19334,16 @@ function F.calc_rows(id, cap)
       F.round_rect(p.x, p.y, w, h, F.col('text', 14), nil, 8)
       F.tip('Нажми, чтобы подставить. Правая кнопка копирует ответ')
     end
-    local res = '= ' .. F.calc_fmt(r.val)
-    local rw = F.text_w(font_main, res)
-    F.text_at(font_main, 16, p.x + 6, p.y + (h - F.s(16)) / 2 - 1, F.col('text', 150), F.fit_text(font_main, r.expr, w - rw - 24))
-    F.text_at(font_main, 16, p.x + w - rw - 6, p.y + (h - F.s(16)) / 2 - 1, F.col('accent_hi'), res)
+    local rc = r._c
+    if not rc or rc.w ~= w or rc.scale ~= cfg.scale then
+      local res = '= ' .. F.calc_fmt(r.val)
+      local rw = F.text_w(font_main, res)
+      rc = {w = w, scale = cfg.scale, res = res, rw = rw, fit = F.fit_text(font_main, r.expr, w - rw - 24)}
+      r._c = rc
+    end
+    local rw = rc.rw
+    F.text_at(font_main, 16, p.x + 6, p.y + (h - F.s(16)) / 2 - 1, F.col('text', 150), rc.fit)
+    F.text_at(font_main, 16, p.x + w - rw - 6, p.y + (h - F.s(16)) / 2 - 1, F.col('accent_hi'), rc.res)
     if hovered and imgui.IsMouseClicked(1) then F.note_copy(F.calc_plain(r.val)) end
     if clicked then pick = r.expr end
     F.advance(p, w, h)
@@ -17795,15 +19352,81 @@ function F.calc_rows(id, cap)
   if pick then F.buf_set(ui.calc, pick, 160) end
 end
 
+function F.calc_ex_card()
+  F.card_begin('Обмен VC$', 'Калькулятор сам пересчитывает ответ в другую валюту по твоему курсу', 'ICON_FA_EXCHANGE_ALT')
+  local pick = F.segment('calcex', F.CALC_EX, F.calc_ex_mode(), math.min(F.s(560), F.inner_w()))
+  if pick then
+    cfg.calc_ex = pick
+    dirty = true
+  end
+  F.hint('Режим меняется и прямо в калькуляторе: нажми на строку обмена под ответом.')
+  F.divider()
+  local fw = math.min(F.s(220), F.inner_w())
+  F.hint('Продаю VC$. Курс: сколько долларов дают за 1 VC$:')
+  F.shop_num_field('shop_rate', 'например 137', fw, 1e9)
+  F.hint('Комиссия при продаже VC$, %:')
+  F.shop_num_field('shop_fee', 'например 5', fw, 100)
+  local last = tonumber(cfg.vc_rate_last) or 0
+  if last > 0 then
+    F.hint('Твой последний обмен: ' .. F.shop_rate_text(last) .. ', комиссия уже внутри.')
+    if F.button('Взять этот курс##calcrate', 200, 0) then
+      cfg.shop_rate, cfg.shop_fee = last, 0
+      F._shop_buf = nil
+      dirty = true
+    end
+  end
+  F.divider()
+  F.hint('Покупаю VC$. Курс: сколько долларов стоит 1 VC$:')
+  F.shop_num_field('shop_rate_buy', 'например 150', fw, 1e9)
+  F.hint('Комиссия при покупке VC$, %:')
+  F.shop_num_field('shop_fee_buy', 'например 5', fw, 100)
+  local lastb = tonumber(cfg.vc_rate_buy_last) or 0
+  if lastb > 0 then
+    F.hint('Твоя последняя покупка VC$: ' .. F.shop_rate_text(lastb) .. ', комиссия уже внутри.')
+    if F.button('Взять этот курс##calcratebuy', 200, 0) then
+      cfg.shop_rate_buy, cfg.shop_fee_buy = lastb, 0
+      F._shop_buf = nil
+      dirty = true
+    end
+  end
+  F.divider()
+  local a1, b1 = F.calc_ex_lines(1000, 1)
+  local a2, b2 = F.calc_ex_lines(150000, 2)
+  F.hint('Пример. ' .. a1 .. ', ' .. b1)
+  F.hint('Пример. ' .. a2 .. ', ' .. b2)
+  F.hint('Курсы общие с окошком расчёта у лавки: поменял здесь — поменялись и там.')
+  F.card_end()
+end
+
+F.CALC_SECS = {{'calc', 'Расчёт'}, {'hist', 'История'}, {'ex', 'Обмен VC$'}, {'win', 'Окошко'}}
+
 function F.draw_calc()
   F.page_head('Калькулятор', 'Понимает к, кк, ккк, млн, млрд, проценты и скобки. Например: 2.5кк * 3 + 10%')
-  F.card_begin('Расчёт', nil, 'ICON_FA_CALCULATOR')
-  local w = F.inner_w()
-  F.calc_screen('p', w)
-  imgui.Spacing()
-  F.calc_pad('p', w)
-  F.card_end()
-  F.card_begin('Окошко на экране', 'Перетаскивается за шапку. Ввод в нём включает /fcalc или клавиша из раздела «Клавиши»', 'ICON_FA_WINDOW_MAXIMIZE')
+  local secs = {}
+  for _, v in ipairs(F.CALC_SECS) do
+    if v[1] ~= 'ex' or not F.is_rod() then secs[#secs + 1] = v end
+  end
+  local sec = F.sections('calc', secs)
+  if sec == 'ex' then
+    F.calc_ex_card()
+    return
+  end
+  if sec == 'hist' then
+    F.calc_hist_card()
+    return
+  end
+  if sec == 'calc' then
+    F.card_begin('Расчёт', nil, 'ICON_FA_CALCULATOR')
+    local w = F.inner_w()
+    F.calc_screen('p', w)
+    imgui.Spacing()
+    F.calc_pad('p', w)
+    local n = #(F.calc_hist or {})
+    if n > 0 then F.hint('Прошлые расчёты — в разделе «История»: ' .. n .. '.') end
+    F.card_end()
+    return
+  end
+  F.card_begin('Окошко на экране', 'Перетаскивается за шапку. Ввод в нём включает /fcalc или клавиша из «Бинды» → «Клавиши»', 'ICON_FA_WINDOW_MAXIMIZE')
   if F.switch('calcwin', 'Показывать окошко', cfg.calc_win == 1) then
     cfg.calc_win = cfg.calc_win == 1 and 0 or 1
     dirty = true
@@ -17824,7 +19447,11 @@ function F.draw_calc()
     dirty = true
   end
   F.card_end()
-  F.card_begin('История', nil, 'ICON_FA_HISTORY')
+end
+
+function F.calc_hist_card()
+  F.card_begin('История', 'Нажми на строку, чтобы вернуть её в расчёт', 'ICON_FA_HISTORY')
+  if #(F.calc_hist or {}) == 0 then F.hint('Пока пусто: расчёты появятся здесь после Enter или «=».') end
   F.calc_rows('p', 30)
   if #(F.calc_hist or {}) > 0 then
     imgui.Spacing()
@@ -17858,7 +19485,8 @@ function F.draw_calc_win()
   local head = F.s(38)
   local pad_h = cfg.calc_pad == 1 and (#F.CALC_KEYS * (F.s(34) + 8) + 4) or 0
   local rows = math.min(4, #(F.calc_hist or {}))
-  local wh = math.floor(head + F.s(66) + 8 + fh + 8 + pad_h + rows * (F.s(28) + 8) + F.s(30))
+  local ex_h = F.calc_ex_h()
+  local wh = math.floor(head + F.s(66) + 8 + (ex_h > 0 and (ex_h + 8) or 0) + fh + 8 + pad_h + rows * (F.s(28) + 8) + F.s(30))
   local x, y = cfg.calc_x, cfg.calc_y
   if not x or x < 0 then x = math.max(8, sw - ww - 24) end
   if not y or y < 0 then y = math.max(8, (sh - wh) / 2) end
@@ -18228,7 +19856,8 @@ end
 function F.draw_page(w, h, id, fn)
   imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(22, 18))
   imgui.PushStyleColor(imgui.Col.ChildBg, F.vec4(255, 255, 255, 0))
-  imgui.BeginChild(id, imgui.ImVec2(w, h), false, imgui.WindowFlags.AlwaysUseWindowPadding)
+  imgui.BeginChild(id, imgui.ImVec2(w, h), false, imgui.WindowFlags.AlwaysUseWindowPadding + F.smooth_flag())
+  F.smooth('page' .. tostring(id))
   fn()
   if F._card then F.card_end() end
   imgui.Dummy(imgui.ImVec2(1, 6))
@@ -18308,7 +19937,8 @@ function F.draw_overlay(ww, wh, wp)
     F.text_at(font_main, 16, x + pad, body_y, F.col('text', 195), m.text or '', inner)
   else
     imgui.SetCursorScreenPos(imgui.ImVec2(x + pad, body_y))
-    imgui.BeginChild('##report', imgui.ImVec2(inner, body_h), false)
+    imgui.BeginChild('##report', imgui.ImVec2(inner, body_h), false, F.smooth_flag())
+    F.smooth('report')
     if patch then
       F.draw_patch_body()
     elseif m.rows then
@@ -18415,6 +20045,11 @@ function F.draw_contents(ww, wh)
   local side_w = wide_side and 200 or 60
   F.paint_top(ww, wp, side_w)
   if collapsed then return end
+  -- The keys moved into «Бинды» as a section; an old bind or link to the page leads there.
+  if page == 'hotkeys' then
+    page = 'binds'
+    F.section_set('binds', 'keys')
+  end
   if not F.page_ok(page) then page = 'home' end
   local top, foot = F.HEAD + 1, 34
   local body_h = wh - top - foot
@@ -18449,9 +20084,9 @@ function F.draw_contents(ww, wh)
   elseif page == 'notes' then draw_id, draw_fn = '##notes', F.draw_notes
   elseif page == 'calc' then draw_id, draw_fn = '##calc', F.draw_calc
   elseif page == 'craft' then draw_id, draw_fn = '##craft', F.draw_craft
-  elseif page == 'hotkeys' then draw_id, draw_fn = '##hot', F.draw_hotkeys
   elseif page == 'screen' then draw_id, draw_fn = '##screen', F.draw_screen
   elseif page == 'shops' then draw_id, draw_fn = '##shops', F.draw_shops_page
+  elseif page == 'store' then draw_id, draw_fn = '##store', F.draw_store
   elseif page == 'exp' then draw_id, draw_fn = '##exp', F.draw_exp
   elseif page == 'logs' then draw_id, draw_fn = '##logs', F.draw_logs_page
   elseif page == 'settings' then draw_id, draw_fn = '##setp', F.draw_settings_page
@@ -18700,7 +20335,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 41
+F.BUILD = 42
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -19145,7 +20780,7 @@ function main()
   F.load_notes()
   F.pay_load()
   -- A broken data file must not stop the whole menu from starting.
-  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.itl_load, F.shop_load, F.want_load, F.shift_load}) do
+  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.bag_load, F.itl_load, F.shop_load, F.want_load, F.shift_load}) do
     local ok, err = pcall(fn)
     if not ok then F.log_line('Загрузка данных: ' .. tostring(err)) end
   end
@@ -19248,6 +20883,7 @@ function main()
     end
     F.timed('пейдей', F.pay_tick)
     F.timed('машины', F.car_tick)
+    F.guard('инвентарь', F.bag_tick)
     -- What fails here is caught, counted and written to the journal once: the report shows it.
     F.guard('память', F.mem_tick, now)
     F.guard('карта памяти', F.mem_map_tick)
@@ -19318,6 +20954,7 @@ addEventHandler('onScriptTerminate', function(scr)
     if F._lim == 0 then F.write_limiter(1) end
     F.note_flush()
     if F.int_dirty then F.int_save() end
+    pcall(F.bag_flush)
     if F.shift then F.shift_save() end
     F.save_cfg()
   end)
