@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.16'
+local VER = '1.19.18'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(43)
+script_version_number(45)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -125,6 +125,7 @@ local cfg = {
   qty_on = 0,
   qty_scale = 1,
   qty_w = 420,
+  qty_h = 0,
   qty_alpha = 0.97,
   qty_round = 18,
   qty_x = -1,
@@ -160,6 +161,7 @@ local cfg = {
   shop_on = 1,
   shop_days = 3,
   log_days = 30,
+  led_fill = 0,
   shop_calc = 1,
   shop_tax = 0,
   shop_rate = 0,
@@ -231,7 +233,7 @@ local CFG_NUM = {
   {'time_on', 0, 1}, {'time_mode', 0, 2}, {'time_utc', -12, 14}, {'time_clock', 0, 1}, {'time_sec', 0, 1},
   {'time_date', 0, 1}, {'time_wday', 0, 1}, {'time_zone', 0, 1}, {'time_h12', 0, 1}, {'time_fmt', 0, 3},
   {'time_place', 0, 1}, {'time_x', 0, 100}, {'time_y', 0, 100}, {'time_scale', 0.6, 2},
-  {'car_on', 0, 1}, {'car_bar', 0, 1}, {'bag_on', 0, 1}, {'smooth', 0, 1}, {'qty_on', 0, 1}, {'qty_scale', 0.8, 1.5}, {'qty_w', 340, 600}, {'qty_alpha', 0.5, 1}, {'qty_round', 0, 28},
+  {'car_on', 0, 1}, {'car_bar', 0, 1}, {'bag_on', 0, 1}, {'smooth', 0, 1}, {'qty_on', 0, 1}, {'qty_scale', 0.7, 2}, {'qty_w', 300, 900}, {'qty_h', 0, 700}, {'qty_alpha', 0.5, 1}, {'qty_round', 0, 40},
   {'qty_x', -1, 10000}, {'qty_y', -1, 10000}, {'qty_item', 0, 1}, {'qty_dim', 0, 1},
   {'inc_per', 1, 7}, {'inc_from', 0, 999999999999}, {'inc_to', 0, 999999999999},
   {'toast_on', 0, 1}, {'toast_pay', 0, 1}, {'toast_inc', 0, 1}, {'toast_exp', 0, 1}, {'toast_item', 0, 1},
@@ -342,9 +344,10 @@ if imgui_ok then
   ui.time_scale = imgui.new.float(100)
   ui.car_q = imgui.new.char[80]()
   ui.bag_q = imgui.new.char[80]()
-  ui.qty = imgui.new.char[16]()
+  ui.qty = imgui.new.char[40]()
   ui.qty_scale = imgui.new.float(100)
   ui.qty_w = imgui.new.float(420)
+  ui.qty_h = imgui.new.float(0)
   ui.qty_alpha = imgui.new.float(97)
   ui.qty_round = imgui.new.float(18)
   ui.car_alias = imgui.new.char[60]()
@@ -6641,12 +6644,13 @@ function F.qty_sample()
   end
   F.qty = {id = -1, sample = true, title = 'Информация', text = 'Введите количество, которое хотите положить',
     key = 'sample', at = os.clock(), focus = true, b1 = 'Выбрать', b2 = 'Отмена', item = item, have = have or 25}
-  F.buf_set(ui.qty, '1', 16)
+  F.buf_set(ui.qty, '1', F.QTY_BUF)
 end
 
 function F.qty_ui()
   ui.qty_scale[0] = (tonumber(cfg.qty_scale) or 1) * 100
   ui.qty_w[0] = tonumber(cfg.qty_w) or 420
+  ui.qty_h[0] = tonumber(cfg.qty_h) or 0
   ui.qty_alpha[0] = (tonumber(cfg.qty_alpha) or 0.97) * 100
   ui.qty_round[0] = tonumber(cfg.qty_round) or 18
 end
@@ -6663,20 +6667,24 @@ function F.qty_set_card()
     F.qty_ui()
   end
   F.divider()
-  if F.slider_row('qtyscale', 'Размер', ui.qty_scale, 80, 150, '%.0f%%') then
-    cfg.qty_scale = math.max(0.8, math.min(1.5, ui.qty_scale[0] / 100))
+  if F.slider_row('qtyscale', 'Размер', ui.qty_scale, 70, 200, '%.0f%%') then
+    cfg.qty_scale = math.max(0.7, math.min(2, ui.qty_scale[0] / 100))
     dirty = true
   end
-  if F.slider_row('qtyw', 'Ширина', ui.qty_w, 340, 600, '%.0f') then
-    cfg.qty_w = math.floor(math.max(340, math.min(600, ui.qty_w[0])))
+  if F.slider_row('qtyw', 'Ширина', ui.qty_w, 300, 900, '%.0f') then
+    cfg.qty_w = math.floor(math.max(300, math.min(900, ui.qty_w[0])))
+    dirty = true
+  end
+  if F.slider_row('qtyh', 'Высота', ui.qty_h, 0, 700, ui.qty_h[0] < 1 and 'по содержимому' or '%.0f') then
+    cfg.qty_h = math.floor(math.max(0, math.min(700, ui.qty_h[0])))
     dirty = true
   end
   if F.slider_row('qtyalpha', 'Непрозрачность фона', ui.qty_alpha, 50, 100, '%.0f%%') then
     cfg.qty_alpha = math.max(0.5, math.min(1, ui.qty_alpha[0] / 100))
     dirty = true
   end
-  if F.slider_row('qtyround', 'Закругление краёв', ui.qty_round, 0, 28, '%.0f') then
-    cfg.qty_round = math.floor(math.max(0, math.min(28, ui.qty_round[0])))
+  if F.slider_row('qtyround', 'Закругление краёв', ui.qty_round, 0, 40, '%.0f') then
+    cfg.qty_round = math.floor(math.max(0, math.min(40, ui.qty_round[0])))
     dirty = true
   end
   F.divider()
@@ -6691,11 +6699,11 @@ function F.qty_set_card()
   end
   F.same_if_fit(F.s(170))
   if F.button('Сбросить вид##qtydef', 170, 0) then
-    for _, key in ipairs({'qty_scale', 'qty_w', 'qty_alpha', 'qty_round', 'qty_x', 'qty_y', 'qty_item', 'qty_dim'}) do cfg[key] = F.CFG_DEF[key] end
+    for _, key in ipairs({'qty_scale', 'qty_w', 'qty_h', 'qty_alpha', 'qty_round', 'qty_x', 'qty_y', 'qty_item', 'qty_dim'}) do cfg[key] = F.CFG_DEF[key] end
     F.qty_ui()
     dirty = true
   end
-  F.hint('Окно двигается мышью за шапку, место запоминается. Пример ничего не отправляет на сервер.')
+  F.hint('Окно двигается мышью за шапку, ширина и высота меняются уголком справа внизу; всё запоминается. Пример ничего не отправляет на сервер.')
   F.card_end()
 end
 
@@ -6730,6 +6738,17 @@ end
 
 function F.qty_plain(text)
   return F.trim((F.cash_text(F.game_text(text or '')):gsub('{%x%x%x%x%x%x}', ''):gsub('\r', '')))
+end
+
+-- The field takes numbers with dots, commas and spaces: a stall asks for the amount and the
+-- price through a comma («10, 50000»).
+F.QTY_BUF = 40
+
+function F.qty_clean()
+  local cur = F.buf_get(ui.qty)
+  local clean = cur:gsub('[^%d%.,%s]', '')
+  if clean ~= cur then F.buf_set(ui.qty, clean, F.QTY_BUF) end
+  return clean
 end
 
 function F.qty_match(style, text)
@@ -6793,7 +6812,7 @@ function F.qty_show(id, style, title, b1, b2, text)
   if F.qty.b1 == '' then F.qty.b1 = 'Выбрать' end
   if F.qty.b2 == '' then F.qty.b2 = 'Отмена' end
   local last = F.qty_last[key]
-  F.buf_set(ui.qty, tostring(last or 1), 16)
+  F.buf_set(ui.qty, tostring(last or 1), F.QTY_BUF)
   if not item then F.qty_dump(F.qty) end
   if not F._qty_logged then
     F._qty_logged = true
@@ -6828,6 +6847,7 @@ function F.qty_tick()
     cfg.scale, F._qty_scale0 = F._qty_scale0, nil
     F._card_r, F._card_a, F._btn_r = nil, nil, nil
   end
+  if F._qty_pad0 then F.PAD, F._qty_pad0 = F._qty_pad0, nil end
   local q = F.qty
   if q and not q.drawn and os.clock() - q.at > F.QTY_WAIT then
     F._qty_off = true
@@ -6862,6 +6882,19 @@ end
 
 -- The window looks like the menu: a head with the accent square, the server's text in a card,
 -- the field of the menu with «Всё» next to it, the buttons at the bottom right.
+-- Everything in it, the corners too, follows the window's own size; the corners of the card,
+-- the field, the buttons and the square follow the window's corner.
+F.QTY_MIN_H = 160
+
+function F.qty_box(sw, sh, nat)
+  local ww = math.floor(F.s(math.max(300, math.min(900, tonumber(cfg.qty_w) or 420))))
+  ww = math.max(math.floor(F.s(200)), math.min(ww, sw - 8))
+  local want = tonumber(cfg.qty_h) or 0
+  want = want > 0 and math.floor(F.s(math.max(F.QTY_MIN_H, math.min(700, want)))) or 0
+  local wh = math.min(math.max(nat, want), sh - 8)
+  return ww, wh, math.max(0, wh - nat)
+end
+
 function F.draw_qty()
   local q = F.qty
   if not q then return end
@@ -6875,18 +6908,20 @@ function F.draw_qty()
   -- main loop start from it again instead of multiplying an already multiplied one.
   local menu_scale = F._qty_scale0 or cfg.scale or 1
   F._qty_scale0 = menu_scale
-  cfg.scale = menu_scale * math.max(0.8, math.min(1.5, tonumber(cfg.qty_scale) or 1))
+  F._qty_pad0 = F._qty_pad0 or F.PAD
+  cfg.scale = menu_scale * math.max(0.7, math.min(2, tonumber(cfg.qty_scale) or 1))
+  F.PAD = math.floor(F.s(F._qty_pad0) + 0.5)
   local alpha = math.max(0.5, math.min(1, tonumber(cfg.qty_alpha) or 0.97))
-  local rad = math.max(0, math.min(28, tonumber(cfg.qty_round) or 18))
-  F._card_r, F._card_a, F._btn_r = math.min(16, rad), math.floor(255 * alpha), math.min(F.s(10), rad * 0.6)
-  local ww = math.floor(F.s(math.max(340, math.min(600, tonumber(cfg.qty_w) or 420))))
+  local rad = F.s(math.max(0, math.min(40, tonumber(cfg.qty_round) or 18)))
+  F._card_r, F._card_a, F._btn_r = rad * 0.75, math.floor(255 * alpha), rad * 0.5
   local pad = math.floor(F.s(16))
   local hh = math.floor(F.s(56))
+  -- The height is the content's, measured at the end of the last frame; a height set in the
+  -- settings or by the corner adds room under the server's text.
+  local nat = q.nat or math.floor(F.s(250))
+  local ww, wh, fill = F.qty_box(sw, sh, nat)
   local WF = imgui.WindowFlags
   local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse + WF.NoCollapse + WF.NoSavedSettings + WF.NoMove
-  -- The height is the content's, measured at the end of the last frame: the window and its
-  -- plate are exactly as tall as what is in them.
-  local wh = q.h or math.floor(F.s(330))
   local x, y = tonumber(cfg.qty_x) or -1, tonumber(cfg.qty_y) or -1
   if x < 0 then x = (sw - ww) / 2 end
   if y < 0 then y = sh * 0.45 - wh / 2 end
@@ -6902,14 +6937,20 @@ function F.draw_qty()
   F.style_push(1)
   F.use_font(font_main)
   imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(pad, 0))
-  imgui.PushStyleVarFloat(imgui.StyleVar.FrameRounding, math.min(8, rad))
+  imgui.PushStyleVarFloat(imgui.StyleVar.FrameRounding, rad * 0.45)
+  imgui.PushStyleVarVec2(imgui.StyleVar.FramePadding, imgui.ImVec2(F.s(12), F.s(8)))
+  imgui.PushStyleVarVec2(imgui.StyleVar.ItemSpacing, imgui.ImVec2(F.s(8), F.s(8)))
   imgui.Begin('fhelp-qty', nil, flags)
   if imgui.SetWindowFontScale then imgui.SetWindowFontScale(cfg.scale or 1) end
-  -- The theme keeps windows see-through: the plate is painted here.
+  -- The theme keeps windows see-through: the plate is painted here. The shadow lies outside the
+  -- window, so it is drawn past the window's clip: clipped, it showed square under the corners.
   local wp = imgui.GetWindowPos()
   local dl = imgui.GetWindowDrawList()
-  F.round_rect(wp.x + 3, wp.y + 6, ww, wh, F.col('side', math.floor(150 * alpha)), nil, rad)
+  local sx, sy = F.s(3), F.s(6)
+  dl:PushClipRect(imgui.ImVec2(wp.x - 2, wp.y - 2), imgui.ImVec2(wp.x + ww + sx + 2, wp.y + wh + sy + 2), false)
+  F.round_rect(wp.x + sx, wp.y + sy, ww, wh, F.col('side', math.floor(150 * alpha)), nil, rad)
   F.round_rect(wp.x, wp.y, ww, wh, F.col('bg', math.floor(255 * alpha)), F.col('text', 34), rad)
+  dl:PopClipRect()
   -- The head moves the window; where it is left is kept.
   imgui.SetCursorScreenPos(imgui.ImVec2(wp.x, wp.y))
   imgui.InvisibleButton('##qtydrag', imgui.ImVec2(math.max(1, ww - pad - F.s(40)), hh))
@@ -6918,14 +6959,14 @@ function F.draw_qty()
     cfg.qty_x = math.floor(math.max(0, math.min(sw - ww, x + md.x)))
     cfg.qty_y = math.floor(math.max(0, math.min(sh - wh, y + md.y)))
     F._qty_moved = true
-  elseif F._qty_moved and not imgui.IsItemActive() then
+  elseif F._qty_moved and not imgui.IsItemActive() and not F._qty_rs then
     F._qty_moved = nil
     dirty = true
   end
   -- Head, as the menu's: the accent square, the title and what this window is.
   local ls = math.floor(F.s(32))
   local lx, ly = wp.x + pad, wp.y + (hh - ls) / 2
-  F.round_rect(lx, ly, ls, ls, F.col('accent'), nil, 10)
+  F.round_rect(lx, ly, ls, ls, F.col('accent'), nil, rad * 0.55)
   local g = F.faico('ICON_FA_BOX_OPEN')
   if g == '' then g = 'f' end
   F.text_at(font_main, 16, lx + (ls - F.text_w(font_main, g)) / 2, ly + (ls - F.s(16)) / 2 - 1, F.col('ink'), g)
@@ -6942,12 +6983,13 @@ function F.draw_qty()
   imgui.PushTextWrapPos(F.wrap_x())
   imgui.TextColored(F.cvec('text', 0.9), '%s', q.text)
   imgui.PopTextWrapPos()
+  if fill > 0 then imgui.Dummy(imgui.ImVec2(1, fill)) end
   if q.item and cfg.qty_item == 1 then
     imgui.Spacing()
     local r = imgui.GetCursorScreenPos()
     local iw = F.inner_w()
     local sz = math.floor(F.s(34))
-    F.round_rect(r.x, r.y, sz, sz, F.col('side', 160), nil, 9)
+    F.round_rect(r.x, r.y, sz, sz, F.col('side', 160), nil, rad * 0.5)
     F.lib_pic(F.item_pic_of(q.item), r.x + 2, r.y + 2, sz - 4)
     local name = F.item_label(q.item)
     local sub = q.have and ('в ячейке ' .. F.num_text(q.have) .. ' шт') or nil
@@ -6964,12 +7006,13 @@ function F.draw_qty()
     q.focus = false
   end
   local TF = imgui.InputTextFlags
-  local enter = F.field('##qty', 'Количество', ui.qty, 16, all and (iw - aw - 8) or iw, 'qty',
-    (TF.CharsDecimal or 0) + (TF.EnterReturnsTrue or 0) + (TF.AutoSelectAll or 0))
+  local enter = F.field('##qty', 'Количество', ui.qty, F.QTY_BUF, all and (iw - aw - F.s(8)) or iw, 'qty',
+    (TF.EnterReturnsTrue or 0) + (TF.AutoSelectAll or 0))
+  F.qty_clean()
   if all then
-    imgui.SameLine(0, 8)
+    imgui.SameLine(0, F.s(8))
     if F.button(all .. '##qtyall', 0, 0) then
-      F.buf_set(ui.qty, tostring(q.have), 16)
+      F.buf_set(ui.qty, tostring(q.have), F.QTY_BUF)
       q.focus = true
     end
     if imgui.IsItemHovered() then F.tip('Положить всё, что лежит в ячейке') end
@@ -6983,7 +7026,7 @@ function F.draw_qty()
   local b1w = math.max(F.s(130), F.text_w(font_main, q.b1) + F.s(40))
   local b2w = math.max(F.s(110), F.text_w(font_main, q.b2) + F.s(40))
   local x2 = p.x + w - b1w
-  local x1 = x2 - 8 - b2w
+  local x1 = x2 - F.s(8) - b2w
   local keys = 'Enter  ·  Esc'
   if x1 - p.x > F.text_w(font_main, keys) + 8 then
     F.text_at(font_main, 16, p.x, p.y + (bh - F.s(16)) / 2 - 1, F.col('text', 110), keys)
@@ -6993,17 +7036,55 @@ function F.draw_qty()
   imgui.SetCursorScreenPos(imgui.ImVec2(x2, p.y))
   local ok_btn = F.button(q.b1 .. '##qtyok', b1w / F.s(1), 36, not empty and 'primary' or nil)
   F.advance(p, w, bh + pad)
-  q.h = math.ceil(p.y + bh + pad - wp.y)
+  q.nat = math.ceil(p.y + bh + pad - wp.y - fill)
+  F.qty_grip(q, wp, ww, wh, sw, sh)
   imgui.End()
-  imgui.PopStyleVar(2)
+  imgui.PopStyleVar(4)
   F.done_font(font_main)
   F.style_pop()
   cfg.scale = menu_scale
   F._qty_scale0 = nil
+  F.PAD, F._qty_pad0 = F._qty_pad0, nil
   F._card_r, F._card_a, F._btn_r = nil, nil, nil
   q.drawn = true
   if (enter or ok_btn) and not empty then F.qty_send(1)
   elseif cancel or no_btn then F.qty_send(0) end
+end
+
+-- The corner at the bottom right: pulled, it sets the width and the height. They are kept in
+-- design pixels, as the sliders in the settings show them.
+function F.qty_grip(q, wp, ww, wh, sw, sh)
+  local gs = math.floor(F.s(14))
+  local gx, gy = wp.x + ww - gs - 1, wp.y + wh - gs - 1
+  imgui.SetCursorScreenPos(imgui.ImVec2(gx, gy))
+  imgui.InvisibleButton('##qtygrip', imgui.ImVec2(gs, gs))
+  local hot, held = imgui.IsItemHovered(), imgui.IsItemActive()
+  local sc = cfg.scale or 1
+  if held then
+    if not F._qty_rs then F._qty_rs = {w = ww / sc, h = wh / sc} end
+    local md = imgui.GetIO().MouseDelta
+    local r = F._qty_rs
+    r.w = math.max(300, math.min(900, r.w + md.x / sc, (sw - wp.x) / sc))
+    r.h = math.max(F.QTY_MIN_H, math.min(700, r.h + md.y / sc, (sh - wp.y) / sc))
+    cfg.qty_w, cfg.qty_h = math.floor(r.w), math.floor(r.h)
+    if q.nat and r.h * sc <= q.nat then cfg.qty_h = 0 end
+    -- The corner moves the window too when it is centred: it is pinned where it is.
+    if (tonumber(cfg.qty_x) or -1) < 0 or (tonumber(cfg.qty_y) or -1) < 0 then
+      cfg.qty_x, cfg.qty_y = math.floor(wp.x), math.floor(wp.y)
+    end
+    if ui.qty_w then ui.qty_w[0], ui.qty_h[0] = cfg.qty_w, cfg.qty_h end
+  elseif F._qty_rs then
+    F._qty_rs = nil
+    dirty = true
+  end
+  local col = F.col(held and 'accent' or 'text', (hot or held) and 230 or 90)
+  local dl = imgui.GetWindowDrawList()
+  local ex, ey = gx + gs - F.s(3), gy + gs - F.s(3)
+  for i = 1, 3 do
+    local d = F.s(4) * i
+    dl:AddLine(imgui.ImVec2(ex - d, ey), imgui.ImVec2(ex, ey - d), col, math.max(1, F.s(1.4)))
+  end
+  if hot and not held then F.tip('Потяни: ширина и высота окна') end
 end
 
 F.STORE_SECS = {{'inv', 'Инвентарь'}, {'cars', 'Машины'}}
@@ -11271,6 +11352,14 @@ function F.draw_settings_page()
   end
   F.hint('Продажи, покупки, работа, расходы, прочее, предметы и пейдеи во вкладке «Доходы». Записи старше срока удаляются при следующем запуске скрипта.')
   imgui.Spacing()
+  local run = F.led_fill_run
+  if run then
+    F.hint('Читаю логи чата: файл ' .. run.done .. ' из ' .. run.files .. '…')
+  elseif F.button('Найти пропущенное в логах чата##ledfill', 300, 0) then
+    F.led_fill(true)
+  end
+  F.hint('Игра пишет весь чат в файлы. fHelper находит в них продажи, покупки, работу и расходы, которых нет в «Доходах» (за выбранный срок), и добавляет их. Уже записанное не повторяется.')
+  imgui.Spacing()
   local m = F.mem_st or {}
   if m.free and m.free < F.MEM_WARN then F.hint_bad(F.mem_text() .. '. Перезапусти игру.')
   else F.hint(F.mem_text()) end
@@ -11321,6 +11410,15 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.18', '16.11.2026', {
+    {'add', 'Предметы: после обновления игры новые предметы помечены «Новое», а во вкладке «Новое» лежат все предметы этого обновления. Пометка гаснет через день после того, как открыл карточку предмета'},
+    {'add', 'Доходы: fHelper находит в логах чата продажи, покупки, работу и расходы, которые пропустил, и добавляет их — один раз сам, а кнопка в Настройки → Данные ищет ещё раз. Уже записанное не повторяется, строки пейдея не трогаются'},
+    {'add', 'Доходы: новые записи — аренда предметов, транспорта и аксессуаров, сдача транспорта в аренду, штраф полицейскому, заправщик, пополнение телефона, деньги от игроков, продажа охранника, премия такси за заказ, инкассатор, развозчик продуктов, доставка груза, зарплата от сделки'},
+    {'fix', 'Окно количества: закругление меняет все углы окна — карточку, поле, кнопки, значок; тень больше не торчит квадратом под углами. Появилась высота, размер до 200%, ширина до 900, а ширину и высоту можно тянуть уголком справа внизу'},
+  }},
+  {'1.19.17', '16.11.2026', {
+    {'fix', 'Окно количества: в поле можно ввести запятую — лавка просит количество и цену через запятую'},
+  }},
   {'1.19.16', '16.11.2026', {
     {'fix', 'Доходы: журналы хранятся по дням, а не по числу записей — продажи, покупки, работа, расходы и предметы больше не пропадают через несколько дней. Срок 30 дней по умолчанию, меняется в Настройки → Данные (14, 30, 60 или 90 дней)'},
     {'add', 'Хранилище: своё окно количества вместо игрового «Введите количество, которое хотите положить» — лёгкое, Enter выбирает, Esc отменяет, кнопка «Всё», когда известно, сколько лежит в ячейке. Выглядит как меню fHelper: размер, ширина, непрозрачность, закругление и место настраиваются. По умолчанию выключено, включается в Экран → Окно количества'},
@@ -12563,6 +12661,7 @@ function F.led_rules()
   add('Вы успешно обменяли %$[%d][%d%.,]* на ' .. M, function(a) return 'sell', n(a), 'Обмен VC$' end)
   add('вы выкупили транспорт \'(.-)\' со ставкой ' .. M, function(item, a) return 'buy', n(a), item end)
   add('Вы выкупили транспорт \'(.-)\' со ставкой ' .. M, function(item, a) return 'buy', n(a), item end)
+  add('Игрок (%S+) купил у вас (.-) за ' .. M, function(who, item, a) return 'sell', n(a), item, 1, who end)
   add('Вы купили (.-) за ' .. M, function(item, a) return 'buy', n(a), (item:gsub('^ларец ', '')) end)
   add('Вы приобрели (.-) за ' .. M, function(item, a) return 'buy', n(a), item end)
   -- Work
@@ -12594,6 +12693,13 @@ function F.led_rules()
   add('Вы завершили работу (.-), заработано за смену: ' .. M, function(what, a)
     return 'work', n(a), 'Смена: ' .. what
   end)
+  simple('%[Такси%] Премия за выполненный заказ: ' .. M, 'work', 'Такси: премия за заказ')
+  simple('премия за доставку %- ' .. M, 'work', 'Развозчик продуктов: доставка')
+  simple('Получено за обслуживание банкомата: ' .. M, 'work', 'Инкассатор: банкомат')
+  simple('Вы получили ' .. M .. ' за доставку груза', 'work', 'Доставка груза')
+  add('Ваша зарплата: ' .. M .. ' %((%d+)%% от сделки%)', function(a, pc)
+    return 'work', n(a), 'Зарплата: ' .. pc .. '% от сделки'
+  end)
   simple('Вы заработали %+?' .. M, 'work', 'Заработок')
   simple('заработано %+?' .. M, 'work', 'Заработок')
   -- Spending
@@ -12609,6 +12715,23 @@ function F.led_rules()
     return 'spend', n(a), 'Оплата: ' .. what
   end)
   simple('Стоимость услуги составила ' .. M, 'spend', 'Услуга')
+  add('Вы успешно взяли предмет (.-) в аренду на (.-) за ' .. M, function(item, term, a)
+    return 'spend', n(a), 'Аренда: ' .. item .. ' (' .. term .. ')'
+  end)
+  add('Вы арендовали транспорт (.-) на (%S+) за ' .. M, function(what, term, a)
+    return 'spend', n(a), 'Аренда транспорта: ' .. what .. ' (' .. term .. ')'
+  end)
+  add('Вы арендовали аксессуар в киоске: (.-) на (%S+) за ' .. M, function(what, term, a)
+    return 'spend', n(a), 'Аренда аксессуара: ' .. what .. ' (' .. term .. ')'
+  end)
+  add('Вы оплатили штраф (.-) в размере ' .. M, function(to, a)
+    return 'spend', n(a), 'Штраф', 0, to:match('([%w_]+)$') or ''
+  end)
+  add('(%S+) успешно заправил ваш транспорт за ' .. M, function(who, a)
+    return 'spend', n(a), 'Топливо: заправщик', 0, who
+  end)
+  simple('Вы пополнили баланс телефона на ' .. M, 'spend', 'Телефон: пополнение')
+  add('Вы заплатили ' .. M .. ' за (.-)%.?$', function(a, what) return 'spend', n(a), 'Оплата: ' .. what end)
   add('Вы успешно продлили аренду (.-) за ' .. M, function(what, a)
     return 'spend', n(a), 'Аренда ' .. (what:gsub('^своего ', ''))
   end)
@@ -12631,6 +12754,10 @@ function F.led_rules()
     return 'other', n(a), 'Перевод', 0, (who:gsub('%(%d+%)$', ''))
   end)
   simple('Получена разовая семейная премия: ' .. M, 'other', 'Семейная премия')
+  add('(%S+) передал%(а%) вам ' .. M, function(who, a) return 'other', n(a), 'Передача денег', 0, who end)
+  add('Вы передали (.-) в аренду игроку ([%w_]+).- на (%S+) за ' .. M, function(what, who, term, a)
+    return 'other', n(a), 'Сдача в аренду: ' .. what .. ' (' .. term .. ')', 0, who
+  end)
   simple('Вы открыли пачку с деньгами, там было: ' .. M, 'other', 'Пачка денег')
   simple('в количестве ' .. M, 'other', 'Игровая валюта')
   add('Вы получили %+' .. M .. ' на банковский счет', function(a) return 'other', n(a), 'На банковский счёт' end)
@@ -12638,6 +12765,9 @@ function F.led_rules()
     return 'other', n(a), (F.trim((why:gsub('%b()', ''))):gsub('[%.%s]+$', ''))
   end)
   simple('Вы получили %+' .. M, 'other', 'Бонус')
+  add('Вы получили ' .. M .. ' за (.-)%.?$', function(a, why)
+    return 'other', n(a), (F.trim((why:gsub('%b()', ''))):gsub('[%.%s]+$', ''))
+  end)
   simple('Вам начислено ' .. M, 'other', 'Начисление')
   F._led_rules = r
   return r
@@ -12657,7 +12787,7 @@ end
 
 function F.led_parse(raw)
   raw = F.int_human(raw:gsub(':u%x%x%x%x+:', ''), true)
-  raw = F.trim(raw:gsub('VC%$', '$'))
+  raw = F.trim(raw:gsub('VC%$', '$'):gsub('{%x%x%x%x%x%x}', ''))
   if raw == '' or not F.led_system(raw) then return nil end
   local rules = F.led_rules()
   for i = 1, #rules do
@@ -12684,6 +12814,207 @@ function F.led_feed(text)
     -- Only the Vice City server pays in VC$ alone: a missed welcome line still flips the city.
     if vc and not F.here_vc() then F.here_set(true) end
   end
+end
+
+-- The chat logs Arizona keeps hold what the ledger missed: the time fHelper was not running,
+-- records lost to the old limit by number, phrases learned later. They are read once for each
+-- set of rules (F.LED_FILL_V), in the background, and the button in the settings reads them again.
+-- A line already in the ledger (the same kind and sum within a few seconds) is not added twice;
+-- the payday's lines stay the payday's, as they do in the game.
+F.LED_FILL_V = 1
+F.LED_FILL_GAP = 5
+
+function F.led_epoch(t)
+  local y, mo, d, h, mi, sec = tostring(t or ''):match('^(%d+)%-(%d+)%-(%d+) (%d+):(%d+):(%d+)')
+  if not y then return nil end
+  return os.time({year = tonumber(y), month = tonumber(mo), day = tonumber(d),
+    hour = tonumber(h), min = tonumber(mi), sec = tonumber(sec)})
+end
+
+-- The payday as the game's chat goes: its check and the lines right after it are not the ledger's.
+function F.led_fill_pay(pb, raw, at)
+  local low = F.lower_text(raw)
+  if low:find('банковский чек', 1, true) then
+    pb.open, pb.rules, pb.n, pb.t = true, 0, 0, at
+    return true
+  end
+  if pb.open and at - pb.t > 4 then pb.open, pb.closed = false, pb.t end
+  if pb.open then
+    local bare = raw:gsub('%s', '')
+    if #bare >= 8 and (bare:match('^_+$') or bare:match('^=+$')) then
+      pb.rules = pb.rules + 1
+      if pb.n > 0 or pb.rules >= 2 then pb.open, pb.closed = false, at end
+    else
+      pb.n, pb.t = pb.n + 1, at
+    end
+    return true
+  end
+  if pb.closed and at - pb.closed <= 3 and raw:find('[Пп]олучили%s*[%+%-]?%$%d') and raw:find('%sза%s') then return true end
+  return false
+end
+
+-- One line of a chat log: the records the ledger would have made of it go to found.
+function F.led_fill_line(text, pb, at, found)
+  local rod = F.is_rod()
+  local money = text:find('\240\159\176[\162\163]') or text:find('$', 1, true) or text:find(':CASH', 1, true)
+  if not money and not rod and not text:find('чек', 1, true) and not text:find('ЧЕК', 1, true) and not text:find('Чек', 1, true)
+    and not text:find('==', 1, true) and not text:find('__', 1, true) then return end
+  local raw = F.proj_text(F.game_text(F.int_pack(text)))
+  if raw == '' then return end
+  local pr = F.trim((raw:gsub(':CASHV:', '$'):gsub(':CASH:', '$'):gsub(':u%x+:', '')))
+  if F.led_fill_pay(pb, pr, at) then return end
+  if not rod and not raw:find(':CASH', 1, true) and not raw:find('$', 1, true) then return end
+  local vc = raw:find(':CASHV:', 1, true) and not raw:find(':CASH:', 1, true)
+  local got = {}
+  -- Old exchanges must not set today's rate.
+  local keep, rates = F.led_add, {cfg.vc_rate_buy_last, cfg.vc_rate_last}
+  F.led_add = function(cat, amount, what, qty, who, cur) got[#got + 1] = {cat, amount, what, qty, who, cur} end
+  pcall(function()
+    if F.led_exchange(raw) then return end
+    local cat, amount, what, qty, who = F.led_parse(raw)
+    if cat then got[#got + 1] = {cat, amount, what, qty, who, vc and 'vc' or 'sa'} end
+  end)
+  F.led_add = keep
+  cfg.vc_rate_buy_last, cfg.vc_rate_last = rates[1], rates[2]
+  for _, g in ipairs(got) do
+    if g[1] and F.LED_CAT[g[1]] and (tonumber(g[2]) or 0) > 0 then
+      found[#found + 1] = {at = at, cat = g[1], amount = tonumber(g[2]), text = g[3], qty = g[4], who = g[5], cur = g[6]}
+    end
+  end
+end
+
+-- One file is one game session: the date is in its name, the time on every line, and a session
+-- may run past midnight.
+function F.led_fill_file(path, name, found, budget)
+  local y, mo, d = name:match('^(%d+)%-(%d+)%-(%d+) ')
+  if not y then return end
+  local f = io.open(path, 'rb')
+  if not f then return end
+  local data = f:read('*a') or ''
+  f:close()
+  local base = os.time({year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = 0, min = 0, sec = 0})
+  local last, pb = -1, {}
+  for line in data:gmatch('[^\n]+') do
+    local h, m, sec, text = line:match('^%[(%d+):(%d+):(%d+)%] (.*)$')
+    if h then
+      local t = tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(sec)
+      if last >= 0 and t < last - 60 then base = base + 86400 end
+      last = t
+      F.led_fill_line((text:gsub('\r', '')), pb, base + t, found)
+    end
+    if budget then budget() end
+  end
+end
+
+-- What was found goes into the ledger, the records already there matched off one by one.
+function F.led_fill_merge(found)
+  local st = F.led_state()
+  local cut = F.led_epoch(F.log_cut()) or 0
+  local now = os.time() + 60
+  local have = {}
+  for _, r in ipairs(st.list) do
+    local e = F.led_epoch(r.t)
+    if e then
+      local k = r.cat .. '|' .. string.format('%.0f', r.amount)
+      have[k] = have[k] or {}
+      table.insert(have[k], e)
+    end
+  end
+  local add = {}
+  for _, r in ipairs(found) do
+    if r.at >= cut and r.at <= now then
+      local k = r.cat .. '|' .. string.format('%.0f', r.amount)
+      local l, dup = have[k], false
+      for i = 1, l and #l or 0 do
+        if math.abs(l[i] - r.at) <= F.LED_FILL_GAP then
+          table.remove(l, i)
+          dup = true
+          break
+        end
+      end
+      if not dup then
+        add[#add + 1] = {
+          t = os.date('%Y-%m-%d %H:%M:%S', r.at), cat = r.cat, amount = r.amount, cur = r.cur or 'sa',
+          qty = tonumber(r.qty) or 0, who = r.who or '', text = F.utf_cut(r.text or '', 150),
+        }
+      end
+    end
+  end
+  if #add == 0 then return 0 end
+  local all = {}
+  for i, r in ipairs(st.list) do all[#all + 1] = {r, i} end
+  for i, r in ipairs(add) do all[#all + 1] = {r, #st.list + i} end
+  table.sort(all, function(a, b)
+    if a[1].t ~= b[1].t then return a[1].t < b[1].t end
+    return a[2] < b[2]
+  end)
+  local list, out = {}, {}
+  for i, x in ipairs(all) do
+    list[i] = x[1]
+    out[i] = (F.led_line(x[1]):gsub('[\r\n]', ' '))
+  end
+  st.list = list
+  st.rev = st.rev + 1
+  F.write_lines('fhelp_ledger.txt', out)
+  return #add
+end
+
+function F.led_fill_names(dir)
+  local cut = F.led_epoch(F.log_cut()) or 0
+  -- A session started the day before the cut may hold lines after it.
+  local from = os.date('%Y-%m-%d', cut - 86400)
+  local names = {}
+  for name in lfs.dir(dir) do
+    local y, mo, d = name:match('^(%d+)%-(%d+)%-(%d+) %d+%-%d+%-%d+%.txt$')
+    if y and (y .. '-' .. mo .. '-' .. d) >= from then names[#names + 1] = name end
+  end
+  table.sort(names)
+  return names
+end
+
+function F.led_fill(manual)
+  if F.led_fill_run then return end
+  local dir = F.clog_dir()
+  if not dir then
+    if manual then F.notify('Логи чата не найдены', true) end
+    return
+  end
+  local run = {done = 0, files = 0, added = 0}
+  F.led_fill_run = run
+  lua_thread.create(function()
+    local ok, err = pcall(function()
+      local names = F.led_fill_names(dir)
+      run.files = #names
+      local found = {}
+      local stop = os.clock() + 0.006
+      local function budget()
+        if os.clock() > stop then
+          wait(0)
+          stop = os.clock() + 0.006
+        end
+      end
+      for i, name in ipairs(names) do
+        run.done = i
+        F.led_fill_file(dir .. '\\' .. name, name, found, budget)
+        wait(0)
+        stop = os.clock() + 0.006
+      end
+      run.added = F.led_fill_merge(found)
+    end)
+    F.led_fill_run = nil
+    cfg.led_fill = F.LED_FILL_V
+    dirty = true
+    if not ok then
+      F.feed_err('логи чата', err)
+      return
+    end
+    F.log_line('Доходы из логов чата: файлов ' .. run.files .. ', добавлено записей ' .. run.added)
+    if run.added > 0 then
+      F.notify('Доходы: из логов чата добавлено записей: ' .. run.added, not manual)
+    elseif manual then
+      F.notify('Доходы: в логах чата нет пропущенного', true)
+    end
+  end)
 end
 
 -- Gas stations
@@ -16771,6 +17102,10 @@ function F.lib_build_start()
       return
     end
     F.mkdir(F.cfg_dir())
+    -- The list before the update: what it did not have is new.
+    local of = io.open(F.lib_idx_path(), 'rb')
+    local old = of and of:read('*a') or nil
+    if of then of:close() end
     local f = io.open(F.lib_idx_path(), 'wb')
     if not f then
       st.state, st.err = 'fail', 'нет доступа к папке config'
@@ -16781,6 +17116,10 @@ function F.lib_build_start()
     while F._lib and F._lib.buff_state == 'run' do wait(100) end
     F.lib_reset()
     st.state = 'done'
+    local okn, nn = pcall(F.lib_new_found, old, text, st.zip)
+    if okn and nn > 0 then
+      F.notify('В игре новые предметы: ' .. nn .. '. Они во вкладке «Предметы → Новое»', true)
+    end
     F.log_line(string.format('Библиотека: предметы прочитаны из игры за %.1f с', os.clock() - t0))
   end)
 end
@@ -17584,14 +17923,15 @@ function F.lib_view(cat, q)
   local ints = F.ints or {}
   local last = ints[#ints]
   local mk = F.lib_marks()
-  local stamp = #ints .. (last and last.token or '') .. '|' .. mk.rev
+  local nw = F.lib_new()
+  local stamp = #ints .. (last and last.token or '') .. '|' .. mk.rev .. '|' .. nw.rev
   local v = F._lib_view
   if v and v.cat == cat and v.q == q and v.stamp == stamp then return v end
   v = {cat = cat, q = q, stamp = stamp, fresh = not v or v.cat ~= cat or v.q ~= q}
   F._lib_view = v
   local db = F.lib_db()
   local list = db.list
-  local any = cat == 'all' or cat == 'chat' or cat == 'mark' or cat == 'fav' or cat == 'seen'
+  local any = cat == 'all' or cat == 'chat' or cat == 'mark' or cat == 'fav' or cat == 'seen' or cat == 'new'
   if cat == 'chat' then list = F.lib_chat_cards()
   elseif cat == 'mark' then list = F.LIB_MARKS
   elseif cat == 'fav' then
@@ -17602,6 +17942,14 @@ function F.lib_view(cat, q)
   elseif cat == 'seen' then
     list = {}
     for _, id in ipairs(mk.seen) do list[#list + 1] = F.car_lib(id) end
+  elseif cat == 'new' then
+    -- Not opened yet first, then the rest, each in the game's order.
+    list = {}
+    for pass = 1, 2 do
+      for _, id in ipairs(nw.list) do
+        if (nw.ids[id] == 0) == (pass == 1) and db.by_id[id] then list[#list + 1] = db.by_id[id] end
+      end
+    end
   end
   local low = F.lower_fast(q)
   low = low:match('^:item(%d+):$') or low
@@ -17768,6 +18116,7 @@ function F.lib_card(it, x, y, w, h, hovered)
     local star = F.faico('ICON_FA_STAR')
     if star ~= '' then F.text_at(font_main, 14, x + F.s(7), y + F.s(5), F.col('accent_hi'), star) end
   end
+  if it.id then F.lib_new_badge(it.id, x, y, w) end
   local one, two = F.lib_lines(it, w - F.s(10))
   local ty = y + F.s(66)
   F.text_at(font_main, 14, x + (w - (it.w1 or 0)) / 2, ty, F.col('text'), one)
@@ -17814,6 +18163,114 @@ function F.lib_grid(v, w, h)
     end
   end
   imgui.EndChild()
+end
+
+-- New items. When items.zip changes, the IDs the old list did not have came with the update.
+-- <pack>_new.txt: "U|zip size|when found", then "N|id|when its card was first opened" (0: not
+-- yet). A card shows «Новое» until it is opened, and a day after that the mark fades away; the tab
+-- «Новое» keeps the whole update.
+F.NEW_KEEP = 86400
+
+function F.lib_new_path() return F.proj().pack .. '_new.txt' end
+
+function F.lib_new()
+  local n = F._libn
+  if n and n.proj == cfg.proj then return n end
+  n = {ids = {}, list = {}, at = 0, zip = 0, rev = 0, proj = cfg.proj}
+  F._libn = n
+  for _, line in ipairs(F.read_lines(F.lib_new_path())) do
+    local z, at = line:match('^U|(%d+)|(%d+)$')
+    if z then
+      n.zip, n.at = tonumber(z), tonumber(at)
+    else
+      local id, seen = line:match('^N|(%d+)|(%d+)$')
+      id = tonumber(id)
+      if id then
+        if not n.ids[id] then n.list[#n.list + 1] = id end
+        n.ids[id] = tonumber(seen) or 0
+      end
+    end
+  end
+  return n
+end
+
+function F.lib_new_save()
+  local n = F.lib_new()
+  local out = {'U|' .. string.format('%.0f', n.zip or 0) .. '|' .. string.format('%.0f', n.at or 0)}
+  for _, id in ipairs(n.list) do out[#out + 1] = 'N|' .. id .. '|' .. string.format('%.0f', n.ids[id] or 0) end
+  F.write_lines(F.lib_new_path(), out)
+  n.rev = n.rev + 1
+end
+
+-- 'new' until the card is opened, then 'seen' with what is left of the day (1 … 0), then nil.
+function F.lib_new_mark(id, now)
+  local seen = id and F.lib_new().ids[id]
+  if not seen then return nil end
+  if seen == 0 then return 'new', 1 end
+  local left = F.NEW_KEEP - ((now or os.time()) - seen)
+  if left <= 0 then return nil end
+  return 'seen', left / F.NEW_KEEP
+end
+
+function F.lib_new_seen(id)
+  local n = F.lib_new()
+  if id and n.ids[id] == 0 then
+    n.ids[id] = os.time()
+    F.lib_new_save()
+  end
+end
+
+function F.lib_new_left()
+  local k = 0
+  for _, id in ipairs(F.lib_new().list) do
+    if F.lib_new().ids[id] == 0 then k = k + 1 end
+  end
+  return k
+end
+
+-- The old and the new text of the list, when items.zip changed: the update's items are kept.
+-- An update without new items (pictures, descriptions) leaves the last list as it was.
+function F.lib_new_found(old, text, zip)
+  if not old or old == '' or not text then return 0 end
+  local had, n_old = {}, 0
+  for id in old:gmatch('\n(%d+)\t') do
+    had[tonumber(id)] = true
+    n_old = n_old + 1
+  end
+  if n_old == 0 then return 0 end
+  local fresh, total = {}, 0
+  for id, cat in text:gmatch('\n(%d+)\t(%l+)\t') do
+    total = total + 1
+    id = tonumber(id)
+    if not had[id] and cat ~= 'twin' then fresh[#fresh + 1] = id end
+  end
+  -- A list in another format would be all new: that is not an update.
+  if #fresh == 0 or #fresh > total / 3 then return 0 end
+  local n = F.lib_new()
+  n.list, n.ids, n.zip, n.at = {}, {}, tonumber(zip) or 0, os.time()
+  for _, id in ipairs(fresh) do
+    n.list[#n.list + 1] = id
+    n.ids[id] = 0
+  end
+  F.lib_new_save()
+  F._lib_view, F._lib_cats_k = nil, nil
+  F.log_line('Библиотека: в обновлении игры новых предметов ' .. #fresh)
+  return #fresh
+end
+
+-- The mark on a card: an accent pill at the top right, fading through the day after it was opened.
+function F.lib_new_badge(id, x, y, w)
+  local kind, left = F.lib_new_mark(id)
+  if not kind then return end
+  local label = 'Новое'
+  local sz = 12
+  local tw = F.text_w(font_main, label) * sz / 16
+  local ph = math.floor(F.s(16))
+  local pw = math.floor(tw + F.s(10))
+  local px, py = x + w - pw - F.s(5), y + F.s(5)
+  local a = kind == 'new' and 1 or (0.25 + 0.55 * left)
+  F.round_rect(px, py, pw, ph, F.col('accent', math.floor(235 * a)), nil, ph / 2)
+  F.text_at(font_main, sz, px + (pw - tw) / 2, py + (ph - F.s(sz)) / 2 - 1, F.col('ink', math.floor(255 * math.max(0.6, a))), label)
 end
 
 -- Favourite and recently opened items: F|id and R|id lines, the newest R first.
@@ -18195,6 +18652,7 @@ function F.item_open(id, list, src, inst)
   modal = {kind = 'item', it = it, title = it.name, list = list, src = src or it, frame = ok and frame or 0, inst = inst}
   F.buf_set(ui.item_price, '', 32)
   pcall(F.lib_seen_add, it.id)
+  pcall(F.lib_new_seen, it.id)
   return it
 end
 
@@ -18635,7 +19093,8 @@ function F.draw_items()
     if pick then F.lib_buff = pick end
   else
     local mk = F.lib_marks()
-    local ck = mk.rev .. '|' .. tostring(cfg.proj)
+    local nw = F.lib_new()
+    local ck = mk.rev .. '|' .. nw.rev .. '|' .. tostring(cfg.proj)
     if F._lib_cats_k ~= ck then
       local nf = 0
       for _ in pairs(mk.fav) do nf = nf + 1 end
@@ -18646,6 +19105,10 @@ function F.draw_items()
         if row[1] == 'all' then
           list[#list + 1] = {'fav', 'Избранное' .. (nf > 0 and (' · ' .. nf) or '')}
           list[#list + 1] = {'seen', 'Недавние'}
+          if #nw.list > 0 then
+            local left = F.lib_new_left()
+            list[#list + 1] = {'new', 'Новое · ' .. (left > 0 and (left .. ' из ' .. #nw.list) or #nw.list)}
+          end
         end
       end
       F._lib_cats_k, F._lib_cats = ck, list
@@ -18663,8 +19126,15 @@ function F.draw_items()
     elseif v.q == '' and F.lib_cat == 'chat' then F.hint('Здесь пока пусто. Интеграции появятся, когда пройдут в чате.')
     elseif v.q == '' and F.lib_cat == 'fav' then F.hint('Здесь пока пусто. Открой предмет и нажми звёздочку в его карточке.')
     elseif v.q == '' and F.lib_cat == 'seen' then F.hint('Здесь будут предметы, карточки которых ты открывал.')
+    elseif v.q == '' and F.lib_cat == 'new' then F.hint('Новых предметов пока нет: они появятся здесь после обновления игры, в котором добавят предметы.')
     else F.hint('Ничего не найдено.') end
     return
+  end
+  if not buff and F.lib_cat == 'new' then
+    local nw = F.lib_new()
+    local left = F.lib_new_left()
+    F.hint('Обновление игры от ' .. os.date('%d.%m.%Y', nw.at) .. ': новых предметов ' .. #nw.list ..
+      (left > 0 and (', ещё не открыто ' .. left) or ', все открыты') .. '. Пометка «Новое» гаснет через день после того, как открыл карточку.')
   end
   if buff then F.hint('Найдено: ' .. #v .. '. Наведи на карточку — покажу баф, нажми — откроется карточка предмета.')
   elseif not F.int_pick then F.hint('Нажми на предмет: описание, бафы, цены в лавках, твои сделки и сколько выпадало. Стрелки листают.') end
@@ -20930,7 +21400,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 43
+F.BUILD = 45
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -21423,6 +21893,13 @@ function main()
   end
   F.chat_brand('Скрипт загружен')
   F.hook_chat()
+  -- New ledger rules read the chat logs once, a little after the start.
+  if (tonumber(cfg.led_fill) or 0) < F.LED_FILL_V then
+    lua_thread.create(function()
+      wait(F.FETCH_SYNC and 0 or 20000)
+      pcall(F.led_fill, false)
+    end)
+  end
   if frame then
     frame.LockPlayer = show and cfg.lock == 1
     frame.HideCursor = false
