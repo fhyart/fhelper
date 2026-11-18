@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.18'
+local VER = '1.19.19'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(45)
+script_version_number(46)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -86,6 +86,7 @@ local cfg = {
   draw = 800,
   draw_on = 0,
   fps_free = 0,
+  fps_cap = 0,
   accent_on = 1,
   accent = '',
   off = 0,
@@ -132,6 +133,37 @@ local cfg = {
   qty_y = -1,
   qty_item = 1,
   qty_dim = 0,
+  qty_swap = 0,
+  inv_on = 0,
+  inv_scale = 1,
+  inv_x = -1,
+  inv_y = -1,
+  inv_alpha = 0.97,
+  inv_round = 16,
+  inv_cell = 62,
+  inv_cols = 6,
+  inv_rows = 6,
+  inv_scroll = 0,
+  inv_menu = 1,
+  inv_skin = 1,
+  inv_search = 1,
+  inv_badges = 1,
+  inv_tips = 1,
+  inv_dim = 0,
+  inv_left = 1,
+  inv_lx = -1,
+  inv_ly = -1,
+  inv_col = 0,
+  inv_bg = 0x18181B,
+  inv_acc = 0xF5B342,
+  cur_style = 0,
+  cur_col = 0,
+  dlg_list = 0,
+  dlg_pay = 0,
+  dlg_money = 0,
+  dlg_give = 0,
+  dlg_ask = 0,
+  dlg_mem = 1,
   car_bar = 1,
   inc_per = 1,
   inc_from = 0,
@@ -234,7 +266,13 @@ local CFG_NUM = {
   {'time_date', 0, 1}, {'time_wday', 0, 1}, {'time_zone', 0, 1}, {'time_h12', 0, 1}, {'time_fmt', 0, 3},
   {'time_place', 0, 1}, {'time_x', 0, 100}, {'time_y', 0, 100}, {'time_scale', 0.6, 2},
   {'car_on', 0, 1}, {'car_bar', 0, 1}, {'bag_on', 0, 1}, {'smooth', 0, 1}, {'qty_on', 0, 1}, {'qty_scale', 0.7, 2}, {'qty_w', 300, 900}, {'qty_h', 0, 700}, {'qty_alpha', 0.5, 1}, {'qty_round', 0, 40},
-  {'qty_x', -1, 10000}, {'qty_y', -1, 10000}, {'qty_item', 0, 1}, {'qty_dim', 0, 1},
+  {'qty_x', -1, 10000}, {'qty_y', -1, 10000}, {'qty_item', 0, 1}, {'qty_dim', 0, 1}, {'qty_swap', 0, 1}, {'led_fill', 0, 99},
+  {'inv_on', 0, 1}, {'inv_scale', 0.7, 1.5}, {'inv_x', -1, 10000}, {'inv_y', -1, 10000},
+  {'inv_alpha', 0.5, 1}, {'inv_round', 0, 24}, {'inv_cell', 44, 84}, {'inv_cols', 4, 10}, {'inv_rows', 3, 10},
+  {'inv_scroll', 0, 1}, {'inv_menu', 0, 1}, {'inv_skin', 0, 1}, {'inv_search', 0, 1}, {'inv_badges', 0, 1},
+  {'inv_tips', 0, 1}, {'inv_dim', 0, 1}, {'inv_left', 0, 1}, {'inv_lx', -1, 10000}, {'inv_ly', -1, 10000},
+  {'inv_col', 0, 1}, {'inv_bg', 0, 0xFFFFFF}, {'inv_acc', 0, 0xFFFFFF}, {'cur_style', 0, 3}, {'cur_col', 0, 6},
+  {'dlg_list', 0, 1}, {'dlg_pay', 0, 1}, {'dlg_money', 0, 1}, {'dlg_give', 0, 1}, {'dlg_ask', 0, 1}, {'dlg_mem', 0, 1},
   {'inc_per', 1, 7}, {'inc_from', 0, 999999999999}, {'inc_to', 0, 999999999999},
   {'toast_on', 0, 1}, {'toast_pay', 0, 1}, {'toast_inc', 0, 1}, {'toast_exp', 0, 1}, {'toast_item', 0, 1},
   {'toast_car', 0, 1}, {'toast_sys', 0, 1}, {'toast_min', 0, 1e12}, {'toast_place', 0, 4},
@@ -249,7 +287,7 @@ local CFG_NUM = {
   {'shop_calc_keep', 10, 180}, {'shop_calc_sell', 0, 1}, {'shop_calc_pic', 0, 1},
   {'chest_on', 0, 1}, {'chest_chat', 0, 1}, {'chest_sound', 0, 1}, {'chest_all', 0, 1}, {'chest_pre', 0, 10},  {'toast_chest', 0, 1},
   {'ui_bg', 0, 0xFFFFFF}, {'ui_acc', 0, 0xFFFFFF}, {'ui_text', 0, 0xFFFFFF}, {'ui_font', 0, 5}, {'win_w', 860, 1600},
-  {'mem_auto', 0, 1}, {'mem_world', 0, 4096}, {'news_on', 0, 1}, {'wel_on', 0, 1}, {'wel_at', 0, 1e11},
+  {'mem_auto', 0, 1}, {'mem_world', 0, 4096}, {'fps_cap', 0, 120}, {'news_on', 0, 1}, {'wel_on', 0, 1}, {'wel_at', 0, 1e11},
   {'want_pin', 0, 1}, {'want_sound', 0, 1}, {'want_x', -1, 10000}, {'want_y', -1, 10000}, {'bak_auto', 0, 1},
   {'shift_auto', 0, 1}, {'shift_bar', 0, 1}, {'shift_x', -1, 10000}, {'shift_y', -1, 10000}, {'shift_scale', 0.6, 2},
   {'shift_alpha', 0.2, 1}, {'shift_fields', 0, 1023}, {'shift_goal', 0, 1e15}, {'shift_job', 1, 5}, {'shift_chat', 0, 1},
@@ -345,7 +383,16 @@ if imgui_ok then
   ui.car_q = imgui.new.char[80]()
   ui.bag_q = imgui.new.char[80]()
   ui.qty = imgui.new.char[40]()
+  ui.dlg_in = imgui.new.char[64]()
+  ui.dlg_q = imgui.new.char[64]()
   ui.qty_scale = imgui.new.float(100)
+ui.inv_scale = imgui.new.float(100)
+ui.iv_q = imgui.new.char[40]()
+ui.inv_cell = imgui.new.float(62)
+ui.inv_alpha = imgui.new.float(97)
+ui.inv_round = imgui.new.float(16)
+ui.inv_cols = imgui.new.float(6)
+ui.inv_rows = imgui.new.float(6)
   ui.qty_w = imgui.new.float(420)
   ui.qty_h = imgui.new.float(0)
   ui.qty_alpha = imgui.new.float(97)
@@ -437,7 +484,7 @@ F.PROJ_FILES = {
   ['fhelp_ints.txt'] = true, ['fhelp_craft.txt'] = true,
   ['fhelp_cars.txt'] = true, ['fhelp_items.txt'] = true, ['fhelp_shops.txt'] = true,
   ['fhelp_chests.txt'] = true, ['fhelp_wants.txt'] = true, ['fhelp_shifts.txt'] = true,
-  ['fhelp_lib.txt'] = true,
+  ['fhelp_lib.txt'] = true, ['fhelp_gps.txt'] = true,
 }
 
 function F.log_path()
@@ -899,6 +946,7 @@ end
 
 function F.typing()
   if F.qty then return true end
+  if F.iv and F.iv.open then return true end
   if isSampAvailable() then
     if sampIsChatInputActive() or sampIsDialogActive() then return true end
   end
@@ -3431,7 +3479,7 @@ function F.round_path(dl, x1, y1, x2, y2, r)
   dl:PathArcTo(imgui.ImVec2(x1 + r, y2 - r), r, pi * 0.5, pi, seg)
 end
 
-function F.round_rect(x, y, w, h, col, border, rad, dl)
+function F.round_rect(x, y, w, h, col, border, rad, dl, thick)
   dl = dl or imgui.GetWindowDrawList()
   rad = rad or 12
   local x1, y1 = math.floor(x + 0.5), math.floor(y + 0.5)
@@ -3442,9 +3490,11 @@ function F.round_rect(x, y, w, h, col, border, rad, dl)
     dl:PathFillConvex(col)
   end
   if border then
-    -- Half a pixel inside, so the line sits on the edge of the fill.
-    F.round_path(dl, x1 + 0.5, y1 + 0.5, x2 - 0.5, y2 - 0.5, rad - 0.5)
-    dl:PathStroke(border, true, 1)
+    -- Half the line inside, so the line sits on the edge of the fill.
+    local t = thick or 1
+    local o = t / 2
+    F.round_path(dl, x1 + o, y1 + o, x2 - o, y2 - o, math.max(0, rad - o))
+    dl:PathStroke(border, true, t)
   end
 end
 
@@ -4942,7 +4992,7 @@ function F.write_limiter(v)
 end
 
 function F.apply_limiter(force)
-  if cfg.fps_free == 1 then
+  if cfg.fps_free == 1 or (tonumber(cfg.fps_cap) or 0) > 0 then
     if force or F._lim ~= 0 then
       if not F.mem() and not F._mem_told then
         F._mem_told = true
@@ -4955,10 +5005,334 @@ function F.apply_limiter(force)
   end
 end
 
-F.SCREEN_SECS = {{'hud', 'Плашка FPS'}, {'time', 'Время'}, {'gfx', 'Графика'}, {'qty', 'Окно количества'}}
+-- Cursor. The pointer of SA-MP (in the chat, in the server's windows and in fHelper's) is
+-- mouse.png in the game folder: 32x32, its point in the top left corner. SA-MP reads it once, when
+-- the game starts, so a new one shows after the next start. fHelper draws its pointers here by
+-- code and writes one there. The game's own file is kept the first time in
+-- config\fhelp_mouse_orig.png, and «Как в игре» puts it back.
+F.CUR_MARK = 'fHelper cursor'
+F.CUR_STYLES = {
+  {1, 'Неон', 'Тёмное стекло с цветной каймой и мягким свечением'},
+  {2, 'Капля', 'Округлая стрелка без хвоста, светлая кайма и тень'},
+  {3, 'Дротик', 'Тонкий острый наконечник в два тона'},
+}
+F.CUR_COLS = {
+  {0, 'Как в меню'}, {1, 'Белый', {244, 246, 250}}, {2, 'Лёд', {96, 196, 255}}, {3, 'Мята', {80, 226, 168}},
+  {4, 'Роза', {255, 112, 184}}, {5, 'Золото', {255, 196, 72}}, {6, 'Лаванда', {168, 136, 255}},
+}
+F.CUR_SHAPES = {
+  {{0.6, 0.6}, {0.6, 20.5}, {5.4, 16.1}, {8.7, 23.6}, {12.2, 22.1}, {8.9, 14.8}, {15.4, 14.8}},
+  {{2, 2}, {2, 17}, {5.8, 13.3}, {12.6, 13}},
+  {{0.6, 0.6}, {19, 7.6}, {9.6, 9.6}, {7.6, 19}},
+}
+
+function F.cur_rgb(col)
+  local c = F.CUR_COLS[(tonumber(col) or 0) + 1]
+  if c and c[3] then return c[3][1], c[3][2], c[3][3] end
+  local acc = math.floor(tonumber(cfg.ui_acc) or F.LOOK_DEF.ui_acc)
+  return math.floor(acc / 65536) % 256, math.floor(acc / 256) % 256, acc % 256
+end
+
+-- The distance from a point to the edge of a polygon, below zero inside.
+function F.cur_sd(poly, x, y)
+  local d, inside, j = 1e9, false, #poly
+  for i = 1, #poly do
+    local ax, ay, bx, by = poly[j][1], poly[j][2], poly[i][1], poly[i][2]
+    local ex, ey, wx, wy = bx - ax, by - ay, x - ax, y - ay
+    local t = (wx * ex + wy * ey) / (ex * ex + ey * ey)
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    local dx, dy = wx - ex * t, wy - ey * t
+    if dx * dx + dy * dy < d then d = dx * dx + dy * dy end
+    if (ay > y) ~= (by > y) and x < ax + (y - ay) * ex / ey then inside = not inside end
+    j = i
+  end
+  d = math.sqrt(d)
+  return inside and -d or d
+end
+
+local function cur_c(v)
+  if v < 0 then return 0 elseif v > 1 then return 1 end
+  return v
+end
+
+-- 32x32 pixels {r, g, b, a}, row by row. Each layer lies over the ones before it; the edges
+-- are smooth because a pixel half inside the shape is half covered.
+function F.cur_pixels(style, col)
+  local poly = F.CUR_SHAPES[style]
+  if not poly then return nil end
+  local cr, cg, cb = F.cur_rgb(col)
+  local out = {}
+  for y = 0, 31 do
+    for x = 0, 31 do
+      local px, py = x + 0.5, y + 0.5
+      local r, g, b, a = 0, 0, 0, 0
+      local function lay(lr, lg, lb, la)
+        if la <= 0 then return end
+        if la > 1 then la = 1 end
+        r = lr / 255 * la + r * (1 - la)
+        g = lg / 255 * la + g * (1 - la)
+        b = lb / 255 * la + b * (1 - la)
+        a = la + a * (1 - la)
+      end
+      local sd = F.cur_sd(poly, px, py)
+      if style == 1 then
+        if sd > 0 then lay(cr, cg, cb, 0.55 * math.exp(-sd / 1.7)) end
+        lay(cr, cg, cb, cur_c(0.5 - sd))
+        local k = 0.22 * cur_c(1 - (px + py) / 34)
+        lay(16 + cr * k, 18 + cg * k, 26 + cb * k, 0.94 * cur_c(0.5 - (sd + 1.5)))
+      elseif style == 2 then
+        sd = sd - 1.3
+        local so = F.cur_sd(poly, px - 1.2, py - 1.8) - 1.3
+        lay(0, 0, 0, 0.42 * cur_c((2.6 - so) / 3.6))
+        lay(255, 255, 255, cur_c(0.5 - sd))
+        local k = 0.38 * (1 - cur_c((py - 2) / 15))
+        lay(cr + (255 - cr) * k, cg + (255 - cg) * k, cb + (255 - cb) * k, cur_c(0.5 - (sd + 1.4)))
+      else
+        local so = F.cur_sd(poly, px - 1, py - 1.4)
+        lay(0, 0, 0, 0.35 * cur_c((2 - so) / 3))
+        lay(20, 20, 28, cur_c(0.5 - sd))
+        local f = 0.7 + 0.3 * cur_c(px - py + 0.5)
+        lay(cr * f, cg * f, cb * f, cur_c(0.5 - (sd + 1.1)))
+      end
+      local q = {0, 0, 0, 0}
+      if a > 0.002 then
+        q[1] = math.floor(math.min(255, r / a * 255) + 0.5)
+        q[2] = math.floor(math.min(255, g / a * 255) + 0.5)
+        q[3] = math.floor(math.min(255, b / a * 255) + 0.5)
+        q[4] = math.floor(math.min(255, a * 255) + 0.5)
+      end
+      out[#out + 1] = q
+    end
+  end
+  return out
+end
+
+-- A PNG of RGBA pixels, uncompressed inside (the file stays a few kilobytes).
+function F.png_encode(w, h, px, note)
+  local bit = F.bitlib()
+  if not bit then return nil end
+  if not F._crc_t then
+    local t = {}
+    for n = 0, 255 do
+      local c = n
+      for _ = 1, 8 do
+        if bit.band(c, 1) ~= 0 then c = bit.bxor(0xEDB88320, bit.rshift(c, 1)) else c = bit.rshift(c, 1) end
+      end
+      t[n] = c
+    end
+    F._crc_t = t
+  end
+  local T = F._crc_t
+  local function u32(v)
+    return string.char(bit.band(bit.rshift(v, 24), 255), bit.band(bit.rshift(v, 16), 255), bit.band(bit.rshift(v, 8), 255), bit.band(v, 255))
+  end
+  local function chunk(kind, data)
+    local body = kind .. data
+    local c = bit.bnot(0)
+    for i = 1, #body do c = bit.bxor(T[bit.band(bit.bxor(c, body:byte(i)), 255)], bit.rshift(c, 8)) end
+    return u32(#data) .. body .. u32(bit.bnot(c))
+  end
+  local rows, i = {}, 1
+  for _ = 1, h do
+    local row = {'\0'}
+    for _ = 1, w do
+      local p = px[i]
+      row[#row + 1] = string.char(p[1], p[2], p[3], p[4])
+      i = i + 1
+    end
+    rows[#rows + 1] = table.concat(row)
+  end
+  local raw = table.concat(rows)
+  local z, pos, n = {'\120\1'}, 1, #raw
+  repeat
+    local len = math.min(65535, n - pos + 1)
+    z[#z + 1] = string.char(pos + len > n and 1 or 0, len % 256, math.floor(len / 256), (65535 - len) % 256, math.floor((65535 - len) / 256))
+    z[#z + 1] = raw:sub(pos, pos + len - 1)
+    pos = pos + len
+  until pos > n
+  local s1, s2 = 1, 0
+  for k = 1, n do
+    s1 = (s1 + raw:byte(k)) % 65521
+    s2 = (s2 + s1) % 65521
+  end
+  z[#z + 1] = u32(s2 * 65536 + s1)
+  return '\137PNG\r\n\26\n' .. chunk('IHDR', u32(w) .. u32(h) .. '\8\6\0\0\0')
+    .. (note and chunk('tEXt', 'Software\0' .. note) or '') .. chunk('IDAT', table.concat(z)) .. chunk('IEND', '')
+end
+
+function F.cur_png(style, col)
+  F._cur_png = F._cur_png or {}
+  local key = style .. '|' .. col .. '|' .. tostring(cfg.ui_acc)
+  if F._cur_png[key] == nil then
+    local px = F.cur_pixels(style, col)
+    F._cur_png[key] = px and F.png_encode(32, 32, px, F.CUR_MARK) or false
+  end
+  return F._cur_png[key] or nil
+end
+
+function F.cur_game_path()
+  if type(getGameDirectory) ~= 'function' then return nil end
+  local ok, dir = pcall(getGameDirectory)
+  if not ok or type(dir) ~= 'string' or dir == '' then return nil end
+  return dir .. '\\mouse.png'
+end
+
+function F.cur_orig_path()
+  return F.cfg_dir() .. '\\fhelp_mouse_orig.png'
+end
+
+function F.cur_read(path)
+  local f = path and io.open(path, 'rb')
+  if not f then return nil end
+  local data = f:read('*a')
+  f:close()
+  return data
+end
+
+function F.cur_write(path, data)
+  local f = path and io.open(path, 'wb')
+  if not f then return false end
+  local ok = f:write(data)
+  f:close()
+  return ok and true or false
+end
+
+function F.cur_ours(data)
+  return data and data:find(F.CUR_MARK, 1, true) ~= nil
+end
+
+-- The game's own pointer: the copy, or the file in the game folder while it is still the game's.
+function F.cur_orig()
+  local now = F.cur_read(F.cur_game_path())
+  if now and not F.cur_ours(now) then return now end
+  return F.cur_read(F.cur_orig_path())
+end
+
+-- Puts the chosen pointer into the game folder. 'same', 'done' or why it could not.
+function F.cur_apply()
+  local path = F.cur_game_path()
+  if not path then return 'nogame' end
+  local style = math.floor(tonumber(cfg.cur_style) or 0)
+  local now = F.cur_read(path)
+  if style == 0 then
+    if not F.cur_ours(now) then return 'same' end
+    local orig = F.cur_read(F.cur_orig_path())
+    if not orig then return 'noorig' end
+    return F.cur_write(path, orig) and 'done' or 'fail'
+  end
+  local png = F.cur_png(style, math.floor(tonumber(cfg.cur_col) or 0))
+  if not png then return 'fail' end
+  if now == png then return 'same' end
+  -- The launcher may have put the game's pointer back: the copy follows the game's latest one.
+  if now and not F.cur_ours(now) and not F.cur_write(F.cur_orig_path(), now) then return 'fail' end
+  return F.cur_write(path, png) and 'done' or 'fail'
+end
+
+function F.cur_set(style, col)
+  cfg.cur_style, cfg.cur_col = style, col
+  dirty = true
+  local ok, res = pcall(F.cur_apply)
+  if not ok then
+    F.log_line('Курсор: ' .. tostring(res))
+    res = 'fail'
+  end
+  if res == 'done' then
+    F._cur_wait = true
+    F.notify(style == 0 and 'Курсор игры вернётся после перезапуска игры' or 'Новый курсор появится после перезапуска игры', true)
+  elseif res == 'noorig' then
+    F.notify('Нет копии курсора игры: верни mouse.png в папку игры вручную', true)
+  elseif res == 'nogame' or res == 'fail' then
+    F.notify('Не получилось записать mouse.png в папку игры', true)
+  end
+end
+
+function F.cur_tex(style, col)
+  F._cur_tex = F._cur_tex or {}
+  local key = style .. '|' .. col .. '|' .. tostring(cfg.ui_acc)
+  local e = F._cur_tex[key]
+  if e == nil then
+    local png
+    if style == 0 then png = F.cur_orig() else png = F.cur_png(style, col) end
+    local ok, tex = false, nil
+    if png then ok, tex = pcall(imgui.CreateTextureFromFileInMemory, png, #png) end
+    e = (ok and tex) or false
+    F._cur_tex[key] = e
+  end
+  return e or nil
+end
+
+function F.cursor_card()
+  F.card_begin('Курсор', 'Свой указатель мыши вместо стрелки игры', 'ICON_FA_MOUSE_POINTER')
+  local cur = math.floor(tonumber(cfg.cur_style) or 0)
+  local col = math.floor(tonumber(cfg.cur_col) or 0)
+  local list = {{0, 'Как в игре'}}
+  for _, it in ipairs(F.CUR_STYLES) do list[#list + 1] = it end
+  local p = imgui.GetCursorScreenPos()
+  local w = F.inner_w()
+  local gap = F.s(10)
+  local tw = (w - gap * (#list - 1)) / #list
+  local th = F.s(112)
+  local dl = imgui.GetWindowDrawList()
+  local pick
+  for i, it in ipairs(list) do
+    local x = p.x + (i - 1) * (tw + gap)
+    local hit, hov = F.hotspot('##curst' .. it[1], x, p.y, tw, th)
+    local sel = it[1] == cur
+    local rad = F.s(10)
+    F.round_rect(x, p.y, tw, th, F.col(hov and 'hover' or 'panel'), nil, rad, dl)
+    if sel then
+      F.round_rect(x, p.y, tw, th, F.col('accent', 28), F.col('accent', 210), rad, dl, 2)
+    else
+      F.round_rect(x, p.y, tw, th, nil, F.col('text', hov and 52 or 28), rad, dl, 1)
+    end
+    local sz = math.min(F.s(66), tw - F.s(16))
+    local bx, by = x + (tw - sz) / 2, p.y + F.s(10)
+    local tex = F.cur_tex(it[1], col)
+    -- The pointer fills the top left 24 pixels of its 32: those are shown.
+    if tex then dl:AddImage(tex, imgui.ImVec2(bx, by), imgui.ImVec2(bx + sz, by + sz), imgui.ImVec2(0, 0), imgui.ImVec2(0.75, 0.75)) end
+    local name = F.fit_text(font_main, it[2], tw - F.s(12))
+    F.text_at(font_main, 15, x + (tw - F.text_w(font_main, name)) / 2, p.y + th - F.s(28), F.col('text', sel and 255 or 190), name)
+    if hit then pick = it[1] end
+    if hov and it[3] then F.tip(it[3]) end
+  end
+  F.advance(p, w, th)
+  if pick and pick ~= cur then
+    F.cur_set(pick, col)
+    cur = pick
+  end
+  if cur > 0 then
+    imgui.Spacing()
+    imgui.TextUnformatted('Цвет')
+    local cols = {}
+    for _, c in ipairs(F.CUR_COLS) do cols[#cols + 1] = {c[1], c[2]} end
+    local pc = F.pill_row('##curcol', cols, col)
+    if pc and pc ~= col then F.cur_set(cur, pc) end
+  end
+  imgui.Spacing()
+  if F._cur_wait then F.hint('Сохранено. Перезапусти игру — курсор меняется только при её запуске.', F.cvec('accent')) end
+  F.hint('Это курсор SA-MP: он виден в чате, в окнах сервера и в окнах fHelper. Игра читает его из файла mouse.png один раз при запуске.')
+  F.hint('Курсор игры сохранён в config\\fhelp_mouse_orig.png; «Как в игре» возвращает его. Если лаунчер вернёт свой курсор, fHelper при запуске поставит выбранный снова.')
+  F.card_end()
+end
+
+F.SCREEN_SECS = {{'hud', 'Плашка FPS'}, {'time', 'Время'}, {'gfx', 'Графика'}, {'custom', 'Кастомизация'}}
+F.CUSTOM_SECS = {{'qty', 'Свои окна'}, {'inv', 'Инвентарь'}, {'cursor', 'Курсор'}}
+
+function F.draw_custom()
+  local sec = F.sections('screencustom', F.CUSTOM_SECS)
+  if sec == 'inv' then
+    F.iv_set_card()
+    return
+  end
+  if sec == 'cursor' then
+    F.cursor_card()
+    return
+  end
+  F.qty_set_card()
+end
 
 function F.draw_screen()
-  F.page_head('Экран', 'Плашка с FPS и трафиком, время, графика')
+  F.page_head('Экран', 'Плашка с FPS и трафиком, время, графика, кастомизация')
   local sec = F.sections('screen', F.SCREEN_SECS)
   if sec == 'time' then
     F.time_card()
@@ -4968,8 +5342,8 @@ function F.draw_screen()
     F.screen_gfx()
     return
   end
-  if sec == 'qty' then
-    F.qty_set_card()
+  if sec == 'custom' then
+    F.draw_custom()
     return
   end
   F.card_begin('Плашка', 'Её можно перетащить мышью, пока меню открыто', 'ICON_FA_TACHOMETER_ALT')
@@ -5020,7 +5394,75 @@ function F.draw_screen()
   F.card_end()
 end
 
+-- A steady frame. The game is held by one core: without a limit it runs that core flat out,
+-- the laptop heats up and the frames come uneven; the game's own limiter sleeps in coarse steps
+-- and is uneven too. This one waits for the exact time of each frame: a short Sleep, then the last
+-- moment by the clock. A frame that took longer than that waits for nothing, and no burst follows
+-- it to catch up.
+F.FPS_CAPS = {0, 30, 40, 50, 60, 75}
+
+function F.cap_init()
+  if F._cap_ok ~= nil then return F._cap_ok end
+  F._cap_ok = false
+  if not ffi_ok then return false end
+  pcall(ffi.cdef, 'void __stdcall Sleep(unsigned long ms);')
+  pcall(ffi.cdef, 'unsigned int __stdcall timeBeginPeriod(unsigned int p);')
+  pcall(ffi.cdef, 'unsigned int __stdcall timeEndPeriod(unsigned int p);')
+  local ok = pcall(function()
+    F._winmm = ffi.load('winmm')
+    F._winmm.timeBeginPeriod(1)
+    local _ = ffi.C.Sleep
+  end)
+  F._cap_ok = ok and true or false
+  F._cap_period = F._cap_ok
+  if not F._cap_ok then F.log_line('Стабильный FPS: таймер Windows недоступен, предел не работает') end
+  return F._cap_ok
+end
+
+function F.cap_end()
+  if F._cap_period and F._winmm then pcall(function() F._winmm.timeEndPeriod(1) end) end
+  F._cap_period, F._cap_ok, F._cap_last = nil, nil, nil
+end
+
+function F.cap_wait()
+  local fps = tonumber(cfg.fps_cap) or 0
+  if fps <= 0 then
+    if F._cap_period then F.cap_end() end
+    F._cap_last = nil
+    return
+  end
+  if not F.cap_init() then return end
+  local now = F.rep_clock()
+  local due = (F._cap_last or now) + 1 / fps
+  if now >= due then
+    F._cap_last = now
+    return
+  end
+  local left = due - now
+  if left > 0.0025 then ffi.C.Sleep(math.floor((left - 0.0015) * 1000)) end
+  while F.rep_clock() < due do end
+  F._cap_last = due
+end
+
+function F.fps_cap_card()
+  F.card_begin('Стабильный FPS', 'Ровные кадры вместо скачков', 'ICON_FA_TACHOMETER_ALT')
+  local list = {}
+  for _, v in ipairs(F.FPS_CAPS) do list[#list + 1] = {tostring(v), v == 0 and 'Выкл' or tostring(v)} end
+  local cur = tostring(math.floor(tonumber(cfg.fps_cap) or 0))
+  local pick = F.segment('fpscap', list, cur, math.min(F.s(460), F.inner_w()))
+  if pick and pick ~= cur then
+    cfg.fps_cap = tonumber(pick) or 0
+    dirty = true
+    F.apply_limiter(true)
+  end
+  F.hint('Игру считает одно ядро процессора. Без предела оно всё время работает на полную, ноутбук греется и сбрасывает частоту, а кадры идут неровно: то 90, то 30. С пределом каждый кадр одной длины, а ядро успевает отдохнуть.')
+  F.hint('Выбери значение чуть ниже того, что игра держит почти всегда: на слабом ноутбуке 40 или 50, на мощном 60. Ограничитель игры при этом выключается сам, второй не нужен.')
+  if (tonumber(cfg.fps_cap) or 0) > 0 and F._cap_ok == false then F.hint_bad('Таймер Windows недоступен: предел не работает.') end
+  F.card_end()
+end
+
 function F.screen_gfx()
+  F.fps_cap_card()
   F.card_begin('Графика', nil, 'ICON_FA_DESKTOP')
   if F.switch('drawon', 'Своя дальность прорисовки', cfg.draw_on == 1) then
     cfg.draw_on = cfg.draw_on == 1 and 0 or 1
@@ -5035,7 +5477,8 @@ function F.screen_gfx()
       dirty = true
     end
   end
-  if F.switch('fpsfree', 'Снять ограничитель кадров', cfg.fps_free == 1, 'Убирает предел FPS из настроек игры') then
+  if F.switch('fpsfree', 'Снять ограничитель кадров', cfg.fps_free == 1, (tonumber(cfg.fps_cap) or 0) > 0
+    and 'Сейчас не нужно: кадры держит «Стабильный FPS» выше' or 'Убирает предел FPS из настроек игры') then
     cfg.fps_free = cfg.fps_free == 1 and 0 or 1
     if ui_fpsfree then ui_fpsfree[0] = cfg.fps_free == 1 end
     dirty = true
@@ -5046,6 +5489,7 @@ function F.screen_gfx()
   if F.button((undo ~= '' and (undo .. '  ') or '') .. 'Вернуть как в игре##drawback', 220, 0) then
     cfg.draw_on = 0
     cfg.fps_free = 0
+    cfg.fps_cap = 0
     if ui_drawon then ui_drawon[0] = false end
     if ui_fpsfree then ui_fpsfree[0] = false end
     dirty = true
@@ -6656,17 +7100,39 @@ function F.qty_ui()
 end
 
 function F.qty_set_card()
-  F.card_begin('Окно количества', 'Вместо окна игры «Введите количество…»: лёгкое, в стиле меню', 'ICON_FA_SLIDERS_H')
-  F.chest_flag('qtyon', 'Своё окно количества', 'qty_on', 'Enter — выбрать, Esc — отмена, кнопка «Всё», когда известно, сколько лежит в ячейке')
-  if cfg.qty_on ~= 1 then
-    F.card_end()
-    return
+  F.card_begin('Свои окна вместо игровых', 'Лёгкие окна в стиле меню вместо окон сервера. Каждое включается отдельно', 'ICON_FA_WINDOW_RESTORE')
+  local on = {}
+  for _, k in ipairs(F.DLG_KINDS) do
+    F.chest_flag('dlgk' .. k[1], k[3], k[2], k[5])
+    if cfg[k[2]] == 1 then on[#on + 1] = {k[1], k[3]} end
   end
+  F.hint('Пароли, коды, чек пейдея и окна предметов (информация, покупка, продажа, лавка) всегда показывает игра. Окно, которое fHelper не узнал точно, тоже остаётся игровым.')
+  F.hint('Ответ уходит серверу так же, как от кнопок игры. Кнопка со стрелкой в шапке окна отдаёт такие окна обратно игре.')
+  F.divider()
+  F.chest_flag('dlgmem', 'Запоминать ввод и выбор', 'dlg_mem', 'Количество, сумма, кому передавал и последний пункт меню подставляются в следующий раз, и после перезахода. Выключено — только до закрытия игры')
+  if #F.dlg_mem().list > 0 then
+    imgui.Spacing()
+    if F.button('Забыть ввод и выбор##dlgmemclr', 210, 0) then
+      F.dlg_mem_clear()
+      F.notify('Свои окна забыли всё введённое и выбранное', true)
+    end
+  end
+  if #on > 0 then
+    imgui.Spacing()
+    local cur = on[1][1]
+    for _, it in ipairs(on) do if it[1] == F._dlg_demo then cur = it[1] end end
+    F._dlg_demo = F.pill_row('##dlgdemo', on, cur) or cur
+    imgui.Spacing()
+    if F.button('Показать пример##qtydemo', 200, 0, 'primary') then F.dlg_sample(F._dlg_demo) end
+    F.hint('Пример ничего не отправляет на сервер.')
+  end
+  F.card_end()
+  if #on == 0 then return end
   if not F._qty_ui then
     F._qty_ui = true
     F.qty_ui()
   end
-  F.divider()
+  F.card_begin('Вид окон', 'Один для всех своих окон', 'ICON_FA_SLIDERS_H')
   if F.slider_row('qtyscale', 'Размер', ui.qty_scale, 70, 200, '%.0f%%') then
     cfg.qty_scale = math.max(0.7, math.min(2, ui.qty_scale[0] / 100))
     dirty = true
@@ -6688,22 +7154,45 @@ function F.qty_set_card()
     dirty = true
   end
   F.divider()
-  F.chest_flag('qtyitem', 'Показывать предмет', 'qty_item', 'Картинка, название и сколько лежит в ячейке, если fHelper знает, что выбрано')
+  F.chest_flag('qtyitem', 'Показывать предмет', 'qty_item', 'В окне количества: картинка, название и сколько лежит в ячейке, если fHelper знает, что выбрано')
   F.chest_flag('qtydim', 'Затемнять экран за окном', 'qty_dim', 'Окно лучше видно на ярком фоне')
+  F.chest_flag('qtyswap', 'Главная кнопка слева', 'qty_swap', 'Поменять кнопки местами: «Выбрать» слева, «Отмена» справа. Enter и Esc работают как прежде')
   imgui.Spacing()
-  if F.button('Показать пример##qtydemo', 200, 0, 'primary') then F.qty_sample() end
-  F.same_if_fit(F.s(190))
   if F.button('Вернуть в центр##qtypos', 190, 0) then
     cfg.qty_x, cfg.qty_y = -1, -1
     dirty = true
   end
   F.same_if_fit(F.s(170))
   if F.button('Сбросить вид##qtydef', 170, 0) then
-    for _, key in ipairs({'qty_scale', 'qty_w', 'qty_h', 'qty_alpha', 'qty_round', 'qty_x', 'qty_y', 'qty_item', 'qty_dim'}) do cfg[key] = F.CFG_DEF[key] end
+    for _, key in ipairs({'qty_scale', 'qty_w', 'qty_h', 'qty_alpha', 'qty_round', 'qty_x', 'qty_y', 'qty_item', 'qty_dim', 'qty_swap'}) do cfg[key] = F.CFG_DEF[key] end
     F.qty_ui()
     dirty = true
   end
-  F.hint('Окно двигается мышью за шапку, ширина и высота меняются уголком справа внизу; всё запоминается. Пример ничего не отправляет на сервер.')
+  F.hint('Окно двигается мышью за шапку, ширина и высота меняются уголком справа внизу; всё запоминается. Список шире, если в нём несколько столбцов.')
+  F.card_end()
+  F.dlg_skip_card()
+end
+
+-- The windows given back to the game by the arrow in the head.
+function F.dlg_skip_card()
+  local list = F.dlg_skip()
+  if #list == 0 then return end
+  F.card_begin('Окна, которые показывает игра', 'Ты вернул их игре кнопкой со стрелкой в шапке окна', 'ICON_FA_REPLY')
+  local del
+  for i, e in ipairs(list) do
+    local k = F.DLG_BY[e[1]]
+    local p = imgui.GetCursorScreenPos()
+    local w = F.inner_w()
+    local h = math.floor(F.s(32))
+    local label = (k and k[3] or e[1]) .. '  ·  «' .. (e[2] ~= '' and e[2] or 'без названия') .. '»'
+    F.text_at(font_main, 16, p.x, p.y + (h - F.s(16)) / 2 - 1, F.col('text', 230), F.fit_text(font_main, label, w - F.s(44)))
+    if F.ghost_icon('##dlgskip' .. i, p.x + w - F.s(30), p.y + 1, 'ICON_FA_TRASH', 'Снова показывать своим окном', true) then del = i end
+    F.advance(p, w, h)
+  end
+  if del then
+    table.remove(list, del)
+    F.dlg_skip_save()
+  end
   F.card_end()
 end
 
@@ -6730,6 +7219,146 @@ end
 -- item stays the game's.
 F.QTY_WAIT = 1.5
 F.qty_last = {}
+
+-- What was typed and picked in the own windows, kept between sessions: «key<Tab>value», the
+-- last used first. Switched off, it is kept only until the game is closed.
+F.DLG_MEM_MAX = 300
+
+function F.dlg_mem()
+  if not F._dlg_mem then
+    local m = {list = {}, map = {}}
+    for _, line in ipairs(F.read_lines('fhelp_dlg_mem.txt')) do
+      local k, v = line:match('^([^\t]+)\t(.*)$')
+      if k and m.map[k] == nil and #m.list < F.DLG_MEM_MAX then
+        m.list[#m.list + 1] = k
+        m.map[k] = v
+      end
+    end
+    F._dlg_mem = m
+  end
+  return F._dlg_mem
+end
+
+function F.dlg_mem_save()
+  local m = F.dlg_mem()
+  local out = {}
+  for _, k in ipairs(m.list) do out[#out + 1] = k .. '\t' .. m.map[k] end
+  F.write_lines('fhelp_dlg_mem.txt', out)
+end
+
+function F.dlg_mem_clear()
+  F._dlg_mem = {list = {}, map = {}}
+  F.qty_last = {}
+  F.write_lines('fhelp_dlg_mem.txt', {})
+end
+
+function F.dlg_last(key)
+  if not key then return nil end
+  if cfg.dlg_mem == 1 then
+    local v = F.dlg_mem().map[key]
+    if v ~= nil and v ~= '' then return v end
+  end
+  return F.qty_last[key]
+end
+
+function F.dlg_last_put(key, val)
+  if not key or val == nil then return end
+  key = tostring(key):gsub('[\t\r\n]', ' ')
+  val = tostring(val):gsub('[\t\r\n]', ' ')
+  F.qty_last[key] = val
+  if cfg.dlg_mem ~= 1 then return end
+  local m = F.dlg_mem()
+  if m.map[key] == val and m.list[1] == key then return end
+  for i, k in ipairs(m.list) do
+    if k == key then
+      table.remove(m.list, i)
+      break
+    end
+  end
+  table.insert(m.list, 1, key)
+  m.map[key] = val
+  while #m.list > F.DLG_MEM_MAX do m.map[table.remove(m.list)] = nil end
+  F.dlg_mem_save()
+end
+
+-- The row picked last time in a menu of this title: by its name, so a row that moved is found
+-- again; numbers in it (a price, a count) may change.
+function F.dlg_row_name(r)
+  return F.lower_fast(F.trim(r.cols[1] or ''))
+end
+
+function F.dlg_sel_key(q)
+  return 'sel|' .. tostring(q.kind) .. '|' .. tostring(q.tkey or '')
+end
+
+function F.dlg_sel_put(q, r)
+  if not r or r.blank then return end
+  local name = F.dlg_row_name(r)
+  if name ~= '' then F.dlg_last_put(F.dlg_sel_key(q), name) end
+end
+
+function F.dlg_sel_get(q)
+  local want = F.dlg_last(F.dlg_sel_key(q))
+  if not want or want == '' or not q.rows then return nil end
+  want = tostring(want)
+  local loose = want:gsub('[%d%s%.,%$]+', '')
+  local near
+  for i, r in ipairs(q.rows) do
+    if not r.blank then
+      local name = F.dlg_row_name(r)
+      if name == want then return i end
+      if not near and loose ~= '' and name:gsub('[%d%s%.,%$]+', '') == loose then near = i end
+    end
+  end
+  return near
+end
+
+-- The one given to last time is kept by the nick: after a relog his ID is someone else's.
+function F.dlg_nick_of(id)
+  local ok, nick = pcall(sampGetPlayerNickname, tonumber(id))
+  return (ok and type(nick) == 'string') and F.game_text(nick) or ''
+end
+
+function F.dlg_id_of(nick)
+  local low = F.lower_fast(nick)
+  local okm, max = pcall(sampGetMaxPlayerId, false)
+  max = (okm and tonumber(max)) or 1000
+  for id = 0, math.min(max, 1004) do
+    local okc, on = pcall(sampIsPlayerConnected, id)
+    if okc and on and F.lower_fast(F.dlg_nick_of(id)) == low then return id end
+  end
+  return nil
+end
+
+function F.dlg_give_put(q, text)
+  local first, rest = text:match('^(%S+)%s*(.-)$')
+  if not first then return end
+  local nick = first
+  if first:match('^%d+$') then
+    nick = F.dlg_nick_of(first)
+    if nick == '' or nick:find('%s') then return end
+  end
+  F.dlg_last_put(q.key, nick .. (rest ~= '' and (' ' .. rest) or ''))
+end
+
+function F.dlg_give_get(q)
+  q.last_nick, q.last_id, q.last_off = nil, nil, nil
+  local v = F.dlg_last(q.key)
+  if not v or v == '' then return '' end
+  local nick, rest = tostring(v):match('^(%S+)%s*(.-)$')
+  if not nick then return '' end
+  q.last_nick = nick
+  local tail = rest ~= '' and (' ' .. rest) or ''
+  -- A window that asks for a nick gets the nick; one that asks for an ID gets the current ID.
+  if not F.lower_fast(q.text or ''):find('id', 1, true) then return nick .. tail end
+  local id = F.dlg_id_of(nick)
+  if not id then
+    q.last_off = true
+    return ''
+  end
+  q.last_id = id
+  return tostring(id) .. tail
+end
 
 -- :CASH: and :CASHV: are the server's marks for $ and VC$.
 function F.cash_text(str)
@@ -6778,7 +7407,7 @@ function F.qty_item()
   if not c or os.clock() - c.at > 20 then return nil end
   -- The live bag, the car scanner: the first that knows the slot.
   local r
-  for _, src in ipairs({F.bag_live and F.bag_live.blocks, F.inv and F.inv.blocks}) do
+  for _, src in ipairs({F.iv and F.iv.open and F.iv.blocks or false, F.bag_live and F.bag_live.blocks or false, F.inv and F.inv.blocks or false}) do
     local b = src and src[c.type]
     r = b and b.slots and b.slots[c.slot]
     if r then break end
@@ -6795,23 +7424,63 @@ function F.qty_item()
 end
 
 function F.qty_show(id, style, title, b1, b2, text)
-  local plain = (cfg.qty_on == 1 and not F._qty_off and F.qty_frame) and F.qty_match(style, text) or nil
-  if not plain then
-    -- Another window of the server takes the place of the one fHelper shows.
-    F.qty = nil
-    return false
+  -- Another window of the server takes the place of the one fHelper shows.
+  F.qty = nil
+  if not F.qty_frame then return false end
+  if F._stash then
+    local oks, hid = pcall(F.stash_dialog, id, style, title, b1, b2, text)
+    if not oks then
+      F.feed_err('хранилище', hid)
+      F._stash, F._stash_out = nil, nil
+    elseif hid then
+      return true
+    end
   end
+  if F.dlg_kind_on('list') then
+    local okg, hid = pcall(F.gps_dialog, id, style, title, b1, b2, text)
+    if not okg then
+      F.feed_err('GPS', hid)
+      F._gps_go, F._gps_pick, F._gps_crawl, F._gps_out = nil, nil, nil, nil
+    elseif hid then
+      return true
+    end
+  end
+  local okk, kind, rows, head = pcall(F.dlg_kind, style, title, text, b1, b2)
+  if not okk then
+    F.feed_err('свои окна', kind)
+    kind = nil
+  end
+  if kind == 'pay' and not F.dlg_kind_on('pay') then kind = 'list' end
+  local take = kind and F.dlg_kind_on(kind) and not F.dlg_skipped(kind, F.lower_fast(F.qty_plain(title)))
+  -- A window of a stall's item stays the game's: the calc by the stall and ArzMarket read it.
+  if take and kind ~= 'qty' and F.shop_busy() then take = false end
+  pcall(F.dlg_note, take and kind or nil, style, title, text, kind)
+  if not take then return false end
+  if kind == 'qty' then return F.qty_take(id, style, title, b1, b2, text) end
+  F.dlg_make(id, style, title, b1, b2, text, kind, rows, head)
+  F._dlg_logged = F._dlg_logged or {}
+  if not F._dlg_logged[kind] then
+    F._dlg_logged[kind] = true
+    F.log_line('Свои окна: «' .. F.DLG_BY[kind][3] .. '» показано вместо игрового («' .. F.utf_cut(F.qty.title, 60) .. '»)')
+  end
+  return true
+end
+
+function F.qty_take(id, style, title, b1, b2, text)
+  local plain = F.qty_match(style, text)
+  if not plain then return false end
   local item, have = F.qty_item()
   local key = F.lower_fast(plain)
   F.qty = {
-    raw = {title or '', text or '', b1 or '', b2 or ''}, style = tonumber(style),
+    kind = 'qty', raw = {title or '', text or '', b1 or '', b2 or ''}, style = tonumber(style),
     id = id, title = F.qty_plain(title), text = plain, key = key, at = os.clock(), focus = true,
     b1 = F.qty_plain(b1), b2 = F.qty_plain(b2), item = item, have = have,
   }
+  F.qty.tkey = F.lower_fast(F.qty.title)
   if F.qty.title == '' then F.qty.title = 'Информация' end
   if F.qty.b1 == '' then F.qty.b1 = 'Выбрать' end
   if F.qty.b2 == '' then F.qty.b2 = 'Отмена' end
-  local last = F.qty_last[key]
+  local last = F.dlg_last('qty|' .. key)
   F.buf_set(ui.qty, tostring(last or 1), F.QTY_BUF)
   if not item then F.qty_dump(F.qty) end
   if not F._qty_logged then
@@ -6822,27 +7491,54 @@ function F.qty_show(id, style, title, b1, b2, text)
 end
 
 -- The answer, the same as the game's buttons send it.
-function F.qty_send(button)
+function F.qty_send(button, row)
   local q = F.qty
   if not q then return end
   F.qty = nil
   F.lock_after_click()
   F._cur_until = os.clock() + F.CUR_TRY
   if q.sample then return end
-  local text = F.trim(F.buf_get(ui.qty))
-  if button == 1 then
-    local n = tonumber(text)
-    if n then F.qty_last[q.key] = n end
+  local kind = q.kind or 'qty'
+  local item, text, cp = 0, '', false
+  if kind == 'qty' then
+    text = F.trim(F.buf_get(ui.qty))
+    if button == 1 and text:find('%d') then F.dlg_last_put('qty|' .. q.key, text) end
+  elseif kind == 'list' or kind == 'pay' then
+    -- The row's number among the rows, as the game counts it, and its first column as the
+    -- server wrote it: that text is the server's own, already in its encoding.
+    local r = row or (q.sel and q.rows[q.sel])
+    if r then item, text, cp = r.idx, r.raw1, true end
+    if r and button == 1 then
+      if r.far then
+        F._gps_go = {cat = r.far, name = r.low, show = r.cols[1], at = os.clock()}
+      else
+        F.dlg_sel_put(q, r)
+        if q.gps then F._gps_pick = {cat = F.dlg_row_name(r), at = os.clock()} end
+        if q.stash_menu then F._stash_sec = F.dlg_row_name(r) end
+      end
+    end
+  elseif kind == 'money' then
+    local typed = F.trim(F.buf_get(ui.dlg_in))
+    local n = F.money_parse(typed)
+    text = n and string.format('%.0f', n) or typed
+    if button == 1 and n then F.dlg_last_put(q.key, string.format('%.0f', n)) end
+  elseif kind == 'give' then
+    text = F.trim(F.buf_get(ui.dlg_in))
+    if button == 1 and text ~= '' then F.dlg_give_put(q, text) end
   end
-  local okc, cp = pcall(F.to_cp, text)
-  if okc and cp then text = cp end
-  local ok, err = pcall(sampSendDialogResponse, q.id, button, 0, text)
-  if not ok then F.log_line('Окно количества: ответ не ушёл: ' .. tostring(err)) end
+  if not cp then
+    local okc, c = pcall(F.to_cp, text)
+    if okc and c then text = c end
+  end
+  local ok, err = pcall(sampSendDialogResponse, q.id, button, item, text)
+  if not ok then F.log_line('Свои окна: ответ не ушёл: ' .. tostring(err)) end
 end
 
 -- If fHelper's window did not appear, the server still waits: it gets «Отмена», and the game's
 -- window comes back from the next time on.
 function F.qty_tick()
+  F.gps_tick()
+  F.stash_tick()
   if F._qty_scale0 then
     cfg.scale, F._qty_scale0 = F._qty_scale0, nil
     F._card_r, F._card_a, F._btn_r = nil, nil, nil
@@ -6850,10 +7546,18 @@ function F.qty_tick()
   if F._qty_pad0 then F.PAD, F._qty_pad0 = F._qty_pad0, nil end
   local q = F.qty
   if q and not q.drawn and os.clock() - q.at > F.QTY_WAIT then
-    F._qty_off = true
+    -- Only this kind goes back to the game: the others keep working.
+    local kind = q.kind or 'qty'
+    if kind == 'qty' then
+      F._qty_off = true
+    else
+      F._dlg_off = F._dlg_off or {}
+      F._dlg_off[kind] = true
+    end
     F.qty_send(0)
-    F.notify('Своё окно количества не открылось: до перезапуска снова игровое', true)
-    F.log_line('Окно количества: своё не нарисовалось, вернул игровое до перезапуска')
+    local name = F.DLG_BY[kind] and F.DLG_BY[kind][3] or kind
+    F.notify('Своё окно «' .. name .. '» не открылось: до перезапуска снова игровое', true)
+    F.log_line('Свои окна: «' .. name .. '» не нарисовалось, вернул игровое до перезапуска')
   end
 end
 
@@ -6880,14 +7584,1205 @@ function F.qty_dump(q)
   end)
 end
 
+-- More windows of the server in fHelper's own look: a list to pick from, the way to pay, a sum,
+-- a player to give to, a short question. Each kind has its own switch and is taken only when it
+-- is recognised for sure; anything else stays the game's. Learnt before, and kept so:
+--   the answer goes to the server straight, as the game's buttons send it, never through a flash
+--   of the game's window (that left the web window half open, with the cursor);
+--   the payday cheque and the windows of items stay the game's: the game and ArzMarket hang
+--   their own panels on them, and those wait for the game's window to close;
+--   passwords and codes are never taken.
+F.DLG_KINDS = {
+  {'qty', 'qty_on', 'Количество', 'ICON_FA_BOX_OPEN', '«Введите количество…»: Enter, Esc и кнопка «Всё», когда известно, сколько лежит в ячейке'},
+  {'list', 'dlg_list', 'Выбор из списка', 'ICON_FA_LIST_UL', 'Меню и списки сервера: поиск, стрелки, Enter, двойной клик; столбцы и цвета строк как у сервера. В GPS поиск находит места из всех разделов'},
+  {'pay', 'dlg_pay', 'Способ оплаты', 'ICON_FA_WALLET', 'Наличные, карта, банк — крупными кнопками, одним нажатием; рядом то, что у тебя есть'},
+  {'money', 'dlg_money', 'Ввод суммы', 'ICON_FA_COINS', 'Оплата, перевод, вклад: понимает 500к и 1.5кк, показывает сумму целиком, кнопки «Максимум» и «Наличные»'},
+  {'give', 'dlg_give', 'Передача игроку', 'ICON_FA_HANDSHAKE', 'Ввод ID или ника: игроки рядом подставляются одним нажатием'},
+  {'ask', 'dlg_ask', 'Подтверждение', 'ICON_FA_QUESTION_CIRCLE', 'Короткие вопросы сервера «Да / Нет»: Enter — да, Esc — нет'},
+}
+F.DLG_BY = {}
+for _, k in ipairs(F.DLG_KINDS) do F.DLG_BY[k[1]] = k end
+F.DLG_NEVER = {'парол', 'пин-код', 'пинкод', 'пин код', 'pin', 'код', 'капч', 'captcha', 'почт', 'mail', 'регистрац', 'авторизац',
+  'чек', 'payday', 'pay day', 'пейдей'}
+F.DLG_ITEM = {'предмет', 'покупк', 'продаж', 'лавк', 'товар', 'аксессуар', 'снятие', 'выстав', 'скин', 'рынок', 'рынк'}
+F.DLG_MONEY = {'сумм', 'денег', 'деньг', 'стоимост', 'цену', 'цена', '$'}
+F.DLG_ROWS = 400
+F.DLG_BUF = 64
+
+function F.dlg_has(low, list)
+  for _, w in ipairs(list) do
+    if low:find(w, 1, true) then return true end
+  end
+  return false
+end
+
+function F.dlg_lines(plain)
+  local n = 0
+  for line in (plain .. '\n'):gmatch('([^\n]*)\n') do
+    if F.trim(line) ~= '' then n = n + 1 end
+  end
+  return n
+end
+
+function F.dlg_kind_on(kind)
+  local k = F.DLG_BY[kind]
+  if not k or cfg[k[2]] ~= 1 then return false end
+  if kind == 'qty' then return not F._qty_off end
+  return not (F._dlg_off and F._dlg_off[kind])
+end
+
+-- The rows of a list as the game counts them: the header of style 5 is not a row, an empty
+-- row is (the server counts it), only the empty end of the text is not.
+function F.dlg_rows(style, text)
+  local raw = tostring(text or ''):gsub('\r', '')
+  local lines = {}
+  for line in (raw .. '\n'):gmatch('([^\n]*)\n') do lines[#lines + 1] = line end
+  while #lines > 0 and F.trim((lines[#lines]:gsub('{%x%x%x%x%x%x}', ''))) == '' do lines[#lines] = nil end
+  local rows, head, first = {}, nil, 1
+  if style == 5 and #lines > 0 then
+    head = {}
+    for col in (lines[1] .. '\t'):gmatch('([^\t]*)\t') do head[#head + 1] = F.qty_plain(col) end
+    first = 2
+  end
+  for i = first, #lines do
+    if #rows > F.DLG_ROWS then break end
+    local line = lines[i]
+    local cols, raw1 = {}, nil
+    if style == 2 then
+      cols[1] = F.qty_plain((line:gsub('\t', '  ')))
+      raw1 = line
+    else
+      for col in (line .. '\t'):gmatch('([^\t]*)\t') do
+        cols[#cols + 1] = F.qty_plain(col)
+        raw1 = raw1 or col
+      end
+    end
+    while #cols > 1 and cols[#cols] == '' do cols[#cols] = nil end
+    rows[#rows + 1] = {
+      idx = i - first, cols = cols, blank = table.concat(cols, '') == '',
+      raw1 = F.trim(((raw1 or ''):gsub('{%x%x%x%x%x%x}', ''))),
+      low = F.lower_fast(table.concat(cols, ' ')), tint = line:match('^%s*{(%x%x%x%x%x%x)}'),
+    }
+  end
+  return rows, head
+end
+
+function F.dlg_payish(rows)
+  local cash, card = false, false
+  for _, r in ipairs(rows) do
+    if r.low:find('наличн', 1, true) then cash = true end
+    if F.dlg_has(r.low, {'карт', 'банк', 'счёт', 'счет'}) then card = true end
+  end
+  return cash and card
+end
+
+-- What the dialog is, for sure, or nil: then it stays the game's.
+function F.dlg_kind(style, title, text, b1, b2)
+  style = tonumber(style)
+  if style == 3 then return nil end
+  local tlow = F.lower_fast(F.qty_plain(title))
+  -- The storage of items (/storage): its rows name items and «PAYDAY», yet it is a plain list.
+  if (style == 2 or style == 4 or style == 5) and tlow:find(F.STASH_TITLE, 1, true) then
+    local rows, head = F.dlg_rows(style, text)
+    if #rows > 0 and #rows <= F.DLG_ROWS then return 'list', rows, head end
+    return nil
+  end
+  -- «Клиент | …» windows are the game client's own (the move to Vice City and back): the client
+  -- answers them itself, so a reply sent in its place does not move the player.
+  if tlow:find('^%s*клиент') then return nil end
+  local plain = F.qty_plain(text)
+  local low = F.lower_fast(plain)
+  if F.dlg_has(tlow .. '\n' .. low, F.DLG_NEVER) then return nil end
+  if F.dlg_has(low, {'подключиться к серверу', 'вернуться на сервер'}) then return nil end
+  if style == 1 then
+    if F.qty_match(style, text) then return 'qty' end
+    if plain == '' or #plain > 320 or F.dlg_lines(plain) > 4 or F.dlg_has(tlow, F.DLG_ITEM) then return nil end
+    if (low:find('id', 1, true) and (low:find('игрок', 1, true) or low:find('передат', 1, true)))
+      or low:find('ник игрока', 1, true) or low:find('никнейм', 1, true) then
+      return 'give'
+    end
+    if F.dlg_has(low, F.DLG_MONEY) then return 'money' end
+    return nil
+  end
+  if style == 2 or style == 4 or style == 5 then
+    if F.dlg_has(tlow, F.DLG_ITEM) then return nil end
+    local rows, head = F.dlg_rows(style, text)
+    local real = 0
+    for _, r in ipairs(rows) do if not r.blank then real = real + 1 end end
+    if real == 0 or #rows > F.DLG_ROWS then return nil end
+    if real <= 8 and (tlow:find('оплат', 1, true) or F.dlg_payish(rows)) then return 'pay', rows, head end
+    return 'list', rows, head
+  end
+  if style == 0 then
+    if F.qty_plain(b2) == '' or plain == '' or #plain > 420 or F.dlg_lines(plain) > 6 then return nil end
+    if F.dlg_has(tlow, F.DLG_ITEM) then return nil end
+    return 'ask'
+  end
+  return nil
+end
+
+-- Right after a click on a stall's slot the window is the stall's.
+function F.shop_busy()
+  local p = F.shop_pick
+  return (p and p.dlg and os.clock() - (p.at or 0) < 1) and true or false
+end
+
+-- A sum as players write it: 1500000, 1.500.000, 1 500 000, 500к, 1.5кк, 2kk, 3млн.
+function F.money_parse(str)
+  local t = F.lower_fast(tostring(str or '')):gsub('[%s%$]', '')
+  if t == '' then return nil end
+  local num, suf = t:match('^([%d%.,]+)(.*)$')
+  if not num or not num:find('%d') then return nil end
+  suf = suf:gsub('млрд', 'b'):gsub('млн', 'm'):gsub('к', 'k'):gsub('м', 'm')
+  local mul
+  if suf == '' then mul = 1
+  elseif suf:match('^k+$') and #suf <= 3 then mul = 1000 ^ #suf
+  elseif suf == 'm' then mul = 1e6
+  elseif suf == 'b' then mul = 1e9
+  else return nil end
+  if mul == 1 then
+    -- Without a mark a dot or a comma only splits thousands.
+    for g in num:gmatch('[%.,](%d*)') do
+      if #g ~= 3 then return nil end
+    end
+    num = num:gsub('[%.,]', '')
+  else
+    num = num:gsub(',', '.')
+    if select(2, num:gsub('%.', '')) > 1 then return nil end
+  end
+  local n = tonumber(num)
+  if not n then return nil end
+  n = math.floor(n * mul + 0.5)
+  if n <= 0 or n > 1e13 then return nil end
+  return n
+end
+
+-- «от $1 до $10.000.000», «максимум $500»: what the server allows, when it says so.
+function F.dlg_limits(plain)
+  local low = F.lower_fast(plain or '')
+  local function num(pat)
+    local m = low:match(pat)
+    return m and F.money_parse((m:gsub('%s', ''))) or nil
+  end
+  local lo = num('от%s*%$%s*([%d%.,]*%d)')
+  local hi = num('до%s*%$%s*([%d%.,]*%d)') or num('максимум[^%d]-([%d%.,]*%d)') or num('не более[^%d]-([%d%.,]*%d)')
+  return lo, hi
+end
+
+function F.dlg_make(id, style, title, b1, b2, text, kind, rows, head)
+  style = tonumber(style)
+  local list = kind == 'list' or kind == 'pay'
+  if list and not rows then rows, head = F.dlg_rows(style, text) end
+  local plain = list and '' or F.qty_plain(text)
+  local q = {kind = kind, raw = {title or '', text or '', b1 or '', b2 or ''}, style = style, id = id,
+    title = F.qty_plain(title), text = plain, at = os.clock(), focus = true, b1 = F.qty_plain(b1), b2 = F.qty_plain(b2),
+    rows = rows, head = head}
+  q.tkey = F.lower_fast(q.title)
+  q.key = kind .. '|' .. q.tkey .. '|' .. F.utf_cut(F.lower_fast(plain), 80)
+  if q.title == '' then q.title = list and 'Меню' or 'Информация' end
+  if q.b1 == '' then q.b1 = kind == 'ask' and 'Да' or 'Выбрать' end
+  if q.b2 == '' then q.b2 = nil end
+  if rows then
+    q.ncols = head and #head or 1
+    for i, r in ipairs(rows) do
+      q.ncols = math.max(q.ncols, #r.cols)
+      if not q.sel and not r.blank then q.sel = i end
+    end
+    local back = F.dlg_sel_get(q)
+    if back then q.sel, q.scroll, q.back = back, true, back end
+    if kind == 'list' and F.stash_is_list(tonumber(style), q.tkey, head) then q.stash = true end
+    if kind == 'list' and F.stash_is_menu(tonumber(style), q.tkey, rows) then q.stash_menu = true end
+    if kind == 'list' and F.gps_is_root(style, q.tkey, rows) then
+      q.gps = true
+      local far = F.gps_far_rows(q)
+      if #far > 0 then
+        q.rows[#q.rows + 1] = {idx = -1, cols = {''}, blank = true, low = '', far = '', label = 'Места в разделах'}
+        q.sep = #q.rows
+        for _, r in ipairs(far) do q.rows[#q.rows + 1] = r end
+      end
+    end
+    F.buf_set(ui.dlg_q, '', F.DLG_BUF)
+  end
+  if kind == 'money' then
+    local last = tonumber(F.dlg_last(q.key))
+    F.buf_set(ui.dlg_in, last and string.format('%.0f', last) or '', F.DLG_BUF)
+    q.min, q.max = F.dlg_limits(plain)
+  elseif kind == 'give' then
+    F.buf_set(ui.dlg_in, F.dlg_give_get(q), F.DLG_BUF)
+  end
+  F.qty = q
+  return q
+end
+
+-- Examples from the settings: they answer nobody.
+F.DLG_SAMPLES = {
+  list = {4, 'Телефон', 'Выбрать', 'Закрыть', 'Контакты\t{33AA33}12\nСообщения\t{FFCC00}3 новых\nБанк\t$1.250.000\n\nGPS\t\nНастройки\t'},
+  pay = {2, 'Оплата', 'Выбрать', 'Отмена', 'Наличными\nБанковской картой'},
+  money = {1, 'Банк', 'Внести', 'Отмена', 'Введите сумму, которую хотите положить на счёт (от $1 до $10.000.000)'},
+  give = {1, 'Передача денег', 'Далее', 'Отмена', 'Введите ID игрока, которому хотите передать деньги'},
+  ask = {0, 'Аренда', 'Да', 'Нет', 'Вы действительно хотите арендовать транспорт за $25.000 на 1 час?'},
+}
+
+function F.dlg_sample(kind)
+  if kind == 'qty' or not F.DLG_SAMPLES[kind] then
+    F.qty_sample()
+    return
+  end
+  local e = F.DLG_SAMPLES[kind]
+  local q = F.dlg_make(-1, e[1], e[2], e[3], e[4], e[5], kind)
+  q.sample = true
+end
+
+function F.dlg_icon(q)
+  local k = F.DLG_BY[q.kind or 'qty']
+  return k and k[4] or 'ICON_FA_BOX_OPEN'
+end
+
+-- A list of several columns needs room; the buttons of payment sit two in a row.
+function F.dlg_minw(q)
+  if q.kind == 'list' and (q.ncols or 1) > 1 then return 560 end
+  if q.kind == 'pay' then return 440 end
+  return nil
+end
+
+function F.dlg_ready(q)
+  local kind = q.kind or 'qty'
+  if kind == 'qty' then return F.trim(F.buf_get(ui.qty)) ~= '' end
+  if kind == 'list' or kind == 'pay' then
+    local r = q.sel and q.rows[q.sel]
+    return r ~= nil and not r.blank
+  end
+  if kind == 'money' then return F.money_parse(F.buf_get(ui.dlg_in)) ~= nil end
+  if kind == 'give' then return F.trim(F.buf_get(ui.dlg_in)) ~= '' end
+  return true
+end
+
+-- A key pressed while the window is up; the press that answered the window before does not count.
+function F.dlg_key(q, vk)
+  if os.clock() - (q.at or 0) < 0.25 then return false end
+  local ok, hit = pcall(wasKeyPressed, vk)
+  return (ok and hit) and true or false
+end
+
+function F.dlg_move(q, view, step)
+  if #view == 0 then return end
+  local at = 0
+  for i, ri in ipairs(view) do
+    if ri == q.sel then at = i break end
+  end
+  local i = at
+  for _ = 1, #view do
+    i = i + step
+    if i < 1 then i = #view elseif i > #view then i = 1 end
+    local r = q.rows[view[i]]
+    if r and not r.blank then
+      q.sel, q.scroll = view[i], true
+      return
+    end
+  end
+end
+
+-- The rows that match the search, by their place in q.rows.
+function F.dlg_view(q)
+  local find = F.lower_fast(F.trim(F.buf_get(ui.dlg_q)))
+  if q.view and q.vq == find then return q.view end
+  local v, far = {}, {}
+  for i, r in ipairs(q.rows) do
+    if r.far then
+      -- The places of the sections only while searching.
+      if find ~= '' and not r.blank and r.low:find(find, 1, true) then far[#far + 1] = i end
+    elseif find == '' or (not r.blank and r.low:find(find, 1, true)) then
+      v[#v + 1] = i
+    end
+  end
+  if #far > 0 then
+    if #v > 0 and q.sep then v[#v + 1] = q.sep end
+    for _, i in ipairs(far) do v[#v + 1] = i end
+  end
+  q.view, q.vq = v, find
+  local keep = false
+  for _, ri in ipairs(v) do
+    if ri == q.sel then keep = true end
+  end
+  if not keep then
+    q.sel = nil
+    for _, ri in ipairs(v) do
+      if not q.rows[ri].blank then q.sel = ri break end
+    end
+  end
+  return v
+end
+
+-- Columns: the first takes what the others leave; when they do not fit, it takes 45%.
+function F.dlg_colx(q, rw)
+  if not q.colw then
+    local w = {}
+    local function take(cols)
+      for c, t in ipairs(cols) do
+        if c <= 4 then w[c] = math.max(w[c] or 0, F.text_w(font_main, t)) end
+      end
+    end
+    if q.head then take(q.head) end
+    for i, r in ipairs(q.rows) do
+      if i > 150 then break end
+      take(r.cols)
+    end
+    q.colw = w
+  end
+  local w = q.colw
+  local n = #w
+  if n <= 1 then return {0}, {rw} end
+  local gap = F.s(18)
+  local rest = 0
+  for c = 2, n do rest = rest + w[c] + gap end
+  local xs, ws = {}, {}
+  if w[1] + rest <= rw then
+    xs[1], ws[1] = 0, rw - rest
+    local x = rw - rest + gap
+    for c = 2, n do
+      xs[c], ws[c] = x, w[c]
+      x = x + w[c] + gap
+    end
+  else
+    local first = rw * 0.45
+    local each = (rw - first - gap * (n - 1)) / (n - 1)
+    xs[1], ws[1] = 0, first
+    for c = 2, n do
+      xs[c], ws[c] = first + gap + (c - 2) * (each + gap), each
+    end
+  end
+  return xs, ws
+end
+
+-- The server's colour of a row, as a thin mark at its left; white and grey give none.
+function F.dlg_tint(hex)
+  if not hex then return nil end
+  local r, g, b = tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16)
+  if not (r and g and b) then return nil end
+  if math.min(r, g, b) > 200 or math.max(r, g, b) - math.min(r, g, b) < 24 then return nil end
+  return F.rgba(r, g, b, 255)
+end
+
+-- The edge of the field just drawn: brighter under the mouse, the accent while typing.
+function F.dlg_ring()
+  local a, b = imgui.GetItemRectMin(), imgui.GetItemRectMax()
+  if not (a and b) then return end
+  local act = imgui.IsItemActive()
+  local col = act and F.col('accent', 210) or F.col('text', imgui.IsItemHovered() and 52 or 28)
+  F.round_rect(a.x, a.y, b.x - a.x, b.y - a.y, nil, col, F._qty_fr or F.s(8), nil, act and math.max(1, F.s(1.5)) or 1)
+end
+
+-- A soft ring around the button Enter presses.
+function F.dlg_halo(r)
+  local a, b = imgui.GetItemRectMin(), imgui.GetItemRectMax()
+  if not (a and b) then return end
+  local o = F.s(3)
+  F.round_rect(a.x - o, a.y - o, b.x - a.x + o * 2, b.y - a.y + o * 2, nil, F.col('accent', 80), r + o, nil, math.max(1, F.s(1.5)))
+end
+
+function F.dlg_body(q, fill, rad, w, sh)
+  if q.kind == 'list' then return F.dlg_list_body(q, fill, rad, w, sh) end
+  if q.kind == 'pay' then return F.dlg_pay_body(q, fill, rad, w) end
+  local enter = false
+  F.card_begin()
+  if q.text ~= '' then
+    imgui.PushTextWrapPos(F.wrap_x())
+    imgui.TextColored(F.cvec('text', 0.9), '%s', q.text)
+    imgui.PopTextWrapPos()
+  end
+  if fill > 0 then imgui.Dummy(imgui.ImVec2(1, fill)) end
+  if q.kind == 'money' or q.kind == 'give' then
+    imgui.Spacing()
+    if q.focus then
+      imgui.SetKeyboardFocusHere()
+      q.focus = false
+    end
+    local TF = imgui.InputTextFlags
+    enter = F.field('##dlgin', q.kind == 'money' and 'Сумма: 1500000, 500к, 1.5кк' or 'ID или ник игрока', ui.dlg_in, F.DLG_BUF, F.inner_w(), 'dlgin',
+      (TF.EnterReturnsTrue or 0) + (TF.AutoSelectAll or 0)) and true or false
+    F.dlg_ring()
+    if q.kind == 'money' then F.dlg_money_extra(q)
+    elseif F.dlg_give_extra(q) then enter = true end
+  else
+    q.focus = false
+    if F.dlg_key(q, 0x0D) then enter = true end
+  end
+  F.card_end()
+  return enter, nil
+end
+
+function F.dlg_money_extra(q)
+  local typed = F.trim(F.buf_get(ui.dlg_in))
+  local n = F.money_parse(typed)
+  if n then
+    local warn = (q.max and n > q.max) and '  ·  больше, чем можно' or ((q.min and n < q.min) and '  ·  меньше, чем можно' or '')
+    if warn ~= '' then F.hint_bad('= ' .. F.fmt_money(n) .. warn) else F.hint('= ' .. F.fmt_money(n)) end
+  elseif typed ~= '' then
+    F.hint_bad('Не похоже на сумму. Цифрами, тысячи — «к», миллионы — «кк»: 500к, 1.5кк')
+  end
+  local chips = {}
+  if q.max then chips[#chips + 1] = {'Максимум  ·  ' .. F.fmt_money(q.max), q.max} end
+  local cash = tonumber(cfg.money_real) or -1
+  if cash > 0 then chips[#chips + 1] = {'Наличные  ·  ' .. (F.fmt_cur(cash, F.here_vc()) or ''), cash} end
+  if #chips == 0 then return end
+  imgui.Spacing()
+  for i, c in ipairs(chips) do
+    if i > 1 then F.same_if_fit(F.text_w(font_main, c[1]) + F.s(28)) end
+    if F.button(c[1] .. '##dlgchip' .. i, 0, 30) then
+      F.buf_set(ui.dlg_in, string.format('%.0f', c[2]), F.DLG_BUF)
+      q.focus = true
+    end
+  end
+end
+
+-- Players near, by distance: their IDs, never sent anywhere by themselves.
+function F.dlg_near()
+  local c = F._dlg_near
+  if c and os.clock() - c.at < 0.5 then return c.list end
+  local list = {}
+  pcall(function()
+    local mx, my, mz = getCharCoordinates(PLAYER_PED)
+    for _, ped in ipairs(getAllChars()) do
+      if ped ~= PLAYER_PED then
+        local ok, res, id = pcall(sampGetPlayerIdByCharHandle, ped)
+        id = ok and res and tonumber(id) or nil
+        if id then
+          local x, y, z = getCharCoordinates(ped)
+          local d = math.sqrt((x - mx) ^ 2 + (y - my) ^ 2 + (z - mz) ^ 2)
+          local okn, nick = pcall(sampGetPlayerNickname, id)
+          nick = okn and F.game_text(nick or '') or ''
+          if nick ~= '' and d <= 40 then list[#list + 1] = {id = id, nick = nick, d = d} end
+        end
+      end
+    end
+  end)
+  table.sort(list, function(a, b) return a.d < b.d end)
+  while #list > 8 do table.remove(list) end
+  F._dlg_near = {at = os.clock(), list = list}
+  return list
+end
+
+-- «12 5000» keeps the sum after the ID.
+function F.dlg_put_id(id)
+  local cur = F.trim(F.buf_get(ui.dlg_in))
+  local rest = cur:match('^%S+%s+(.+)$')
+  F.buf_set(ui.dlg_in, tostring(id) .. (rest and (' ' .. rest) or ''), F.DLG_BUF)
+end
+
+function F.dlg_give_extra(q)
+  local near = F.dlg_near()
+  imgui.Spacing()
+  if q.last_id then
+    F.hint('Прошлый раз: ' .. q.last_nick .. ' — подставил его ID сейчас [' .. q.last_id .. '].')
+  elseif q.last_off then
+    F.hint('Прошлый раз: ' .. q.last_nick .. ' — сейчас его нет в игре.')
+  end
+  if #near == 0 then
+    F.hint('Рядом игроков не видно: введи ID или ник сам.')
+    return false
+  end
+  F.hint('Игроки рядом: нажми — подставлю ID, двойной клик — сразу отправлю.')
+  local send = false
+  local w = F.inner_w()
+  local h = math.floor(F.s(30))
+  local cur = F.trim(F.buf_get(ui.dlg_in)):match('^(%S+)')
+  for i, pl in ipairs(near) do
+    local p = imgui.GetCursorScreenPos()
+    local clicked, hovered = F.hotspot('##dlgnear' .. i, p.x, p.y, w, h)
+    local dbl = hovered and imgui.IsMouseDoubleClicked(0)
+    local on = cur == tostring(pl.id)
+    if on or hovered then
+      F.round_rect(p.x - F.s(4), p.y, w + F.s(8), h, on and F.col('accent', 36) or F.col('text', 12),
+        on and F.col('accent', 170) or F.col('text', 34), F._btn_r or F.s(8))
+    end
+    local d = string.format('%.0f м', pl.d)
+    local dw = F.text_w(font_main, d)
+    F.text_at(font_main, 16, p.x + F.s(4), p.y + (h - F.s(16)) / 2 - 1, F.col('text', 230), F.fit_text(font_main, pl.nick .. '  [' .. pl.id .. ']', w - dw - F.s(20)))
+    F.text_at(font_main, 16, p.x + w - dw - F.s(4), p.y + (h - F.s(16)) / 2 - 1, F.col('text', 120), d)
+    if clicked or dbl then F.dlg_put_id(pl.id) end
+    if dbl then send = true end
+    F.advance(p, w, h)
+  end
+  return send
+end
+
+function F.dlg_list_body(q, fill, rad, w, sh)
+  local enter, pick = false, nil
+  if #q.rows > 8 or q.gps or q.stash then
+    if q.focus then imgui.SetKeyboardFocusHere() end
+    local TF = imgui.InputTextFlags
+    enter = F.field('##dlgq', q.gps and 'Поиск по всем местам GPS' or 'Поиск по списку', ui.dlg_q, F.DLG_BUF, w, 'dlgq', TF.EnterReturnsTrue or 0) and true or false
+    F.dlg_ring()
+    if q.gps then F.gps_bar(q) end
+    if q.stash then F.stash_bar(q) end
+    imgui.Spacing()
+  elseif F.dlg_key(q, 0x0D) then
+    enter = true
+  end
+  q.focus = false
+  local view = F.dlg_view(q)
+  if F.dlg_key(q, 0x28) then F.dlg_move(q, view, 1) end
+  if F.dlg_key(q, 0x26) then F.dlg_move(q, view, -1) end
+  if #view == 0 then
+    F.hint('Ничего не нашлось: поиск идёт по всем столбцам списка.')
+    if fill > 0 then imgui.Dummy(imgui.ImVec2(1, fill)) end
+    return enter, nil
+  end
+  local rowh = math.floor(F.s(34))
+  local headh = q.head and math.floor(F.s(28)) or 0
+  local maxh = math.max(rowh * 3, math.floor(sh * 0.86 - F.s(230)) - headh)
+  local lh = math.min(#view * rowh, maxh) + fill
+  local bar = #view * rowh > lh and F.s(12) or 0
+  local rw = w - F.s(24) - bar
+  local xs, ws = F.dlg_colx(q, rw)
+  local p0 = imgui.GetCursorScreenPos()
+  F.round_rect(p0.x, p0.y, w, lh + headh, F.col('panel', F._card_a), F.col('text', 30), rad * 0.75)
+  if q.head then
+    for c, t in ipairs(q.head) do
+      if xs[c] then
+        F.text_at(font_main, 16, p0.x + F.s(12) + xs[c], p0.y + (headh - F.s(16)) / 2, F.col('text', 120), F.fit_text(font_main, t, ws[c]))
+      end
+    end
+    imgui.GetWindowDrawList():AddLine(imgui.ImVec2(p0.x + 1, math.floor(p0.y + headh) + 0.5), imgui.ImVec2(p0.x + w - 1, math.floor(p0.y + headh) + 0.5), F.col('text', 30), 1)
+    imgui.SetCursorScreenPos(imgui.ImVec2(p0.x, p0.y + headh))
+  end
+  imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
+  imgui.BeginChild('##dlglist', imgui.ImVec2(w, lh), false)
+  imgui.PopStyleVar(1)
+  imgui.PushStyleVarVec2(imgui.StyleVar.ItemSpacing, imgui.ImVec2(0, 0))
+  local cp = imgui.GetWindowPos()
+  local top, bottom = cp.y - rowh, cp.y + lh
+  local dl = imgui.GetWindowDrawList()
+  for _, ri in ipairs(view) do
+    local r = q.rows[ri]
+    local p = imgui.GetCursorScreenPos()
+    local on = ri == q.sel
+    if on and q.scroll then
+      imgui.SetScrollHereY(0.5)
+      q.scroll = nil
+    end
+    if p.y < top or p.y > bottom then
+      -- Out of sight: only its place.
+      imgui.Dummy(imgui.ImVec2(1, rowh))
+    else
+      local clicked, hovered = F.hotspot('##dlgr' .. ri, p.x, p.y, w - bar, rowh)
+      if r.blank and r.label then
+        F.text_at(font_main, 16, p.x + F.s(14), p.y + (rowh - F.s(16)) / 2, F.col('accent', 200), r.label)
+        local lx = p.x + F.s(24) + F.text_w(font_main, r.label)
+        local ly = math.floor(p.y + rowh / 2) + 0.5
+        dl:AddLine(imgui.ImVec2(lx, ly), imgui.ImVec2(p.x + w - bar - F.s(14), ly), F.col('accent', 60), 1)
+      elseif r.blank then
+        local ly = math.floor(p.y + rowh / 2) + 0.5
+        dl:AddLine(imgui.ImVec2(p.x + F.s(14), ly), imgui.ImVec2(p.x + w - bar - F.s(14), ly), F.col('text', 18), 1)
+      else
+        if clicked then q.sel, on = ri, true end
+        if hovered and imgui.IsMouseDoubleClicked(0) then pick = r end
+        local held = hovered and imgui.IsMouseDown(0)
+        if on or hovered then
+          local fillc = on and F.col('accent', held and 64 or 40) or F.col('text', held and 22 or 12)
+          local edge = on and F.col('accent', 190) or F.col('text', 34)
+          F.round_rect(p.x + F.s(4), p.y + 1, w - bar - F.s(8), rowh - 2, fillc, edge, rad * 0.45, nil, on and math.max(1, F.s(1.5)) or 1)
+        end
+        local tint = F.dlg_tint(r.tint)
+        if tint then F.round_rect(p.x + F.s(6), p.y + F.s(9), F.s(3), rowh - F.s(18), tint, nil, F.s(2)) end
+        if r.far then
+          -- A place of another section: its name, the section on the right.
+          local ty = p.y + (rowh - F.s(16)) / 2 - 1
+          local rx, right = p.x + F.s(12), p.x + w - bar - F.s(14)
+          local g = F.faico('ICON_FA_MAP_MARKER_ALT')
+          if g ~= '' then
+            F.text_at(font_main, 16, rx, ty, F.col('accent', 200), g)
+            rx = rx + F.text_w(font_main, g) + F.s(8)
+          end
+          local sub = F.fit_text(font_main, r.sub or '', (right - rx) * 0.4)
+          local subw = F.text_w(font_main, sub)
+          F.text_at(font_main, 16, rx, ty, F.col('text', on and 255 or 235), F.fit_text(font_main, r.cols[1] or '', right - rx - subw - F.s(14)))
+          F.text_at(font_main, 16, right - subw, ty, F.col('text', 120), sub)
+        end
+        for c, t in ipairs(r.far and {} or r.cols) do
+          if xs[c] and t ~= '' then
+            F.text_at(font_main, 16, p.x + F.s(12) + xs[c], p.y + (rowh - F.s(16)) / 2 - 1, F.col('text', c == 1 and (on and 255 or 235) or 150), F.fit_text(font_main, t, ws[c]))
+          end
+        end
+      end
+      F.advance(p, 1, rowh)
+    end
+  end
+  imgui.PopStyleVar(1)
+  imgui.EndChild()
+  return enter, pick
+end
+
+F.DLG_PAY_ICON = {{'налич', 'ICON_FA_MONEY_BILL_WAVE'}, {'карт', 'ICON_FA_CREDIT_CARD'}, {'депозит', 'ICON_FA_PIGGY_BANK'},
+  {'банк', 'ICON_FA_UNIVERSITY'}, {'счёт', 'ICON_FA_UNIVERSITY'}, {'счет', 'ICON_FA_UNIVERSITY'}, {'az', 'ICON_FA_GEM'}, {'донат', 'ICON_FA_GEM'}}
+
+-- Under a way to pay: what the server wrote next to it, else what fHelper knows of the money.
+function F.dlg_pay_sub(r)
+  local rest = {}
+  for c = 2, #r.cols do
+    if r.cols[c] ~= '' then rest[#rest + 1] = r.cols[c] end
+  end
+  if #rest > 0 then return table.concat(rest, '  ·  ') end
+  local cash, bank = tonumber(cfg.money_real) or -1, tonumber(cfg.bank) or -1
+  if r.low:find('налич', 1, true) and cash >= 0 then return 'у тебя ' .. (F.fmt_cur(cash, F.here_vc()) or '') end
+  if (r.low:find('банк', 1, true) or r.low:find('карт', 1, true)) and bank >= 0 then return 'в банке ' .. (F.fmt_cur(bank, F.here_vc()) or '') end
+  return nil
+end
+
+function F.dlg_pay_body(q, fill, rad, w)
+  local enter, pick = false, nil
+  local list = {}
+  for i, r in ipairs(q.rows) do
+    if not r.blank then list[#list + 1] = i end
+  end
+  q.focus = false
+  if F.dlg_key(q, 0x28) or F.dlg_key(q, 0x27) then F.dlg_move(q, list, 1) end
+  if F.dlg_key(q, 0x26) or F.dlg_key(q, 0x25) then F.dlg_move(q, list, -1) end
+  if F.dlg_key(q, 0x0D) then enter = true end
+  local cols = (#list > 1 and w >= F.s(380)) and 2 or 1
+  local gap = F.s(10)
+  local tw = (w - gap * (cols - 1)) / cols
+  local th = math.floor(F.s(62))
+  local ls = math.floor(F.s(36))
+  local p0 = imgui.GetCursorScreenPos()
+  for n, ri in ipairs(list) do
+    local r = q.rows[ri]
+    local cx = p0.x + ((n - 1) % cols) * (tw + gap)
+    local cy = p0.y + math.floor((n - 1) / cols) * (th + gap)
+    local clicked, hovered = F.hotspot('##dlgpay' .. ri, cx, cy, tw, th)
+    local on = ri == q.sel
+    local held = hovered and imgui.IsMouseDown(0)
+    local tr = rad * 0.75
+    F.round_rect(cx, cy, tw, th, held and F.col('press', F._card_a) or (hovered and F.col('hover', F._card_a) or F.col('panel', F._card_a)), nil, tr)
+    if on then F.round_rect(cx, cy, tw, th, F.col('accent', 28), nil, tr) end
+    F.round_rect(cx, cy, tw, th, nil, on and F.col('accent', 210) or F.col('text', hovered and 52 or 28), tr, nil, on and math.max(1, F.s(2)) or 1)
+    if on then
+      local cg = F.faico('ICON_FA_CHECK_CIRCLE')
+      if cg ~= '' then F.text_at(font_main, 16, cx + tw - F.s(28), cy + (th - F.s(16)) / 2 - 1, F.col('accent'), cg) end
+    end
+    local icon = 'ICON_FA_WALLET'
+    for _, e in ipairs(F.DLG_PAY_ICON) do
+      if r.low:find(e[1], 1, true) then icon = e[2] break end
+    end
+    local ix, iy = cx + F.s(12), cy + (th - ls) / 2
+    F.round_rect(ix, iy, ls, ls, F.col('accent', on and 255 or 190), nil, rad * 0.5)
+    local g = F.faico(icon)
+    if g ~= '' then F.text_at(font_main, 16, ix + (ls - F.text_w(font_main, g)) / 2, iy + (ls - F.s(16)) / 2 - 1, F.col('ink'), g) end
+    local tx = ix + ls + F.s(12)
+    local avail = cx + tw - tx - F.s(on and 36 or 10)
+    local sub = F.dlg_pay_sub(r)
+    F.text_at(font_main, 16, tx, cy + (sub and F.s(12) or (th - F.s(16)) / 2 - 1), F.col('text', 235), F.fit_text(font_main, r.cols[1] or '', avail))
+    if sub then F.text_at(font_main, 16, tx, cy + F.s(32), F.col('text', 130), F.fit_text(font_main, sub, avail)) end
+    if clicked then pick = r end
+  end
+  local lines = math.ceil(#list / cols)
+  F.advance(p0, w, lines * th + math.max(0, lines - 1) * gap + fill)
+  return enter, pick
+end
+
+-- GPS. The server's navigator is a list of sections («GPS навигатор»), each section a list of
+-- places. fHelper keeps the places of the sections it has seen, so the search of the navigator
+-- finds a place in any section; a place picked opens its section, and the place is picked there
+-- by itself. «Загрузить все места» walks the sections once: each is opened, read and closed with
+-- «Назад», unseen; the answers go one at a time, with a pause, as a hand would give them.
+F.GPS_WAIT = 3
+F.GPS_STEP = 0.3
+F.GPS_SKIP = {'отмен', 'удал', 'убрат', 'сброс', 'выключ'}
+
+function F.gps_is_root(style, tlow, rows)
+  style = tonumber(style)
+  return (style == 2 or style == 4 or style == 5) and tostring(tlow or ''):find('gps', 1, true) ~= nil and rows ~= nil and #rows >= 2
+end
+
+function F.gps_data()
+  if not F._gps then
+    local g = {cats = {}, order = {}}
+    for _, line in ipairs(F.read_lines('fhelp_gps.txt')) do
+      local cat, name = line:match('^([^\t]+)\t(.*)$')
+      if cat then
+        if not g.cats[cat] then
+          g.cats[cat] = {}
+          g.order[#g.order + 1] = cat
+        end
+        if name ~= '' then table.insert(g.cats[cat], name) end
+      end
+    end
+    F._gps = g
+  end
+  return F._gps
+end
+
+function F.gps_count()
+  local g = F.gps_data()
+  local n = 0
+  for _, cat in ipairs(g.order) do n = n + #g.cats[cat] end
+  return n
+end
+
+function F.gps_save()
+  local g = F.gps_data()
+  local out = {}
+  for _, cat in ipairs(g.order) do
+    local c = g.cats[cat]
+    if #c == 0 then out[#out + 1] = cat .. '\t' end
+    for _, n in ipairs(c) do out[#out + 1] = cat .. '\t' .. n end
+  end
+  F.write_lines('fhelp_gps.txt', out)
+end
+
+function F.gps_learn(cat, rows)
+  if not cat or cat == '' or not rows then return end
+  local g = F.gps_data()
+  local list = {}
+  for _, r in ipairs(rows) do
+    local n = F.trim(((r.cols[1] or ''):gsub('\t', ' ')))
+    if not r.blank and n ~= '' then list[#list + 1] = n end
+    if #list >= 200 then break end
+  end
+  if not g.cats[cat] then g.order[#g.order + 1] = cat end
+  g.cats[cat] = list
+  F.gps_save()
+end
+
+-- The places of the sections this window has, each answered through its section's row.
+function F.gps_far_rows(q)
+  local g = F.gps_data()
+  local here = {}
+  for _, r in ipairs(q.rows) do
+    if not r.blank then here[F.dlg_row_name(r)] = r end
+  end
+  local far = {}
+  for _, cat in ipairs(g.order) do
+    local cr = here[cat]
+    if cr then
+      local sub = F.trim(((cr.cols[1] or ''):gsub('^[%-%s•·]+', '')))
+      for _, n in ipairs(g.cats[cat]) do
+        far[#far + 1] = {idx = cr.idx, raw1 = cr.raw1, cols = {n}, low = F.lower_fast(n), far = cat, sub = sub, blank = false}
+      end
+    end
+  end
+  return far
+end
+
+function F.gps_find(rows, name)
+  local loose = name:gsub('[%d%s%[%]%.,]+', '')
+  local near
+  for _, r in ipairs(rows) do
+    if not r.blank then
+      local low = F.lower_fast(F.trim(r.cols[1] or ''))
+      if low == name then return r end
+      if not near and loose ~= '' and low:gsub('[%d%s%[%]%.,]+', '') == loose then near = r end
+    end
+  end
+  return near
+end
+
+-- Answers go out from the main loop, a moment after the window came.
+function F.gps_queue(id, button, item, text)
+  F._gps_out = {id, button, item, text, at = os.clock() + F.GPS_STEP}
+end
+
+function F.gps_tick()
+  local o = F._gps_out
+  if o and os.clock() >= o.at then
+    F._gps_out = nil
+    local ok, err = pcall(sampSendDialogResponse, o[1], o[2], o[3], o[4])
+    if not ok then F.log_line('GPS: ответ не ушёл: ' .. tostring(err)) end
+  end
+  local c = F._gps_crawl
+  if c and not F._gps_out then
+    local idle = os.clock() - c.at
+    -- No window after «Назад», or a row that opened nothing: the navigator is opened again.
+    if idle > 1.5 and not c.reopen then
+      c.reopen, c.wait, c.cur = true, 'root', nil
+      pcall(sampSendChat, '/gps')
+    elseif idle > 5 then
+      F.gps_crawl_stop('сервер не ответил')
+    end
+  end
+end
+
+function F.gps_dialog(id, style, title, b1, b2, text)
+  local go, pick, crawl = F._gps_go, F._gps_pick, F._gps_crawl
+  if not (go or pick or crawl) then return nil end
+  local st = tonumber(style)
+  local list = st == 2 or st == 4 or st == 5
+  local tlow = F.lower_fast(F.qty_plain(title))
+  local rows = list and F.dlg_rows(st, text) or nil
+  if crawl then return F.gps_crawl_dialog(id, st, tlow, rows) end
+  F._gps_go, F._gps_pick = nil, nil
+  if not list or F.gps_is_root(st, tlow, rows) then return nil end
+  local now = os.clock()
+  if pick and now - pick.at < F.GPS_WAIT then F.gps_learn(pick.cat, rows) end
+  if go and now - go.at < F.GPS_WAIT then
+    F.gps_learn(go.cat, rows)
+    local r = F.gps_find(rows, go.name)
+    if r then
+      F.gps_queue(id, 1, r.idx, r.raw1)
+      return true
+    end
+    F.notify('GPS: «' .. tostring(go.show) .. '» в разделе больше нет — выбери сам', true)
+  end
+  return nil
+end
+
+function F.gps_crawl_start(q)
+  F.qty = nil
+  F.lock_after_click()
+  F._cur_until = os.clock() + F.CUR_TRY
+  local c = {todo = {}, at = os.clock()}
+  for _, r in ipairs(q.rows) do
+    if not r.blank and not r.far and not F.dlg_has(r.low, F.GPS_SKIP) then c.todo[#c.todo + 1] = F.dlg_row_name(r) end
+  end
+  c.total = #c.todo
+  F._gps_crawl = c
+  F._gps_go, F._gps_pick = nil, nil
+  if not F.gps_crawl_next(q.id, q.rows) then
+    F._gps_crawl = nil
+    return
+  end
+  F.notify('GPS: загружаю места из ' .. c.total .. ' разделов, это займёт пару секунд', true)
+end
+
+function F.gps_crawl_next(id, rows)
+  local c = F._gps_crawl
+  while #c.todo > 0 do
+    local cat = table.remove(c.todo, 1)
+    for _, r in ipairs(rows) do
+      if not r.blank and F.dlg_row_name(r) == cat then
+        c.cur, c.wait, c.at, c.reopen = cat, 'sub', os.clock(), nil
+        F.gps_queue(id, 1, r.idx, r.raw1)
+        return true
+      end
+    end
+  end
+  return false
+end
+
+function F.gps_crawl_dialog(id, st, tlow, rows)
+  local c = F._gps_crawl
+  if not rows then
+    F.gps_crawl_stop('пришло другое окно')
+    return nil
+  end
+  if F.gps_is_root(st, tlow, rows) then
+    if F.gps_crawl_next(id, rows) then return true end
+    -- All read: the navigator is shown, its search knows every place now.
+    F.gps_crawl_stop(nil)
+    return nil
+  end
+  if c.wait == 'sub' and c.cur then
+    F.gps_learn(c.cur, rows)
+    c.wait, c.cur, c.at, c.reopen = 'root', nil, os.clock(), nil
+    F.gps_queue(id, 0, 0, '')
+    return true
+  end
+  F.gps_crawl_stop('пришло другое окно')
+  return nil
+end
+
+function F.gps_crawl_stop(why)
+  local c = F._gps_crawl
+  F._gps_crawl = nil
+  if not c then return end
+  local n = F.gps_count()
+  if why then
+    F.notify('GPS: загрузка остановлена (' .. why .. '), мест в поиске: ' .. n, true)
+  else
+    F.notify('GPS: в поиске навигатора ' .. n .. ' мест из всех разделов', true)
+  end
+  F.log_line('GPS: загрузка мест ' .. (why and ('остановлена: ' .. why) or 'готова') .. ', мест ' .. n)
+end
+
+-- Under the search of the navigator: how much the search knows, and the walk over the sections.
+function F.gps_bar(q)
+  local g = F.gps_data()
+  local all, known = 0, 0
+  for _, r in ipairs(q.rows) do
+    if not r.blank and not r.far and not F.dlg_has(r.low, F.GPS_SKIP) then
+      all = all + 1
+      if g.cats[F.dlg_row_name(r)] then known = known + 1 end
+    end
+  end
+  local n = 0
+  for _, r in ipairs(q.rows) do
+    if r.far and not r.blank then n = n + 1 end
+  end
+  local label = known < all and 'Загрузить все места##gpsall' or 'Обновить места##gpsall'
+  local txt = known < all and ('Поиск знает ' .. known .. ' из ' .. all .. ' разделов') or ('Поиск ищет во всех разделах: ' .. n .. ' мест')
+  imgui.Spacing()
+  local p = imgui.GetCursorScreenPos()
+  local bw = F.text_w(font_main, (label:gsub('##.*$', ''))) + F.s(28)
+  local bh = math.floor(F.s(28))
+  local w = imgui.GetContentRegionAvail().x
+  F.text_at(font_main, 16, p.x + F.s(2), p.y + (bh - F.s(16)) / 2 - 1, F.col('text', 130), F.fit_text(font_main, txt, w - bw - F.s(12)))
+  imgui.SetCursorScreenPos(imgui.ImVec2(p.x + w - bw, p.y))
+  if F.button(label, bw / F.s(1), 28, known < all and 'primary' or nil) then q.gps_load = true end
+  if imgui.IsItemHovered() then F.tip('fHelper сам откроет каждый раздел навигатора и запомнит места. Окна при этом не мелькают; занимает пару секунд') end
+  F.advance(p, w, bh)
+end
+
+-- «Хранилище предметов»: everything at once, or every item of one kind. fHelper picks the rows
+-- one by one as the player would: a confirmation of taking is answered «yes», the menu of the
+-- sections is answered with the section the player was in; any other window stops the run and
+-- is shown. The windows of the run are not shown.
+F.STASH_TITLE = 'хранилище предметов'
+F.STASH_STEP = 0.35
+F.STASH_WAIT = 12
+F.STASH_MAX = 300
+F.STASH_YES = {'забрать', 'получить', 'взять', 'вы действительно', 'вы уверены', 'подтверд'}
+
+function F.stash_is_list(st, tlow, head)
+  if st ~= 5 or not tlow or not tlow:find(F.STASH_TITLE, 1, true) or type(head) ~= 'table' then return false end
+  return F.lower_fast(table.concat(head, ' ')):find('причин', 1, true) ~= nil
+end
+
+function F.stash_is_menu(st, tlow, rows)
+  if (st ~= 2 and st ~= 4) or not tlow or not tlow:find(F.STASH_TITLE, 1, true) or not rows then return false end
+  for _, r in ipairs(rows) do
+    if not r.blank and r.low:find('хранилище', 1, true) then return true end
+  end
+  return false
+end
+
+-- The kind of a row: the name in quotes, without its number and «(N шт)».
+function F.stash_key(r)
+  local c = F.trim(r.cols[1] or '')
+  local name = c:match("['\"](.-)['\"]%s*%(") or c:match("['\"](.+)['\"]") or c
+  name = name:gsub('^%s*%d+%s*[%.%)]%s*', ''):gsub('%(%s*%d+%s*шт%.?%s*%)', '')
+  return F.trim(name)
+end
+
+function F.stash_qty(r)
+  return tonumber((r.cols[1] or ''):match('%(%s*(%d+)%s*шт')) or 1
+end
+
+-- The kinds in the list, the most first.
+function F.stash_kinds(rows)
+  local by, order = {}, {}
+  for _, r in ipairs(rows) do
+    if not r.blank and not r.far and not r.label then
+      local k = F.stash_key(r)
+      if k ~= '' then
+        if not by[k] then
+          by[k] = {name = k, rows = 0, qty = 0}
+          order[#order + 1] = by[k]
+        end
+        by[k].rows = by[k].rows + 1
+        by[k].qty = by[k].qty + F.stash_qty(r)
+      end
+    end
+  end
+  table.sort(order, function(a, b)
+    if a.rows ~= b.rows then return a.rows > b.rows end
+    return a.name < b.name
+  end)
+  return order
+end
+
+function F.stash_next(rows, want)
+  for _, r in ipairs(rows) do
+    if not r.blank and not r.far and not r.label and (not want or F.stash_key(r) == want) and F.stash_key(r) ~= '' then return r end
+  end
+  return nil
+end
+
+function F.stash_queue(id, button, item, text)
+  F._stash_out = {id, button, item, text, at = os.clock() + F.STASH_STEP}
+end
+
+function F.stash_start(q, want)
+  q.stash_go = nil
+  local r = F.stash_next(q.rows, want ~= true and want or nil)
+  if not r then return end
+  F.qty = nil
+  F.lock_after_click()
+  F._cur_until = os.clock() + F.CUR_TRY
+  local left = 0
+  for _, x in ipairs(q.rows) do
+    if not x.blank and (want == true or F.stash_key(x) == want) then left = left + 1 end
+  end
+  local n = 0
+  for _, x in ipairs(q.rows) do if not x.blank and not x.far and not x.label then n = n + 1 end end
+  F._stash = {want = want ~= true and want or nil, done = 0, total = left, at = os.clock(), steps = 0, sec = F._stash_sec, nrows = n}
+  F.stash_queue(q.id, 1, r.idx, r.raw1)
+  F.notify('Хранилище: забираю ' .. (want == true and 'всё' or ('«' .. want .. '»')) .. ' — ' .. left .. ' шт. в списке', true)
+end
+
+function F.stash_stop(why, shown)
+  local st = F._stash
+  F._stash, F._stash_out = nil, nil
+  if not st then return end
+  local what = st.want and ('«' .. st.want .. '»') or 'предметы'
+  local msg = 'Хранилище: забрано ' .. st.done .. ' из ' .. st.total .. ' (' .. what .. ')'
+  if why then msg = msg .. ' — остановлено: ' .. why end
+  F.notify(msg, true)
+end
+
+function F.stash_tick()
+  local o = F._stash_out
+  if o and os.clock() >= o.at then
+    F._stash_out = nil
+    local ok, err = pcall(sampSendDialogResponse, o[1], o[2], o[3], o[4])
+    if not ok then
+      F.log_line('Хранилище: ответ не ушёл: ' .. tostring(err))
+      F.stash_stop('ответ не ушёл')
+    elseif F._stash then
+      F._stash.at = os.clock()
+    end
+    return
+  end
+  local st = F._stash
+  if st and not F._stash_out and os.clock() - st.at > F.STASH_WAIT then
+    F.stash_stop(st.done > 0 and nil or 'сервер не ответил')
+  end
+end
+
+-- A window while the run goes on: true when fHelper answered it and it stays hidden.
+function F.stash_dialog(id, style, title, b1, b2, text)
+  local st = F._stash
+  local sty = tonumber(style)
+  local tlow = F.lower_fast(F.qty_plain(title))
+  st.steps = st.steps + 1
+  if st.steps > F.STASH_MAX then
+    F.stash_stop('слишком много шагов')
+    return nil
+  end
+  if sty == 2 or sty == 4 or sty == 5 then
+    local rows, head = F.dlg_rows(sty, text)
+    if F.stash_is_list(sty, tlow, head) then
+      -- The list again: one row fewer means the item was taken; the next one goes.
+      local n = 0
+      for _, x in ipairs(rows) do if not x.blank then n = n + 1 end end
+      st.pending = nil
+      if st.nrows and n < st.nrows then
+        st.done = st.done + (st.nrows - n)
+        st.stuck = 0
+      elseif st.nrows then
+        st.stuck = (st.stuck or 0) + 1
+        if st.stuck >= 2 then
+          F.stash_stop('предмет не забирается')
+          return nil
+        end
+      end
+      st.nrows = n
+      local r = F.stash_next(rows, st.want)
+      if not r then
+        F.stash_stop(nil)
+        return nil
+      end
+      F.stash_queue(id, 1, r.idx, r.raw1)
+      return true
+    end
+    if F.stash_is_menu(sty, tlow, rows) then
+      -- The menu of the sections: back into the one the run started in.
+      local want = st.sec
+      for _, r in ipairs(rows) do
+        if not r.blank and (not want or F.dlg_row_name(r) == want) then
+          st.pending = nil
+          F.stash_queue(id, 1, r.idx, r.raw1)
+          return true
+        end
+      end
+      F.stash_stop('нет раздела')
+      return nil
+    end
+  end
+  -- A question about taking: yes.
+  local low = F.lower_fast(F.qty_plain(text) .. ' ' .. F.qty_plain(title))
+  if (sty == 0 or sty == 2) and F.qty_plain(b2) ~= '' and F.dlg_has(low, F.STASH_YES) and not F.dlg_has(low, F.DLG_NEVER) then
+    st.pending = true
+    F.stash_queue(id, 1, 0, '')
+    return true
+  end
+  F.stash_stop('пришло окно «' .. F.utf_cut(F.qty_plain(title), 40) .. '»')
+  return nil
+end
+
+-- Over the list of the storage: everything at once, or the kind chosen.
+function F.stash_bar(q)
+  local kinds = F.stash_kinds(q.rows)
+  if #kinds == 0 then return end
+  local total = 0
+  for _, k in ipairs(kinds) do total = total + k.rows end
+  imgui.Spacing()
+  local p = imgui.GetCursorScreenPos()
+  local w = imgui.GetContentRegionAvail().x
+  local bh = math.floor(F.s(30))
+  local label = 'Забрать всё (' .. total .. ')##stashall'
+  local bw = F.text_w(font_main, (label:gsub('##.*$', ''))) + F.s(28)
+  F.text_at(font_main, 16, p.x + F.s(2), p.y + (bh - F.s(16)) / 2 - 1, F.col('text', 140),
+    F.fit_text(font_main, 'Видов: ' .. #kinds .. '. Нажми вид ниже — заберу только его', w - bw - F.s(12)))
+  imgui.SetCursorScreenPos(imgui.ImVec2(p.x + w - bw, p.y))
+  if F.button(label, bw / F.s(1), 30, 'primary') then q.stash_go = true end
+  if imgui.IsItemHovered() then F.tip('fHelper заберёт строки по очереди, как ты руками. Окна при этом не мелькают. Если сервер покажет что-то другое (инвентарь полон и т. п.), сбор остановится и окно покажется') end
+  F.advance(p, w, bh)
+  imgui.Spacing()
+  local list = {}
+  for i, k in ipairs(kinds) do
+    if i > 24 then break end
+    list[#list + 1] = {i, F.utf_cut(k.name, 34) .. (k.rows > 1 and (' ×' .. k.rows) or ''), 'Забрать всё «' .. k.name .. '»: строк ' .. k.rows .. ', штук ' .. k.qty}
+  end
+  local pick = F.pill_row('##stashk', list, nil)
+  if pick and kinds[pick] then q.stash_go = kinds[pick].name end
+end
+
+-- Windows given back to the game: kind|title, one a line.
+function F.dlg_skip()
+  if not F._dlg_skip then
+    local list = {}
+    for _, line in ipairs(F.read_lines('fhelp_dlg_skip.txt')) do
+      local k, t = line:match('^(%l+)|(.*)$')
+      if k then list[#list + 1] = {k, t} end
+    end
+    F._dlg_skip = list
+  end
+  return F._dlg_skip
+end
+
+function F.dlg_skip_save()
+  local out = {}
+  for _, e in ipairs(F.dlg_skip()) do out[#out + 1] = e[1] .. '|' .. e[2] end
+  F.write_lines('fhelp_dlg_skip.txt', out)
+end
+
+function F.dlg_skipped(kind, tkey)
+  for _, e in ipairs(F.dlg_skip()) do
+    if e[1] == kind and e[2] == tkey then return true end
+  end
+  return false
+end
+
+function F.dlg_skip_add(kind, tkey)
+  tkey = tostring(tkey or ''):gsub('[\r\n|]', ' ')
+  if F.dlg_skipped(kind, tkey) then return end
+  table.insert(F.dlg_skip(), {kind, tkey})
+  F.dlg_skip_save()
+  F.log_line('Свои окна: «' .. tostring(F.DLG_BY[kind] and F.DLG_BY[kind][3] or kind) .. '» с названием «' .. tkey .. '» отдано игре')
+end
+
+-- The first windows of a session go to a file: what they were and whose they stayed, to learn
+-- the real wording. Passwords are never written.
+function F.dlg_note(taken, style, title, text, kind)
+  F._dlg_dbg = (F._dlg_dbg or 0) + 1
+  if F._dlg_dbg > 40 then return end
+  local f = io.open(F.cfg_dir() .. '\\fhelp_dlg_debug.txt', F._dlg_dbg == 1 and 'w' or 'a')
+  if not f then return end
+  local secret = tonumber(style) == 3 or F.dlg_has(F.lower_fast(F.qty_plain(title) .. ' ' .. F.qty_plain(text)), F.DLG_NEVER)
+  local body = secret and '(не записано)' or F.utf_cut((F.qty_plain(text):gsub('[\r\n\t]+', ' / ')), 220)
+  local whose = taken and ('своё: ' .. taken) or ('игровое' .. (kind and (' (узнано: ' .. kind .. ', выключено)') or ''))
+  f:write(os.date('%H:%M:%S'), '  стиль ', tostring(style), '  ', whose, '  «', F.qty_plain(title), '»  ', body, '\n')
+  f:close()
+end
+
 -- The window looks like the menu: a head with the accent square, the server's text in a card,
 -- the field of the menu with «Всё» next to it, the buttons at the bottom right.
 -- Everything in it, the corners too, follows the window's own size; the corners of the card,
 -- the field, the buttons and the square follow the window's corner.
 F.QTY_MIN_H = 160
 
-function F.qty_box(sw, sh, nat)
-  local ww = math.floor(F.s(math.max(300, math.min(900, tonumber(cfg.qty_w) or 420))))
+function F.qty_box(sw, sh, nat, minw)
+  local ww = math.floor(F.s(math.max(300, math.min(900, math.max(minw or 0, tonumber(cfg.qty_w) or 420)))))
   ww = math.max(math.floor(F.s(200)), math.min(ww, sw - 8))
   local want = tonumber(cfg.qty_h) or 0
   want = want > 0 and math.floor(F.s(math.max(F.QTY_MIN_H, math.min(700, want)))) or 0
@@ -6914,12 +8809,13 @@ function F.draw_qty()
   local alpha = math.max(0.5, math.min(1, tonumber(cfg.qty_alpha) or 0.97))
   local rad = F.s(math.max(0, math.min(40, tonumber(cfg.qty_round) or 18)))
   F._card_r, F._card_a, F._btn_r = rad * 0.75, math.floor(255 * alpha), rad * 0.5
+  F._qty_fr = rad * 0.45
   local pad = math.floor(F.s(16))
   local hh = math.floor(F.s(56))
   -- The height is the content's, measured at the end of the last frame; a height set in the
   -- settings or by the corner adds room under the server's text.
   local nat = q.nat or math.floor(F.s(250))
-  local ww, wh, fill = F.qty_box(sw, sh, nat)
+  local ww, wh, fill = F.qty_box(sw, sh, nat, F.dlg_minw(q))
   local WF = imgui.WindowFlags
   local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse + WF.NoCollapse + WF.NoSavedSettings + WF.NoMove
   local x, y = tonumber(cfg.qty_x) or -1, tonumber(cfg.qty_y) or -1
@@ -6953,7 +8849,8 @@ function F.draw_qty()
   dl:PopClipRect()
   -- The head moves the window; where it is left is kept.
   imgui.SetCursorScreenPos(imgui.ImVec2(wp.x, wp.y))
-  imgui.InvisibleButton('##qtydrag', imgui.ImVec2(math.max(1, ww - pad - F.s(40)), hh))
+  local icons = q.sample and 40 or 76
+  imgui.InvisibleButton('##qtydrag', imgui.ImVec2(math.max(1, ww - pad - F.s(icons)), hh))
   if imgui.IsItemActive() and imgui.IsMouseDragging(0) then
     local md = io.MouseDelta
     cfg.qty_x = math.floor(math.max(0, math.min(sw - ww, x + md.x)))
@@ -6967,17 +8864,25 @@ function F.draw_qty()
   local ls = math.floor(F.s(32))
   local lx, ly = wp.x + pad, wp.y + (hh - ls) / 2
   F.round_rect(lx, ly, ls, ls, F.col('accent'), nil, rad * 0.55)
-  local g = F.faico('ICON_FA_BOX_OPEN')
+  local g = F.faico(F.dlg_icon(q))
   if g == '' then g = 'f' end
   F.text_at(font_main, 16, lx + (ls - F.text_w(font_main, g)) / 2, ly + (ls - F.s(16)) / 2 - 1, F.col('ink'), g)
   local by = wp.y + (hh - F.s(18) - F.s(16) - 1) / 2 - 1
-  local tw = ww - pad * 2 - ls - F.s(12) - F.s(40)
+  local tw = ww - pad * 2 - ls - F.s(12) - F.s(icons)
   F.text_at(font_bold, 18, lx + ls + F.s(12), by, F.col('text'), F.fit_text(font_bold, q.title, tw))
   F.text_at(font_main, 16, lx + ls + F.s(12), by + F.s(18) + 1, F.col('text', 130), F.fit_text(font_main, 'fHelper  ·  вместо окна игры', tw))
-  local cancel = F.ghost_icon('##qtyx', wp.x + ww - pad - F.s(30), wp.y + (hh - F.s(30)) / 2, 'ICON_FA_TIMES', q.b2 .. ' (Esc)')
+  local cancel = F.ghost_icon('##qtyx', wp.x + ww - pad - F.s(30), wp.y + (hh - F.s(30)) / 2, 'ICON_FA_TIMES', (q.b2 or 'Закрыть') .. ' (Esc)')
+  -- The arrow gives such windows back to the game: this one is closed, the next comes as the game's.
+  local back_btn = not q.sample and F.ghost_icon('##qtyback', wp.x + ww - pad - F.s(66), wp.y + (hh - F.s(30)) / 2, 'ICON_FA_REPLY',
+    'Такие окна — игровые: это закроется, со следующего раза его покажет игра. Вернуть — Экран → Кастомизация → Свои окна')
   dl:AddLine(imgui.ImVec2(wp.x + 1, math.floor(wp.y + hh) + 0.5), imgui.ImVec2(wp.x + ww - 1, math.floor(wp.y + hh) + 0.5), F.col('text', 22), 1)
   imgui.SetCursorPosY(hh + pad)
   local w = ww - pad * 2
+  local kind = q.kind or 'qty'
+  local enter, pick
+  if kind ~= 'qty' then
+    enter, pick = F.dlg_body(q, fill, rad, w, sh)
+  else
   -- The card: what the server asks, the item, the field.
   F.card_begin()
   imgui.PushTextWrapPos(F.wrap_x())
@@ -7006,8 +8911,9 @@ function F.draw_qty()
     q.focus = false
   end
   local TF = imgui.InputTextFlags
-  local enter = F.field('##qty', 'Количество', ui.qty, F.QTY_BUF, all and (iw - aw - F.s(8)) or iw, 'qty',
+  enter = F.field('##qty', 'Количество', ui.qty, F.QTY_BUF, all and (iw - aw - F.s(8)) or iw, 'qty',
     (TF.EnterReturnsTrue or 0) + (TF.AutoSelectAll or 0))
+  F.dlg_ring()
   F.qty_clean()
   if all then
     imgui.SameLine(0, F.s(8))
@@ -7018,23 +8924,35 @@ function F.draw_qty()
     if imgui.IsItemHovered() then F.tip('Положить всё, что лежит в ячейке') end
   end
   F.card_end()
+  end
   -- Bottom: the keys on the left, «Отмена» and the server's main button on the right.
   imgui.Spacing()
-  local empty = F.trim(F.buf_get(ui.qty)) == ''
+  local empty = not F.dlg_ready(q)
   local p = imgui.GetCursorScreenPos()
   local bh = math.floor(F.s(36))
   local b1w = math.max(F.s(130), F.text_w(font_main, q.b1) + F.s(40))
-  local b2w = math.max(F.s(110), F.text_w(font_main, q.b2) + F.s(40))
-  local x2 = p.x + w - b1w
-  local x1 = x2 - F.s(8) - b2w
-  local keys = 'Enter  ·  Esc'
-  if x1 - p.x > F.text_w(font_main, keys) + 8 then
+  local b2w = q.b2 and math.max(F.s(110), F.text_w(font_main, q.b2) + F.s(40)) or 0
+  -- x1 is the second button, x2 the main one; swapped, the main one comes first.
+  local gap = F.s(8)
+  local left = p.x + w - b1w - (q.b2 and (gap + b2w) or 0)
+  local x1, x2
+  if cfg.qty_swap == 1 then
+    x2, x1 = left, left + b1w + gap
+  else
+    x1, x2 = left, p.x + w - b1w
+  end
+  local keys = (kind == 'list' or kind == 'pay') and 'Стрелки  ·  Enter  ·  Esc' or 'Enter  ·  Esc'
+  if left - p.x > F.text_w(font_main, keys) + 8 then
     F.text_at(font_main, 16, p.x, p.y + (bh - F.s(16)) / 2 - 1, F.col('text', 110), keys)
   end
-  imgui.SetCursorScreenPos(imgui.ImVec2(x1, p.y))
-  local no_btn = F.button(q.b2 .. '##qtyno', b2w / F.s(1), 36)
+  local no_btn = false
+  if q.b2 then
+    imgui.SetCursorScreenPos(imgui.ImVec2(x1, p.y))
+    no_btn = F.button(q.b2 .. '##qtyno', b2w / F.s(1), 36)
+  end
   imgui.SetCursorScreenPos(imgui.ImVec2(x2, p.y))
   local ok_btn = F.button(q.b1 .. '##qtyok', b1w / F.s(1), 36, not empty and 'primary' or nil)
+  if not empty then F.dlg_halo(math.min(rad * 0.5, bh / 2)) end
   F.advance(p, w, bh + pad)
   q.nat = math.ceil(p.y + bh + pad - wp.y - fill)
   F.qty_grip(q, wp, ww, wh, sw, sh)
@@ -7045,9 +8963,16 @@ function F.draw_qty()
   cfg.scale = menu_scale
   F._qty_scale0 = nil
   F.PAD, F._qty_pad0 = F._qty_pad0, nil
-  F._card_r, F._card_a, F._btn_r = nil, nil, nil
+  F._card_r, F._card_a, F._btn_r, F._qty_fr = nil, nil, nil, nil
   q.drawn = true
-  if (enter or ok_btn) and not empty then F.qty_send(1)
+  if back_btn then
+    F.dlg_skip_add(kind, q.tkey or F.lower_fast(q.title))
+    F.notify('Такие окна теперь показывает игра. Вернуть: Экран → Кастомизация → Свои окна', true)
+    F.qty_send(0)
+  elseif q.gps_load then F.gps_crawl_start(q)
+  elseif q.stash_go then F.stash_start(q, q.stash_go)
+  elseif pick then F.qty_send(1, pick)
+  elseif (enter or ok_btn) and not empty then F.qty_send(1)
   elseif cancel or no_btn then F.qty_send(0) end
 end
 
@@ -7086,6 +9011,1937 @@ function F.qty_grip(q, wp, ww, wh, sw, sh)
   end
   if hot and not held then F.tip('Потяни: ширина и высота окна') end
 end
+
+-- fHelper's own inventory window, in place of the game's.
+-- The server opens the game's inventory with event.setActiveView ["Inventory"]. With the feature
+-- on, fHelper takes that command (the game never switches to its slow window) and draws the
+-- same cells from the same lists. What the player does goes to the server the way the game's
+-- window sends it:
+--   right click        rightClickOnBlock|{"slot": S, "type": T}, the server answers with the
+--                      actions (playerInventory action 3: type, slot, bits)
+--   an action          clickOnButton|{"type": T,"slot": S, "action": BIT}
+--   drag to a cell     inventory.moveItem|{"from":{"slot":S,"type":T,"amount":N},"to":{"slot":S,"type":T}}
+--                      (the wheel while dragging takes fewer from the stack; a click-and-click
+--                      move names no amount)
+--   Ctrl and a click   inventory.moveItemForce|{"slot": S, "type": T, "amount": N}
+--   a click while a warehouse is open   clickOnBlock|{"slot": S, "type": T}
+--   a warehouse tab    openWarehouse|{"type":T}
+--   the bag's sort     inventory.sort
+--   closing            inventoryClose
+-- The guards' cells (blocks 30, 32, 33) are kept per guard: every message about them, and every
+-- action while the guards' tab is open, names the guard ("id"). Read from the game's own window
+-- (frontend.zip), so the format is the game's.
+-- A stall, a trade, crafting and the like go to the game's window at once: fHelper's does not
+-- do them. «Окно игры» gives the game its window back at any moment.
+F.IV_ACTIONS = {
+  {1, 'Использовать'}, {2, 'Надеть'}, {64, 'Открыть'}, {4, 'Выкинуть'}, {8, 'Разделить'}, {16, 'Информация'}, {1048576, 'Упомянуть'},
+  {32, 'Закрыть'}, {128, 'Закрыть'}, {256, 'Снять'}, {512, 'Очистить'}, {1024, 'Установить'}, {2048, 'Изменить'},
+  {4096, 'Открыть'}, {8192, 'Сдать в аренду'}, {16384, 'Выбрать цвет'}, {32768, 'Положить'}, {262144, 'Поместить'},
+  {67108864, 'Горячая клавиша'}, {134217728, 'Закрепить'}, {268435456, 'Открепить'}, {65536, 'Забрать'}, {131072, 'Продать'},
+  {524288, 'Передать'}, {4194304, 'Рейтинг'}, {2097152, 'Завершить аренду'}, {8388608, 'Активировать'},
+  {16777216, 'Деактивировать'}, {33554432, 'Скопировать'},
+}
+F.IV_DANGER = {[4] = true}
+F.IV_ACT_ICON = {
+  [1] = 'ICON_FA_HAND_POINTER', [2] = 'ICON_FA_TSHIRT', [64] = 'ICON_FA_BOX_OPEN', [4] = 'ICON_FA_TRASH_ALT',
+  [8] = 'ICON_FA_CUT', [16] = 'ICON_FA_INFO_CIRCLE', [32] = 'ICON_FA_TIMES', [128] = 'ICON_FA_TIMES',
+  [256] = 'ICON_FA_TSHIRT', [512] = 'ICON_FA_ERASER', [1024] = 'ICON_FA_WRENCH', [2048] = 'ICON_FA_PEN',
+  [4096] = 'ICON_FA_BOX_OPEN', [8192] = 'ICON_FA_HANDSHAKE', [16384] = 'ICON_FA_PALETTE', [32768] = 'ICON_FA_ARROW_DOWN',
+  [262144] = 'ICON_FA_GIFT', [67108864] = 'ICON_FA_KEYBOARD', [134217728] = 'ICON_FA_THUMBTACK',
+  [268435456] = 'ICON_FA_THUMBTACK', [65536] = 'ICON_FA_ARROW_UP', [131072] = 'ICON_FA_DOLLAR_SIGN',
+  [524288] = 'ICON_FA_SHARE', [4194304] = 'ICON_FA_STAR', [2097152] = 'ICON_FA_BAN', [8388608] = 'ICON_FA_TOGGLE_ON',
+  [16777216] = 'ICON_FA_TOGGLE_OFF', [33554432] = 'ICON_FA_COPY', [1048576] = 'ICON_FA_LINK',
+}
+F.IV_LINK = 1048576
+-- A bit of the inventory's buttons, the block it opens, its name.
+F.IV_WH = {
+  {16, 8, 'Багажник', 'БАГАЖНИК', 'ICON_FA_BOX_OPEN'}, {64, 5, 'Дом', 'ДОМ', 'ICON_FA_HOME'},
+  {2048, 9, 'Сундук', 'СУНДУК', 'ICON_FA_ARCHIVE'}, {256, 25, 'Склад', 'СКЛАД', 'ICON_FA_WAREHOUSE'},
+  {128, 6, 'Прицеп', 'ПРИЦЕП', 'ICON_FA_TRUCK'}, {8, 34, 'Номер отеля', 'НОМЕР ОТЕЛЯ', 'ICON_FA_BED'},
+  {32, 29, 'Квартира семьи', 'КВАРТИРА СЕМЬИ', 'ICON_FA_BUILDING'}, {65536, 48, 'Соц. дом', 'СОЦ. ДОМ', 'ICON_FA_HOME'},
+  {512, 27, 'Ломбард', 'ЛОМБАРД', 'ICON_FA_COINS'}, {1024, 7, 'Мусорка', 'МУСОРКА', 'ICON_FA_TRASH'},
+  {32768, 43, 'Мусорный пакет', 'МУСОРНЫЙ ПАКЕТ', 'ICON_FA_TRASH'},
+}
+F.IV_WH_NAME, F.IV_WH_UP, F.IV_WH_ICON = {}, {}, {}
+for _, w in ipairs(F.IV_WH) do F.IV_WH_NAME[w[2]], F.IV_WH_UP[w[2]], F.IV_WH_ICON[w[2]] = w[3], w[4], w[5] end
+-- Blocks of windows fHelper's inventory does not do: trade, crafting, stalls, shops, tuning, workshop.
+F.IV_FOREIGN = {[3] = true, [4] = true, [11] = true, [14] = true, [15] = true, [16] = true, [21] = true, [31] = true}
+F.IV_SHOP = {[13] = true, [28] = true}
+F.IV_FOREIGN_VIEW = {setTradeVisible = true, setWorkshopVisible = true, setCraftVisible = true, setPotionsVisible = true,
+  setStoreVisible = true}
+F.IV_GUARD = {[30] = true, [32] = true, [33] = true}
+F.IV_COLS = 6
+F.IV_ROWS = 6
+F.IV_WAIT = 1.5
+F.iv = {blocks = {}, buttons = 0, rev = 0}
+
+function F.iv_send(name, payload)
+  -- An example opened from the settings talks to nobody.
+  if F.iv.preview then return end
+  local text = payload and (name .. '|' .. payload) or name
+  F.cef_send(text)
+  -- The same readers as the game's own messages: the window of the amount, the calc by the stall.
+  pcall(F.shop_out, text)
+end
+
+-- The inventory in its own colours: the palette of the menu is swapped for the time the window
+-- is drawn, so every piece of it follows. The menu's comes back right after; if drawing breaks,
+-- the main loop puts it back.
+function F.iv_pal_push()
+  if cfg.inv_col ~= 1 then return end
+  F._iv_pal0 = F._iv_pal0 or {cfg.ui_bg, cfg.ui_acc}
+  cfg.ui_bg, cfg.ui_acc = cfg.inv_bg, cfg.inv_acc
+  F.pal_apply()
+end
+
+function F.iv_pal_pop()
+  local p = F._iv_pal0
+  if not p then return end
+  F._iv_pal0 = nil
+  cfg.ui_bg, cfg.ui_acc = p[1], p[2]
+  F.pal_apply()
+end
+
+function F.iv_cols()
+  return math.floor(math.max(4, math.min(10, tonumber(cfg.inv_cols) or 6)))
+end
+
+function F.iv_rows()
+  return math.floor(math.max(3, math.min(10, tonumber(cfg.inv_rows) or 6)))
+end
+
+-- A window of the game that fHelper did not take (a list, a confirmation) is shown on top:
+-- the inventory steps aside while it is open.
+function F.iv_covered()
+  if F.qty then return false end
+  local ok, on = pcall(sampIsDialogActive)
+  return ok and on and true or false
+end
+
+-- The window with what is known, opened from the settings: it sends nothing.
+function F.iv_preview()
+  local iv = F.iv
+  if iv.open then return end
+  F.iv_seed()
+  iv.open, iv.preview, iv.drawn, iv.at, iv.raw = true, true, false, os.clock(), nil
+  iv.side = 'char'
+end
+
+function F.iv_packet(text)
+  -- Windows fHelper's inventory does not do (trade, workshop, crafting, potions, a shop of the
+  -- server): the game gets its window back as soon as one of them is shown.
+  if F.iv.open and text:find('Visible', 1, true) then
+    local ev, val = text:match("event%.inventory%.(set%a+Visible)['\"]%s*,%s*`%s*%[?%s*([%w]+)")
+    if ev and F.IV_FOREIGN_VIEW[ev] and (val == 'true' or val == '1') then
+      F.iv_game()
+      return
+    end
+  end
+  -- «Обзор» of another player: the game shows it inside its inventory, fHelper as its own panel.
+  if text:find('setPlayerViewVisible', 1, true) then
+    local val = text:match("setPlayerViewVisible['\"]%s*,%s*`%s*%[?%s*([%w]+)")
+    if val == 'true' or val == '1' then
+      F.iv.view_at = os.clock()
+      if F.iv.open then F.iv.view_mode = true end
+    elseif F.iv.open and F.iv.view_mode then
+      F.iv_close(false)
+    end
+  end
+  -- Picking items for something of the server: a click names the cell (leftClickOnBlock).
+  if text:find('selectItemsActive', 1, true) then
+    local val = text:match("selectItemsActive['\"]%s*,%s*`%s*%[?%s*([%w]+)")
+    F.iv.pick_mode = val == 'true' or val == '1' or nil
+  end
+  -- A stall: the game's window would show its goods; fHelper's shows them on the left.
+  if text:find('setLavkaVisible', 1, true) then
+    F.iv.lavka = os.clock()
+    if F.iv.open then F.iv.side, F.iv.shop_on = 'shop', true end
+    return
+  end
+  if not text:find('playerInventory', 1, true) then return end
+  for body in text:gmatch("playerInventory['\"]%s*,%s*`(.-)`") do
+    local v = F.inv_json(body)
+    local d = type(v) == 'table' and v.data
+    if type(d) == 'table' then
+      local act = tonumber(v.action)
+      if d.buttons ~= nil then F.iv.buttons = tonumber(d.buttons) or 0 end
+      if type(d.securities) == 'table' then F.iv_guards(d.securities) end
+      if d.money ~= nil and tonumber(d.money) then F.iv.wh_money, F.iv.wh_money_at = tonumber(d.money), os.clock() end
+      if d.name ~= nil and d.oil ~= nil then
+        F.iv.car = {name = F.game_text(tostring(d.name)), oil = tonumber(d.oil), health = tonumber(d.health),
+          max_health = tonumber(d.max_health), model = type(d.skin) == 'table' and tonumber(d.skin.model) or nil}
+        F.iv.car_at = os.clock()
+      elseif d.name ~= nil and act == 0 then
+        -- The name over a stall: «Торговая лавка – …».
+        F.iv.shop_name = F.trim(F.game_text(tostring(d.name)))
+      end
+      -- Pages of the accessories, as the server counts them.
+      -- The page of the look is the server's: a click on a dot only asks, the server switches.
+      if type(d.accsPages) == 'table' then
+        F.iv.acc_total = tonumber(d.accsPages.total)
+        F.iv.apage = tonumber(d.accsPages.page) or F.iv.apage
+      end
+      local t = tonumber(d.type)
+      if (act == 0 or act == 2) and t and F.IV_GUARD[t] and type(d.items) == 'table' then F.iv_gmerge(t, d.items)
+      elseif (act == 0 or act == 2) and t and type(d.items) == 'table' then F.iv_merge(t, act, d.items)
+      elseif act == 3 and t then F.iv_menu_got(t, tonumber(d.slot), tonumber(d.bits) or 0) end
+    end
+  end
+end
+
+function F.iv_merge(t, act, rows)
+  local iv, now = F.iv, os.clock()
+  if F.IV_FOREIGN[t] then
+    if iv.open then F.iv_game() end
+    return
+  end
+  local b = iv.blocks[t]
+  if act == 0 and (not b or (b.seeded and not b.got) or F.inv_new_list(b, rows)) then
+    b = {slots = {}, known = {}, at = now, full = true, live = true}
+    iv.blocks[t] = b
+  elseif not b then
+    b = {slots = {}, known = {}, at = now}
+    iv.blocks[t] = b
+  end
+  for _, row in pairs(rows) do
+    local slot = type(row) == 'table' and tonumber(row.slot)
+    if slot then
+      local item = tonumber(row.item)
+      if item and item > 0 then
+        local r = F.inv_slot(row, item)
+        local o = b.slots[slot]
+        -- A change names only what changed: what it leaves out stays as it was.
+        if act == 2 and o and o.item == item then
+          if row.amount == nil then r.amount = o.amount end
+          if row.enchant == nil then r.ench = o.ench end
+          if row.background == nil then r.bg = o.bg end
+          if row.text == nil then r.text = o.text end
+          if row.time == nil then r.time = o.time end
+          if r.ench == o.ench then r.q, r.qn = o.q, o.qn end
+        end
+        if row.blackout ~= nil then r.dim = tonumber(row.blackout) == 1 or nil
+        elseif o then r.dim = o.dim end
+        if row.available ~= nil then r.na = (row.available == 0 or row.available == false) or nil
+        elseif o and o.item == item then r.na = o.na end
+        b.slots[slot] = r
+      else
+        b.slots[slot] = nil
+      end
+      if row.available ~= nil and act == 0 then b.known[slot] = row.available ~= 0 and row.available ~= false
+      elseif b.known[slot] == nil then b.known[slot] = true end
+      if slot > (b.max or -1) then b.max = slot end
+    end
+  end
+  if act == 0 then F.inv_got(b, rows) end
+  b.at = now
+  iv.rev = iv.rev + 1
+  iv.dirty = true
+  -- A list of a warehouse while the window is open: that warehouse is the one shown.
+  if act == 0 and iv.open and F.IV_WH_NAME[t] then iv.wh, iv.side = t, 'wh' end
+  if act == 0 and iv.open and F.IV_SHOP[t] then
+    iv.side, iv.shop_on = 'shop', true
+    if not iv.stab or not iv.blocks[iv.stab] then iv.stab = t end
+  end
+end
+
+F.IV_KEEP = {1, 2, 10, 17, 20, 22}
+-- Kept lists are trusted after a reload of the script only if they were live and written just
+-- before it: the server sends the whole bag only at the entry to the game.
+F.IV_TRUST_AGE = 180
+F.IV_SAVE_EVERY = 30
+
+function F.iv_save()
+  local lines = {}
+  local function row(...)
+    local cells = {...}
+    for i = 1, select('#', ...) do cells[i] = F.car_cell(cells[i]) end
+    lines[#lines + 1] = table.concat(cells, '\t', 1, select('#', ...))
+  end
+  local bag = F.iv.blocks[1]
+  row('T', os.time(), bag and (bag.live or bag.trusted) and 1 or 0)
+  for _, t in ipairs(F.IV_KEEP) do
+    local b = F.iv.blocks[t]
+    if b then
+      row('B', t, b.max or -1, b.total or 0, b.full and 1 or 0)
+      for slot, r in pairs(b.slots) do
+        row('I', t, slot, r.item, r.amount or 1, r.time or 0, r.ench or '', r.bg or '', r.str or '', r.q or '', r.qn or '', r.text or '')
+      end
+      for slot, open in pairs(b.known) do
+        if open == false then row('K', t, slot) end
+      end
+    end
+  end
+  F.write_lines('fhelp_inv.txt', lines)
+end
+
+function F.iv_flush(force)
+  if not F.iv.dirty and not force then return end
+  F.iv.dirty = false
+  F.iv.saved = os.clock()
+  pcall(F.iv_save)
+end
+
+function F.iv_load()
+  local trusted = false
+  for _, line in ipairs(F.read_lines('fhelp_inv.txt')) do
+    local c = {}
+    for cell in (line .. '\t'):gmatch('(.-)\t') do c[#c + 1] = cell end
+    local t = tonumber(c[2])
+    if c[1] == 'T' then
+      local at = tonumber(c[2]) or 0
+      trusted = c[3] == '1' and math.abs(os.time() - at) <= F.IV_TRUST_AGE
+      F.iv.kept_at = at
+    elseif c[1] == 'B' and t then
+      -- Lists read from the disk are a starting point: the first whole list of the server replaces them.
+      F.iv.blocks[t] = {slots = {}, known = {}, at = 0, seeded = true, max = tonumber(c[3]), total = tonumber(c[4]),
+        full = c[5] == '1' or nil, trusted = trusted or nil}
+    elseif c[1] == 'I' and t and F.iv.blocks[t] then
+      local slot, item = tonumber(c[3]), tonumber(c[4])
+      if slot and item then
+        local b = F.iv.blocks[t]
+        b.slots[slot] = {item = item, amount = tonumber(c[5]) or 1, time = tonumber(c[6]) or 0, ench = tonumber(c[7]),
+          bg = (c[8] or '') ~= '' and c[8] or nil, str = tonumber(c[9]), q = tonumber(c[10]),
+          qn = (c[11] or '') ~= '' and c[11] or nil, text = c[12] or ''}
+        b.known[slot] = true
+      end
+    elseif c[1] == 'K' and t and F.iv.blocks[t] and tonumber(c[3]) then
+      F.iv.blocks[t].known[tonumber(c[3])] = false
+    end
+  end
+end
+
+-- After a reload of the script the game does not send the lists again until a change: the
+-- kept lists of «Хранилище» fill the bag and the character.
+F.IV_SEED = {1, 2, 10, 17, 20, 22}
+
+function F.iv_seed()
+  local iv = F.iv
+  for _, t in ipairs(F.IV_SEED) do
+    if not iv.blocks[t] then
+      local b = {slots = {}, known = {}, at = 0, seeded = true}
+      local live = F.bag_live and F.bag_live.blocks[t]
+      if live and next(live.slots) then
+        for sl, r in pairs(live.slots) do
+          b.slots[sl], b.known[sl] = r, true
+          if sl > (b.max or -1) then b.max = sl end
+        end
+      else
+        local kept = F.bag and F.bag.blocks[t]
+        for _, r in ipairs(kept and kept.items or {}) do
+          b.slots[r.slot] = {item = r.item, amount = r.amount, text = r.text or '', time = r.time or 0, ench = r.ench,
+            bg = r.bg, str = r.str, q = r.q, qn = r.qn}
+          b.known[r.slot] = true
+          if r.slot > (b.max or -1) then b.max = r.slot end
+        end
+        b.total = kept and kept.total or nil
+      end
+      if next(b.slots) then iv.blocks[t] = b end
+    end
+  end
+end
+
+-- The bag is known exactly: its whole list came in this session, or was kept right before a
+-- reload of the script while it was live.
+function F.iv_exact()
+  local bag = F.iv.blocks[1]
+  return bag ~= nil and (bag.live or bag.trusted) and true or false
+end
+
+function F.iv_take(text)
+  if not text:find('event.setActiveView', 1, true) then return false end
+  local view = text:match('`%s*%[%s*"([^"]+)"')
+  local iv = F.iv
+  if view ~= 'Inventory' then
+    iv.game_mode = nil
+    pcall(F.iv_unlock)
+    if iv.open then F.iv_close(false) end
+    return false
+  end
+  if cfg.inv_on ~= 1 or F._iv_off or iv.game_mode or not F.iv_frame or os.clock() < (F._iv_pass or 0) then return false end
+  if iv.open and not iv.preview then return true end
+  local now = os.clock()
+  local viewing = now - (iv.view_at or -100) < 2
+  if not viewing and not F.iv_exact() then
+    if now - (F._iv_said or -100) > 120 then
+      F._iv_said = now
+      F.notify('Своё окно инвентаря откроется после перезахода на сервер: точный список ячеек сервер присылает только при входе', true)
+      F.log_line('Инвентарь: списка ячеек с этого входа ещё нет, показано окно игры')
+    end
+    return false
+  end
+  iv.open, iv.raw, iv.at, iv.drawn, iv.preview = true, text, now, false, nil
+  iv.view_mode = viewing or nil
+  iv.shop_on, iv.stab, iv.spage = nil, nil, 1
+  -- The car may be another one, sold or gone: what the server did not send for this opening
+  -- (its name, the trunk, the tuning) is forgotten, and comes anew when its tab is asked for.
+  if not iv.car_at or now - iv.car_at > 2 then iv.car = nil end
+  if now - (iv.wh_money_at or -100) > 2 then iv.wh_money = nil end
+  iv.pick_mode = nil
+  for _, t in ipairs({8, 12, 18, 19, 23, 36, 37, 38, 39, 40, 41}) do
+    local b = iv.blocks[t]
+    if b and now - (b.at or 0) > 2 then iv.blocks[t] = nil end
+  end
+  iv.menu, iv.menu_wait, iv.press, iv.drag, iv.sel, iv.wh = nil, nil, nil, nil, nil, nil
+  -- A warehouse whose list came right before the window is the one that is open.
+  for t, b in pairs(iv.blocks) do
+    if F.IV_WH_NAME[t] and now - (b.at or 0) < 2 and (not iv.wh or b.at > iv.blocks[iv.wh].at) then iv.wh = t end
+  end
+  iv.side = iv.wh and 'wh' or 'char'
+  -- A stall whose goods came right before the window.
+  for _, t in ipairs({13, 28}) do
+    local b = iv.blocks[t]
+    if b and now - (b.at or 0) < 2 then
+      iv.side, iv.shop_on = 'shop', true
+      if not iv.stab then iv.stab = t end
+    end
+  end
+  if now - (iv.lavka or -10) < 2 then iv.side, iv.shop_on = 'shop', true end
+  -- What the game's window says when it opens.
+  pcall(F.iv_send, 'onActiveViewChanged', 'Inventory')
+  -- The script started in the middle of the game and has no whole list of the bag: the view of
+  -- the character is asked for, the way the game's own tab asks, and the server sends its lists.
+  local bag = iv.blocks[1]
+  if bag and not bag.full and now - (iv.asked or -100) > 20 then
+    iv.asked = now
+    pcall(F.iv_send, 'requestShowingInventory', '27')
+  end
+  if not F._iv_logged then
+    F._iv_logged = true
+    F.log_line('Инвентарь: открыто своё окно вместо игрового')
+  end
+  return true
+end
+
+-- «available»: 0 and «blackout» are marks of the moment (a stall being set up, a shop, a trade):
+-- the server sets them and never takes them back; the game's window drops them itself when the
+-- view closes (resetSlotsState). So does fHelper, on every closing of the inventory.
+function F.iv_unlock()
+  local function clear(b)
+    for _, r in pairs(b and b.slots or {}) do r.na, r.dim = nil, nil end
+  end
+  for _, b in pairs(F.iv.blocks) do clear(b) end
+  for _, g in pairs(F.iv.gb or {}) do
+    for _, b in pairs(g) do clear(b) end
+  end
+end
+
+function F.iv_close(send)
+  local iv = F.iv
+  pcall(F.iv_unlock)
+  if not iv.open then return end
+  iv.open, iv.menu, iv.menu_wait, iv.press, iv.drag, iv.sel = false, nil, nil, nil, nil, nil
+  F.lock_after_click()
+  F._cur_until = os.clock() + F.CUR_TRY
+  if iv.preview then
+    iv.preview = nil
+    return
+  end
+  local viewing = iv.view_mode
+  iv.view_mode = nil
+  if send then
+    if viewing then
+      pcall(F.iv_send, 'closePlayerView')
+    else
+      pcall(F.iv_send, 'inventoryClose')
+      pcall(F.car_close)
+    end
+  end
+end
+
+-- A packet of the game's interface, made here as the server would send it.
+function F.cef_emul(text)
+  local bs = raknetNewBitStream()
+  raknetBitStreamWriteInt8(bs, 17)
+  raknetBitStreamWriteInt32(bs, 0)
+  raknetBitStreamWriteInt16(bs, #text)
+  raknetBitStreamWriteInt8(bs, 0)
+  raknetBitStreamWriteString(bs, text)
+  raknetEmulPacketReceiveBitStream(220, bs)
+  raknetDeleteBitStream(bs)
+end
+
+-- The game gets its window back: the command fHelper took is given to it now. Until the
+-- inventory is closed it stays the game's.
+function F.iv_game()
+  local iv = F.iv
+  local raw = iv.raw
+  F.iv_close(false)
+  iv.game_mode = true
+  if not raw then return end
+  F._iv_pass = os.clock() + 2
+  local ok, err = pcall(F.cef_emul, raw)
+  if not ok then
+    F.log_line('Инвентарь: окно игры не открылось: ' .. tostring(err))
+    F.notify('Окно игры не открылось: закрой инвентарь и открой снова', true)
+  end
+end
+
+-- ', "id": G' for a guard's cell, else nothing.
+function F.iv_gid(t)
+  if F.IV_GUARD[t] and F.iv.gid then return string.format(', "id": %d', F.iv.gid) end
+  return ''
+end
+
+function F.iv_right(t, slot, x, y)
+  F.iv.menu = nil
+  F.iv.menu_wait = {type = t, slot = slot, x = x, y = y, at = os.clock()}
+  F.iv_send('rightClickOnBlock', string.format('{"slot": %d, "type": %d%s}', slot, t, F.iv_gid(t)))
+end
+
+function F.iv_menu_got(t, slot, bits)
+  local w = F.iv.menu_wait
+  F.iv.menu_wait = nil
+  if not F.iv.open then return end
+  F.iv.menu = {type = t, slot = slot or (w and w.slot) or 0, bits = bits, x = w and w.x, y = w and w.y}
+end
+
+function F.iv_action(bit)
+  local m = F.iv.menu
+  F.iv.menu = nil
+  if not m then return end
+  -- «Упомянуть» is not the server's: the game's window asks its own client to put the item's
+  -- link into the chat (window.cef.PushItemSlot(slot, block)), and so does fHelper.
+  if bit == F.IV_LINK then
+    if F.iv.preview then return end
+    local ok, err = pcall(F.cef_emul, string.format('window.cef.PushItemSlot(%d, %d);', m.slot, m.type))
+    if not ok then
+      F.log_line('Инвентарь: «Упомянуть» не сработало: ' .. tostring(err))
+      F.notify('«Упомянуть» не сработало: попробуй в окне игры', true)
+    elseif not F._iv_link_logged then
+      F._iv_link_logged = true
+      F.log_line('Инвентарь: «Упомянуть» — ссылка на предмет передана клиенту игры')
+    end
+    return
+  end
+  -- With the guards' tab open the game names the guard in every action, as here.
+  if F.iv.side == 'guard' and F.iv.gid then
+    F.iv_send('clickOnButton', string.format('{"type": %d,"slot": %d, "action": %d, "id": %d}', m.type, m.slot, bit, F.iv.gid))
+  else
+    F.iv_send('clickOnButton', string.format('{"type": %d,"slot": %d, "action": %d}', m.type, m.slot, bit))
+  end
+end
+
+function F.iv_click(t, slot, ctrl, r)
+  if F.iv.pick_mode then
+    F.iv_send('leftClickOnBlock', string.format('{"slot": %d, "type": %d}', slot, t))
+  elseif ctrl then
+    F.iv_send('inventory.moveItemForce', string.format('{"slot": %d, "type": %d, "amount": %d%s}', slot, t, math.floor(tonumber(r and r.amount) or 1), F.iv_gid(t)))
+  elseif (F.iv.wh and F.iv.side == 'wh') or F.iv.side == 'shop' then
+    -- At a stall a click is buying or selling, at a warehouse putting or taking: the server asks how many.
+    F.iv_send('clickOnBlock', string.format('{"slot": %d, "type": %d}', slot, t))
+  else
+    -- Picked: the next click on a cell says where it goes.
+    F.iv.sel = {type = t, slot = slot, item = r and r.item}
+  end
+end
+
+-- amount: how many of the stack go, when it was dragged (the whole stack, or fewer by the wheel).
+function F.iv_drop(from, to, amount)
+  if not from or not to or (from.type == to.type and from.slot == to.slot) then return end
+  local gid = F.iv.gid or -1
+  local function cell(c, amt)
+    local out = string.format('{"slot":%d,"type":%d', c.slot, c.type)
+    if F.IV_GUARD[c.type] then out = out .. ',"id":' .. gid end
+    if amt then out = out .. ',"amount":' .. math.max(1, math.floor(amt)) end
+    return out .. '}'
+  end
+  F.iv_send('inventory.moveItem', '{"from":' .. cell(from, amount) .. ',"to":' .. cell(to) .. '}')
+end
+
+-- An item dropped on the guard himself: he uses it (food, a medkit).
+function F.iv_feed(from, amount)
+  local gid = F.iv.gid
+  if not from or not gid then return end
+  F.iv_send('useItemOnSecurity', string.format('{"from":{"amount":%d,"slot":%d,"type":%d},"id":%d}',
+    math.max(1, math.floor(amount or 1)), from.slot, from.type, gid))
+end
+
+-- The guards: data.securities, one row each, by their place. A list of one is a change of that
+-- guard: the others and his place stay.
+function F.iv_guards(list)
+  local iv = F.iv
+  local rows = {}
+  for _, g in pairs(list) do
+    if type(g) == 'table' and tonumber(g.id) then rows[#rows + 1] = g end
+  end
+  if #rows > 1 or not iv.guards then
+    table.sort(rows, function(a, b) return (tonumber(a.slot) or 0) < (tonumber(b.slot) or 0) end)
+    iv.guards = rows
+  else
+    for _, g in ipairs(rows) do
+      local found = false
+      for i, o in ipairs(iv.guards) do
+        if tonumber(o.id) == tonumber(g.id) then
+          g.slot = o.slot
+          iv.guards[i] = g
+          found = true
+        end
+      end
+      if not found then iv.guards[#iv.guards + 1] = g end
+    end
+  end
+  iv.guards_at = os.clock()
+  if not F.iv_guard() then iv.gid = iv.guards[1] and tonumber(iv.guards[1].id) or nil end
+end
+
+function F.iv_guard()
+  local iv = F.iv
+  for _, g in ipairs(iv.guards or {}) do
+    if tonumber(g.id) == iv.gid then return g end
+  end
+  return nil
+end
+
+-- The guard shown, as the game's tab picks him: the server is told.
+function F.iv_guard_pick(id)
+  F.iv.gid = id
+  F.iv_send('selectSecurity', string.format('{"id":%d}', id))
+end
+
+-- A guard's cells: rows name the guard by id; a row without an item empties that cell.
+function F.iv_gmerge(t, rows)
+  local iv = F.iv
+  iv.gb = iv.gb or {}
+  for _, row in pairs(rows) do
+    local id = type(row) == 'table' and tonumber(row.id)
+    local slot = id and tonumber(row.slot)
+    if slot then
+      iv.gb[id] = iv.gb[id] or {}
+      local b = iv.gb[id][t]
+      if not b then
+        b = {slots = {}, known = {}, at = 0}
+        iv.gb[id][t] = b
+      end
+      local item = tonumber(row.item)
+      if item and item > 0 then
+        local r = F.inv_slot(row, item)
+        local o = b.slots[slot]
+        if o and o.item == item then
+          if row.amount == nil then r.amount = o.amount end
+          if row.text == nil then r.text = o.text end
+          if row.time == nil then r.time = o.time end
+          if row.enchant == nil then r.ench = o.ench end
+          if row.background == nil then r.bg = o.bg end
+        end
+        if row.available ~= nil then r.na = (row.available == 0 or row.available == false) or nil
+        elseif o and o.item == item then r.na = o.na end
+        b.slots[slot] = r
+      else
+        b.slots[slot] = nil
+      end
+      b.known[slot] = true
+      if slot > (b.max or -1) then b.max = slot end
+      b.at = os.clock()
+    end
+  end
+  iv.rev = iv.rev + 1
+end
+
+-- The list a cell of block t belongs to: a guard's blocks are the shown guard's.
+function F.iv_block(t)
+  local iv = F.iv
+  if F.IV_GUARD[t] then
+    local g = iv.gid and iv.gb and iv.gb[iv.gid]
+    return g and g[t]
+  end
+  return iv.blocks[t]
+end
+
+function F.iv_tab(block)
+  F.iv.wh_want, F.iv.wh_asked = block, os.clock()
+  F.iv_send('openWarehouse', string.format('{"type":%d}', block))
+  -- Already seen: shown at once, the server's list refreshes it.
+  if F.iv.blocks[block] then F.iv.wh, F.iv.side = block, 'wh' end
+end
+
+-- The right half: the character, the car, or a warehouse. The character and the car are asked
+-- for the way the game's tabs ask (requestShowingInventory with the id of the view).
+function F.iv_side(key)
+  local iv = F.iv
+  iv.side = key
+  if key == 'char' then F.iv_send('requestShowingInventory', '27')
+  elseif key == 'car' then F.iv_send('requestShowingInventory', '30')
+  elseif key == 'guard' then
+    F.iv_send('requestShowingInventory', '28')
+    -- The game's tab tells the server which guard it shows as soon as it opens.
+    local g = F.iv_guard() or (iv.guards and iv.guards[1])
+    if g then F.iv_guard_pick(tonumber(g.id)) end
+  end
+end
+
+-- Tabs of the right half: {key, name, block of a warehouse or nil}.
+function F.iv_tabs()
+  local iv = F.iv
+  local out = {{'char', 'Персонаж'}}
+  if iv.shop_on then out[#out + 1] = {'shop', 'Лавка'} end
+  if F.band(iv.buttons or 0, 4) ~= 0 then out[#out + 1] = {'guard', 'Охранники'} end
+  if F.band(iv.buttons or 0, 2) ~= 0 then out[#out + 1] = {'car', 'Транспорт'} end
+  for _, w in ipairs(F.IV_WH) do
+    if F.band(iv.buttons or 0, w[1]) ~= 0 or iv.wh == w[2] then out[#out + 1] = {'wh' .. w[2], w[3], w[2]} end
+  end
+  return out
+end
+
+function F.iv_tick()
+  if F._iv_scale0 then
+    cfg.scale, F._iv_scale0 = F._iv_scale0, nil
+  end
+  if F._iv_pal0 then F.iv_pal_pop() end
+  local iv = F.iv
+  if iv.open and not iv.drawn and not F.iv_covered() and os.clock() - iv.at > F.IV_WAIT then
+    F._iv_off = true
+    F.iv_game()
+    F.notify('Своё окно инвентаря не открылось: до перезапуска снова игровое', true)
+    F.log_line('Инвентарь: своё окно не нарисовалось, вернул игровое до перезапуска')
+  end
+  if iv.menu_wait and os.clock() - iv.menu_wait.at > 3 then iv.menu_wait = nil end
+  if iv.dirty and os.clock() - (iv.saved or 0) > F.IV_SAVE_EVERY then F.iv_flush() end
+end
+
+function F.iv_count(b)
+  local cols = F.iv_cols()
+  local n = math.max((b and b.max or -1) + 1, b and b.total or 0)
+  n = math.max(n, cols * 5)
+  return math.ceil(n / cols) * cols
+end
+
+function F.iv_bg(hex, a)
+  if not hex then return nil end
+  local key = hex .. '|' .. tostring(a)
+  local c = F._ivbg and F._ivbg[key]
+  if c ~= nil then return c or nil end
+  local n = tonumber(hex, 16)
+  if n then
+    local r, g, b = F.hex3(n)
+    c = F.rgba(r, g, b, a)
+  end
+  F._ivbg = F._ivbg or {}
+  F._ivbg[key] = c or false
+  return c
+end
+
+-- A cooldown in seconds: the slot's own time, else the chest timer fHelper keeps for the item.
+function F.iv_kd(r)
+  local now = os.time()
+  if (r.time or 0) > now then return r.time - now end
+  -- The chests' timers are looked at once a frame, not once a cell.
+  local frame = imgui.GetFrameCount and imgui.GetFrameCount() or 0
+  if F._kd_frame ~= frame or not F._kd then
+    F._kd_frame = frame
+    local ok, st = pcall(F.chest_state)
+    if not ok or type(st) ~= 'table' or type(st.by) ~= 'table' then
+      F._kd = F._kd or {}
+      return nil
+    end
+    if F._kd_rev ~= st.rev or not F._kd then
+      F._kd_rev, F._kd = st.rev, {}
+      for _, e in pairs(st.by) do
+        local id = tonumber(e.id)
+        if id and e.ends and (not F._kd[id] or e.ends < F._kd[id]) then F._kd[id] = e.ends end
+      end
+    end
+  end
+  local ends = F._kd[r.item]
+  if ends and ends > now then return ends - now end
+  return nil
+end
+
+-- A small label on a cell: at the top left, at the bottom left or at the bottom right.
+function F.iv_tag(x, y, sz, str, where, col)
+  local room = sz - 6 - math.floor(F.s(8))
+  -- The width of a label is measured once for its text, size and room.
+  local key = str .. '|' .. room .. '|' .. tostring(cfg.scale)
+  local c = F._ivtag and F._ivtag[key]
+  if not c then
+    local s2 = str
+    if F.text_w(font_main, s2) * 0.875 > room then s2 = F.fit_text(font_main, s2, room / 0.875) end
+    c = {s2, math.floor(F.text_w(font_main, s2) * 0.875)}
+    if not F._ivtag or (F._ivtag_n or 0) > 900 then F._ivtag, F._ivtag_n = {}, 0 end
+    F._ivtag[key] = c
+    F._ivtag_n = F._ivtag_n + 1
+  end
+  str = c[1]
+  local tw = c[2]
+  local h = math.floor(F.s(17))
+  local bw = tw + math.floor(F.s(8))
+  local tx = where == 'r' and (x + sz - bw - 3) or (x + 3)
+  local ty = where == 't' and (y + 3) or (y + sz - h - 3)
+  F.round_rect(tx, ty, bw, h, F.col('bg', 215), nil, math.min(5, F._iv_cr or 5))
+  F.text_at(font_main, 14, tx + math.floor(F.s(4)), ty + 1, col or F.col('text', 235), str)
+end
+
+-- A cooldown short enough for a cell: «59:08», «20ч 10м», «3д 4ч».
+function F.iv_kd_text(sec)
+  sec = math.max(0, math.floor(sec))
+  if sec >= 86400 then
+    local d = math.floor(sec / 86400)
+    local m10, m100 = d % 10, d % 100
+    local word = (m10 == 1 and m100 ~= 11) and 'день' or (m10 >= 2 and m10 <= 4 and (m100 < 10 or m100 >= 20)) and 'дня' or 'дней'
+    return d .. ' ' .. word
+  end
+  return string.format('%02d:%02d:%02d', math.floor(sec / 3600), math.floor(sec / 60) % 60, sec % 60)
+end
+
+-- What a cell says: bottom is the server's own label of the slot («KD», «22 hours», «1073»,
+-- «+259», the amount) or the amount; top is the cooldown, else the sharpening when the label
+-- does not already say it. Nothing is written twice.
+function F.iv_labels(r, shop, kd)
+  local text = (r.text or '') ~= '' and r.text ~= '$' and r.text or nil
+  local low, low_kind
+  if shop then low, low_kind = '$' .. F.num_text(r.amount), 'price'
+  elseif text then low = text
+  elseif (r.amount or 1) > 1 then low = F.num_text(r.amount) end
+  local top, top_kind
+  if kd then top = F.iv_kd_text(kd)
+  elseif r.ench and low ~= ('+' .. r.ench) then top, top_kind = '+' .. r.ench, 'ench' end
+  if low and r.ench and low == ('+' .. r.ench) then low_kind = 'ench' end
+  return low, low_kind, top, top_kind
+end
+
+-- The class and rating of quality come only in the window of the item; «Хранилище» keeps what
+-- it read for the same slot and item.
+function F.iv_quality(t, s, r)
+  if r.qn or r.q or r._qtry == F.bag.rev then return end
+  r._qtry = F.bag.rev
+  local live = F.bag_live and F.bag_live.blocks[t]
+  local o = live and live.slots[s]
+  if o and o.item == r.item and (o.q or o.qn) then r.q, r.qn = o.q, o.qn end
+end
+
+function F.iv_cell(t, s, r, known, x, y, sz, hovered, q)
+  local iv = F.iv
+  if r then F.iv_quality(t, s, r) end
+  local cr = F._iv_cr or 10
+  local ca = F._iv_ca or 1
+  local picked = iv.sel and iv.sel.type == t and iv.sel.slot == s
+  local dragged = iv.drag and iv.drag.type == t and iv.drag.slot == s
+  local bg = r and F.iv_bg(r.bg, math.floor(150 * ca)) or F.col('side', math.floor(170 * ca))
+  local border = picked and F.col('accent_hi') or (hovered and F.col('accent', 220)) or F.col('text', 22)
+  F.round_rect(x, y, sz, sz, bg, border, cr)
+  if picked then
+    if not r then iv.sel = nil
+    else
+      F.round_rect(x + 1, y + 1, sz - 2, sz - 2, F.col('accent', 46), F.col('accent_hi'), cr)
+    end
+  elseif iv.sel and hovered and not F.IV_SHOP[t] then
+    -- Where the picked item will go.
+    F.round_rect(x + 1, y + 1, sz - 2, sz - 2, F.col('accent', 28), nil, cr)
+  end
+  if not r then
+    if known == false then
+      local g = F.faico('ICON_FA_LOCK')
+      if g ~= '' then F.text_at(font_main, 14, x + (sz - F.s(12)) / 2, y + (sz - F.s(14)) / 2, F.col('text', 60), g) end
+    end
+    return
+  end
+  F.lib_pic(F.item_pic_of(r.item), x + F.s(6), y + F.s(6), sz - F.s(12))
+  -- The colour of the class of quality as a strip along the bottom edge.
+  if r.bg then
+    local qc = F.iv_bg(r.bg, 255)
+    if qc then F.round_rect(x + F.s(6), y + sz - F.s(4), sz - F.s(12), math.max(2, math.floor(F.s(3))), qc, nil, 2) end
+  end
+  local shop = F.IV_SHOP[t]
+  local kd = F.iv_kd(r)
+  if cfg.inv_badges ~= 0 then
+    local low, low_kind, top, top_kind = F.iv_labels(r, shop, kd)
+    if top then F.iv_tag(x, y, sz, top, 't', top_kind == 'ench' and F.col('accent_hi') or F.col('text', 240)) end
+    if low then
+      F.iv_tag(x, y, sz, low, 'r', low_kind == 'price' and F.rgba(140, 225, 120, 255) or (low_kind == 'ench' and F.col('accent_hi')) or nil)
+    end
+  end
+  if r.dim or r.na or dragged then F.round_rect(x, y, sz, sz, F.col('bg', r.na and 175 or 150), nil, cr) end
+  if r.na then
+    local g = F.faico('ICON_FA_LOCK')
+    if g ~= '' then F.text_at(font_main, 14, x + sz - F.s(17), y + F.s(4), F.col('text', 200), g) end
+  end
+  -- The search: what does not fit fades out.
+  if q and q ~= '' then
+    if r._lowid ~= r.item then r._lowid, r._low = r.item, F.lower_fast(F.item_label(r.item)) end
+    if not r._low:find(q, 1, true) then F.round_rect(x, y, sz, sz, F.col('bg', 200), nil, cr) end
+  end
+  if hovered and not iv.drag and cfg.inv_tips ~= 0 then
+    local tip = F.item_label(r.item) .. (r.ench and (' +' .. r.ench) or '')
+    if iv.sel and not picked and not shop then tip = 'Нажми: поменять местами\n' .. tip
+    elseif picked then tip = 'Выбрано. Нажми на другую ячейку, чтобы переложить\n' .. tip end
+    if shop then tip = tip .. '\nЦена: $' .. F.num_text(r.amount)
+    elseif (r.amount or 1) > 1 then tip = tip .. '\nКоличество: ' .. F.num_text(r.amount) end
+    local qq = F.shop_q_text(r)
+    if qq then tip = tip .. '\n' .. qq end
+    if (r.text or '') ~= '' and r.text ~= '$' and not shop and r.text ~= tostring(r.amount) then tip = tip .. '\nНа ячейке: ' .. r.text end
+    if r.str then tip = tip .. '\nПрочность: ' .. r.str .. '%' end
+    if kd then tip = tip .. '\nКД: осталось ' .. F.left_text(kd) end
+    if r.na then tip = tip .. '\nСейчас недоступен (так его пометил сервер для открытого окна)' end
+    F.tip(tip)
+  end
+end
+
+-- The buttons under the character, the same messages as the game's.
+F.IV_MENU = {
+  {{'Меню', 'inventory.openMenu', 'ICON_FA_TH_LARGE'}},
+  {{'Дом', 'inventory.openHouse', 'ICON_FA_HOME'}, {'Транспорт', 'inventory.openVehicle', 'ICON_FA_CAR'}},
+  {{'Бизнес', 'inventory.openBusiness', 'ICON_FA_BUILDING'}, {'Семья', 'inventory.openFamily', 'ICON_FA_USERS'}},
+  {{'Донат', 'inventory.openDonat', 'ICON_FA_SHOPPING_BAG'}, {'Квесты', 'inventory.openQuests', 'ICON_FA_BULLSEYE'}},
+  {{'Достижения', 'inventory.openAchivments', 'ICON_FA_GIFT'}, {'Настройки', 'inventory.openSettings', 'ICON_FA_COG'}},
+  {{'Помощь', 'inventory.openHelp'}, {'Хранилище', 'inventory.openStorage'}, {'GPS', 'inventory.openGPS'}},
+}
+-- Captions of empty cells, as the game's: the accessories of a page and the weapons.
+F.IV_ACC_PH = {[6] = 'Левый', [7] = 'Правый', [8] = 'Нож'}
+F.IV_GEAR_PH = {[0] = 'Desert Eagle', [1] = 'Micro UZI', [2] = 'AK-47', [3] = 'M4', [4] = 'Sawed Off', [5] = 'Tec-9'}
+
+function F.iv_used(b)
+  local n = 0
+  for _ in pairs(b and b.slots or {}) do n = n + 1 end
+  return n
+end
+
+-- How many cells a block shows: the bag and warehouses at least five rows, the rest as many as
+-- the server named.
+function F.iv_cells(b, big, cols)
+  cols = cols or F.iv_cols()
+  local n = math.max((b and b.max or -1) + 1, b and b.total or 0)
+  if big then n = math.max(n, cols * 5) end
+  n = math.max(n, 1)
+  return math.ceil(n / cols) * cols
+end
+
+function F.iv_query()
+  return F.lower_fast(F.trim(F.buf_get(ui.iv_q)))
+end
+
+-- Cells drawn in place: slots first .. of block t, cols by rows. ph: captions of empty cells by
+-- their place in the grid. Returns the cell under the mouse.
+function F.iv_grid(t, x, y, cols, rows, first, cell, gap, hov_ok, ph)
+  local b = F.iv_block(t)
+  local m = imgui.GetMousePos()
+  local q = F.iv_query()
+  local hit
+  for row = 0, rows - 1 do
+    for c = 0, cols - 1 do
+      local i = row * cols + c
+      local sl = first + i
+      -- Whole pixels: the edges of the cells stay sharp.
+      local cx, cy = math.floor(x + c * (cell + gap)), math.floor(y + row * (cell + gap))
+      local hv = hov_ok and m.x >= cx and m.x < cx + cell and m.y >= cy and m.y < cy + cell
+      local r = b and b.slots[sl]
+      F.iv_cell(t, sl, r, b and b.known[sl], cx, cy, cell, hv, q)
+      if not r and ph and ph[i] then
+        local cap = F.fit_text(font_main, ph[i], (cell - F.s(8)) / 0.875)
+        F.text_at(font_main, 14, cx + (cell - F.text_w(font_main, cap) * 0.875) / 2, cy + (cell - F.s(14)) / 2, F.col('text', 70), cap)
+      end
+      if hv then hit = {type = t, slot = sl, r = r} end
+    end
+  end
+  return hit
+end
+
+-- Dots of the pages, the current one bright. Returns a page clicked.
+function F.iv_dots(id, x, y, w, pages, cur)
+  if pages <= 1 then return nil end
+  local step = F.s(18)
+  local sx = x + (w - (pages - 1) * step) / 2
+  local dl = imgui.GetWindowDrawList()
+  local pick
+  for i = 1, pages do
+    local cx = sx + (i - 1) * step
+    local clicked, hovered = F.hotspot(id .. i, cx - F.s(8), y - F.s(8), F.s(16), F.s(16))
+    dl:AddCircleFilled(imgui.ImVec2(cx, y), F.s(5), i == cur and F.col('text', 230) or F.col('text', hovered and 150 or 70), 16)
+    if clicked then pick = i end
+  end
+  return pick
+end
+
+-- The head of a panel, as the game's: a coloured strip with the title in the middle. Its top
+-- corners are the panel's, its bottom edge straight.
+function F.iv_head(x, y, w, h, title, icon)
+  local rad = F._iv_r or 16
+  F.round_rect(x, y, w, h, F.col('accent', 235), nil, rad)
+  if rad > 0 then F.round_rect(x, y + h - rad, w, rad, F.col('accent', 235), nil, 0) end
+  local g = icon and F.faico(icon) or ''
+  if g ~= '' then F.text_at(font_main, 16, x + F.s(16), y + (h - F.s(16)) / 2 - 1, F.col('ink', 210), g) end
+  title = F.fit_text(font_bold, title, w - F.s(110))
+  local tw = F.text_w(font_bold, title)
+  F.text_at(font_bold, 18, math.floor(x + (w - tw) / 2), y + (h - F.s(18)) / 2 - 1, F.col('ink'), title)
+end
+
+function F.iv_plate(x, y, w, h)
+  local rad = F._iv_r or 16
+  F.round_rect(x + 3, y + 6, w, h, F.col('side', math.floor((F._iv_a or 248) * 0.6)), nil, rad)
+  F.round_rect(x, y, w, h, F.col('bg', F._iv_a or 248), F.col('text', 34), rad)
+end
+
+-- A bar of the car: fuel or state.
+function F.iv_bar(x, y, w, label, v, col)
+  local h = F.s(8)
+  F.text_at(font_main, 14, x, y, F.col('text', 150), label)
+  local bx = x + F.s(80)
+  local bw = w - F.s(80) - F.s(40)
+  F.round_rect(bx, y + F.s(4), bw, h, F.col('text', 22), nil, 4)
+  local share = math.max(0, math.min(1, (tonumber(v) or 0) / 100))
+  if share > 0 then F.round_rect(bx, y + F.s(4), math.max(h, bw * share), h, col, nil, 4) end
+  F.text_at(font_bold, 16, bx + bw + F.s(10), y - 1, F.col('text'), v and tostring(v) or '—')
+end
+
+-- The column of tabs at the left: the character, a stall, the car, warehouses.
+function F.iv_side_tabs(x, y, w)
+  local iv = F.iv
+  local sz = math.floor(F.s(40))
+  local rad = math.min(10, F._iv_r or 10)
+  local side_key = iv.side == 'wh' and iv.wh and ('wh' .. iv.wh) or iv.side or 'char'
+  local ty = y
+  for i, tb in ipairs(F.iv_tabs()) do
+    local active = side_key == tb[1]
+    local clicked, hovered = F.hotspot('##ivst' .. i, x, ty, sz, sz)
+    F.round_rect(x, ty, sz, sz, active and F.col('accent', 235) or F.col('bg', F._iv_a or 240), F.col('text', hovered and 60 or 30), rad)
+    local icon = tb[1] == 'char' and 'ICON_FA_USER' or tb[1] == 'car' and 'ICON_FA_CAR' or tb[1] == 'shop' and 'ICON_FA_STORE'
+      or tb[1] == 'guard' and 'ICON_FA_USER_SHIELD'
+      or (tb[3] and F.IV_WH_ICON[tb[3]]) or 'ICON_FA_BOX'
+    local g = F.faico(icon)
+    if g == '' then g = F.utf_first(tb[2]) end
+    F.text_at(font_main, 16, x + (sz - F.text_w(font_main, g)) / 2, ty + (sz - F.s(16)) / 2 - 1, active and F.col('ink') or F.col('text', hovered and 255 or 170), g)
+    if hovered then F.tip(tb[2]) end
+    if clicked and not active then
+      if tb[3] then F.iv_tab(tb[3]) elseif tb[1] == 'shop' then iv.side = 'shop' else F.iv_side(tb[1]) end
+    end
+    ty = ty + sz + F.s(8)
+  end
+end
+
+-- One list in a scrolling area, smooth like the menu's. Returns the cell under the mouse.
+function F.iv_scroll(id, t, x, y, cols, rows_vis, cell, gap, base_ok)
+  local b = F.iv.blocks[t]
+  local n = F.iv_cells(b, true, cols)
+  local rows = math.ceil(n / cols)
+  local w = cols * cell + (cols - 1) * gap + math.floor(F.s(10))
+  local h = rows_vis * cell + (rows_vis - 1) * gap
+  imgui.SetCursorScreenPos(imgui.ImVec2(x, y))
+  imgui.BeginChild(id, imgui.ImVec2(w, h), false, F.smooth_flag())
+  F.smooth('iv' .. id)
+  local base = imgui.GetCursorScreenPos()
+  imgui.Dummy(imgui.ImVec2(1, math.max(1, rows * (cell + gap) - gap)))
+  local sy = imgui.GetScrollY()
+  local ok = base_ok and imgui.IsWindowHovered()
+  local hit
+  for row = math.max(0, math.floor(sy / (cell + gap))), math.min(rows - 1, math.floor((sy + h) / (cell + gap))) do
+    hit = F.iv_grid(t, base.x, base.y + row * (cell + gap), cols, 1, row * cols, cell, gap, ok) or hit
+  end
+  imgui.EndChild()
+  return hit
+end
+
+-- A block in its place: by pages with dots, or one list with smooth scrolling, as set.
+function F.iv_area(id, t, x, y, cols, rows, cell, gap, base_ok, key)
+  local iv = F.iv
+  if cfg.inv_scroll == 1 then return F.iv_scroll(id, t, x, y, cols, rows, cell, gap, base_ok) end
+  local per = cols * rows
+  local pages = math.max(1, math.ceil(F.iv_cells(iv.blocks[t], true, cols) / per))
+  iv[key] = math.max(1, math.min(pages, iv[key] or 1))
+  local gw = cols * cell + (cols - 1) * gap
+  local gh = rows * cell + (rows - 1) * gap
+  local hit = F.iv_grid(t, x, y, cols, rows, (iv[key] - 1) * per, cell, gap, base_ok and imgui.IsWindowHovered())
+  F.iv_wheel(x, y, gw, gh, key, pages)
+  local pk = F.iv_dots(id .. 'd', x, y + gh + F.s(18), gw, pages, iv[key])
+  if pk then iv[key] = pk end
+  return hit
+end
+
+-- The left panel: the character, a stall, the car or a warehouse. Returns the cell under the mouse.
+function F.iv_left(x, y, w, h, cell, gap, pad, hh, hov_ok, base_ok)
+  local iv = F.iv
+  local gx, gy = x + pad, y + hh + pad
+  local iw = w - pad * 2
+  local sbar = cfg.inv_scroll == 1 and math.floor(F.s(10)) or 0
+  if base_ok == nil then base_ok = hov_ok end
+  if iv.side == 'shop' then
+    local name = iv.shop_name and iv.shop_name ~= '' and iv.shop_name or nil
+    F.iv_head(x, y, w, hh, name and ('ТОРГОВАЯ ЛАВКА – ' .. name:upper()) or 'ТОРГОВАЯ ЛАВКА', 'ICON_FA_STORE')
+    local tab = iv.stab or 13
+    local bw = (iw - F.s(8)) / 2
+    local function sbtn(i, label, t2)
+      imgui.SetCursorScreenPos(imgui.ImVec2(gx + (i - 1) * (bw + F.s(8)), gy))
+      if F.button(label .. '##ivsb' .. i, bw / F.s(1), 38, tab == t2 and 'primary' or nil) and tab ~= t2 then
+        iv.stab, iv.spage = t2, 1
+        F.iv_send('updateCategory', string.format('{"category":%d}', t2 == 28 and 1 or 0))
+      end
+    end
+    sbtn(1, 'Купить', 13)
+    sbtn(2, 'Продать', 28)
+    local top = gy + math.floor(F.s(38)) + math.floor(F.s(12))
+    local scols = 5
+    local scell = math.floor((iw - sbar - (scols - 1) * gap) / scols)
+    local rows = math.max(1, math.floor((y + h - pad - F.s(34) - top + gap) / (scell + gap)))
+    if not iv.blocks[tab] then
+      F.text_at(font_main, 16, gx, top + F.s(8), F.col('text', 130), F.fit_text(font_main, 'Товары ещё не пришли', iw))
+      return nil
+    end
+    return F.iv_area('##ivshop' .. tab, tab, gx, top, scols, rows, scell, gap, base_ok, 'spage')
+  end
+  if iv.side == 'wh' and iv.wh then
+    F.iv_head(x, y, w, hh, F.IV_WH_UP[iv.wh] or 'ХРАНИЛИЩЕ', F.IV_WH_ICON[iv.wh])
+    local b = iv.blocks[iv.wh]
+    local line = b and ('Занято ' .. F.iv_used(b) .. (b.total and b.total > 0 and (' из ' .. b.total) or '')) or 'Список ещё не пришёл'
+    if iv.wh == 8 then
+      local c = iv.car
+      if c and c.name then line = c.name .. '  ·  ' .. line end
+    end
+    F.text_at(font_main, 16, gx, gy, F.col('text', 170), F.fit_text(font_main, line, iw))
+    local top = gy + math.floor(F.s(28))
+    -- Money kept in the warehouse, with the game's buttons.
+    if iv.wh_money then
+      local bw2 = math.floor(F.s(96))
+      F.text_at(font_bold, 16, gx, top + F.s(6), F.col('text'), '$' .. F.num_text(iv.wh_money))
+      imgui.SetCursorScreenPos(imgui.ImVec2(gx + iw - bw2 * 2 - F.s(8), top))
+      if F.button('Положить##ivwhput', bw2 / F.s(1), 30) then F.iv_send('inventory.warehouse.putmoney') end
+      imgui.SetCursorScreenPos(imgui.ImVec2(gx + iw - bw2, top))
+      if F.button('Снять##ivwhtake', bw2 / F.s(1), 30) then F.iv_send('inventory.warehouse.takemoney') end
+      top = top + math.floor(F.s(40))
+    end
+    local cols = 5
+    local wcell = math.floor((iw - sbar - (cols - 1) * gap) / cols)
+    local rows = math.max(1, math.floor((y + h - pad - F.s(34) - top + gap) / (wcell + gap)))
+    return F.iv_area('##ivwh' .. iv.wh, iv.wh, gx, top, cols, rows, wcell, gap, base_ok, 'wpage')
+  end
+  if iv.side == 'guard' then
+    return F.iv_guard_view(x, y, w, h, cell, gap, pad, hh, hov_ok)
+  end
+  if iv.side == 'car' then
+    F.iv_head(x, y, w, hh, 'ТРАНСПОРТ', 'ICON_FA_CAR')
+    local hit
+    -- Frame, turbo and the number at the top, the name and the bars next to them.
+    for i, t in ipairs({18, 19, 36}) do
+      hit = F.iv_grid(t, gx + (i - 1) * (cell + gap), gy, 1, 1, 0, cell, gap, hov_ok) or hit
+    end
+    local c = iv.car
+    local ix = gx + 3 * (cell + gap) + F.s(6)
+    local iw2 = x + w - pad - ix
+    F.text_at(font_bold, 18, ix, gy + F.s(4), F.col('text'), F.fit_text(font_bold, c and c.name or 'Машина', iw2))
+    if c and c.name then
+      imgui.SetCursorScreenPos(imgui.ImVec2(ix, gy + F.s(30)))
+      if F.button('Информация##ivcarinfo', math.min(iw2, F.s(200)) / F.s(1), 30) then F.iv_send('inventory.carInfo') end
+    else
+      F.text_at(font_main, 14, ix, gy + F.s(28), F.col('text', 120), F.fit_text(font_main, 'Сядь в машину или встань рядом', iw2 / 0.875))
+    end
+    local by = gy + cell + F.s(14)
+    F.iv_bar(gx, by, iw / 2 - F.s(8), 'Топливо', c and c.oil, F.col('accent'))
+    F.iv_bar(gx + iw / 2 + F.s(8), by, iw / 2 - F.s(8), 'Состояние', c and c.health, F.col('accent_hi'))
+    if c and c.name then
+      local okc, hv = F.hotspot('##ivoil', gx, by - 2, iw / 2 - F.s(8), F.s(22))
+      if hv then F.tip('Нажми: топливо подробно') end
+      if okc then F.iv_send('inventory.oilInfo') end
+      okc, hv = F.hotspot('##iveng', gx + iw / 2 + F.s(8), by - 2, iw / 2 - F.s(8), F.s(22))
+      if hv then F.tip('Нажми: двигатель подробно') end
+      if okc then F.iv_send('inventory.engineInfo') end
+    end
+    local ty = by + F.s(30)
+    for _, sec in ipairs({{23, 'ТЕХНИЧЕСКИЕ МОДИФИКАЦИИ'}, {12, 'ВИЗУАЛЬНЫЕ МОДИФИКАЦИИ'}}) do
+      F.text_at(font_bold, 16, gx, ty, F.col('text'), sec[2])
+      ty = ty + F.s(26)
+      local b = iv.blocks[sec[1]]
+      local n = math.max(10, (b and b.max or -1) + 1)
+      local rows = math.ceil(n / 5)
+      local room = math.floor((y + h - pad - ty + gap) / (cell + gap))
+      rows = math.max(0, math.min(rows, room))
+      if rows > 0 then
+        hit = F.iv_grid(sec[1], gx, ty, 5, rows, 0, cell, gap, hov_ok) or hit
+        ty = ty + rows * (cell + gap) + F.s(6)
+      end
+    end
+    return hit
+  end
+  -- The character.
+  F.iv_head(x, y, w, hh, 'ПЕРСОНАЖ', 'ICON_FA_USER')
+  local hit
+  local gh3 = 3 * cell + 2 * gap
+  local pages = math.max(1, iv.acc_total or 0, math.ceil(((iv.blocks[2] and iv.blocks[2].max or -1) + 1) / 9))
+  iv.apage = math.max(1, math.min(pages, iv.apage or 1))
+  local page = iv.apage
+  if iv.ctab == 'gear' then
+    -- Weapons: as many cells as the server keeps, six at least.
+    local gb = iv.blocks[10]
+    local n = math.max(6, (gb and gb.max or -1) + 1)
+    hit = F.iv_grid(10, gx, gy, 3, math.ceil(n / 3), 0, cell, gap, hov_ok, F.IV_GEAR_PH)
+  else
+    hit = F.iv_grid(2, gx, gy, 3, 3, (page - 1) * 9, cell, gap, hov_ok, F.IV_ACC_PH)
+    F.iv_wheel(gx, gy, 3 * (cell + gap), gh3, 'apage', pages, true)
+    local pk = F.iv_dots('##ivad', gx, gy + gh3 + F.s(14), 3 * cell + 2 * gap, pages, page)
+    if pk and pk ~= page then F.iv_acc_page(pk) end
+  end
+  -- Right of the grid: the picture of the skin worn on this page, and under it the cells of the
+  -- page as in the game: the skin, then the two improvements.
+  local sx = gx + 3 * cell + 2 * gap + math.floor(F.s(14))
+  local sw = x + w - pad - sx
+  local csz = math.floor(math.min(cell, (sw - 2 * gap) / 3))
+  local ms = iv.blocks[20] and iv.blocks[20].slots[page - 1]
+  local skin_t = ms and 20 or 22
+  local skin = ms or (iv.blocks[22] and iv.blocks[22].slots[page - 1])
+  local ph = gh3 - csz - gap
+  if cfg.inv_skin ~= 0 and ph > F.s(40) then
+    F.round_rect(sx, gy, sw, ph, F.col('side', 140), F.col('text', 18), F._iv_r or 14)
+    if skin then
+      local psz = math.min(sw, ph) - F.s(12)
+      F.lib_pic(F.item_pic_of(skin.item), sx + (sw - psz) / 2, gy + (ph - psz) / 2, psz)
+      local nm = F.fit_text(font_main, F.item_label(skin.item), (sw - F.s(16)) / 0.875)
+      F.round_rect(sx + F.s(6), gy + ph - F.s(24), sw - F.s(12), F.s(19), F.col('bg', 190), nil, 6)
+      F.text_at(font_main, 14, sx + (sw - F.text_w(font_main, nm) * 0.875) / 2, gy + ph - F.s(22), F.col('text', 220), nm)
+    else
+      local cap = 'Скин не надет'
+      F.text_at(font_main, 15, sx + (sw - F.text_w(font_main, cap) * 0.94) / 2, gy + (ph - F.s(15)) / 2, F.col('text', 80), cap)
+    end
+  end
+  local ry = gy + gh3 - csz
+  local ib = iv.blocks[17]
+  local per = math.max(1, math.ceil(math.max(2 * pages, (ib and ib.max or -1) + 1) / pages))
+  hit = F.iv_grid(skin_t, sx, ry, 1, 1, page - 1, csz, gap, hov_ok, {[0] = 'Скин'}) or hit
+  hit = F.iv_grid(17, sx + csz + gap, ry, 1, 1, page * per - 1, csz, gap, hov_ok, {[0] = 'Улучш.'}) or hit
+  hit = F.iv_grid(17, sx + 2 * (csz + gap), ry, 1, 1, (page - 1) * per, csz, gap, hov_ok, {[0] = 'Улучш.'}) or hit
+  if iv.ctab ~= 'gear' then
+    local wait = F.iv_acc_wait()
+    if wait > 0 and pages > 1 then
+      F.text_at(font_main, 14, sx, gy + gh3 + F.s(8), F.col('text', 130), string.format('смена через %d с', math.ceil(wait)))
+    end
+  end
+  -- Accessories, documents, gear.
+  local ty = gy + gh3 + F.s(30)
+  local bw = (iw - 2 * F.s(8)) / 3
+  local function tab(i, label, on, fn)
+    imgui.SetCursorScreenPos(imgui.ImVec2(gx + (i - 1) * (bw + F.s(8)), ty))
+    if F.button(label .. '##ivct' .. i, bw / F.s(1), 34, on and 'primary' or nil) then fn() end
+  end
+  tab(1, 'Аксессуары', iv.ctab ~= 'gear', function() iv.ctab = 'acc' end)
+  tab(2, 'Документы', false, function() F.iv_send('inventory.openDocuments') end)
+  tab(3, 'Снаряжение', iv.ctab == 'gear', function() iv.ctab = 'gear' end)
+  -- The game's menu buttons.
+  if cfg.inv_menu ~= 0 then
+    local my = ty + F.s(34) + F.s(14)
+    local mh = math.floor(F.s(34))
+    for _, row in ipairs(F.IV_MENU) do
+      local n = #row
+      local cw = (iw - (n - 1) * F.s(8)) / n
+      for ci, btn in ipairs(row) do
+        imgui.SetCursorScreenPos(imgui.ImVec2(gx + (ci - 1) * (cw + F.s(8)), my))
+        local label = btn[3] and F.icon_label(btn[3], btn[1]) or btn[1]
+        if F.button(label .. '##ivm' .. btn[2], cw / F.s(1), 34) then F.iv_send(btn[2]) end
+      end
+      my = my + mh + F.s(6)
+    end
+  end
+  return hit
+end
+
+-- The game's message for a page of the accessories.
+F.IV_ACC_CD = 6
+
+-- Seconds left until the look may be changed again.
+function F.iv_acc_wait()
+  return math.max(0, F.IV_ACC_CD - (os.clock() - (F.iv.acc_at or -100)))
+end
+
+function F.iv_acc_page(p)
+  local left = F.iv_acc_wait()
+  if left > 0 then
+    if os.clock() - (F._acc_said or 0) > 1 then
+      F._acc_said = os.clock()
+      F.notify(string.format('Образ можно сменить через %d с', math.ceil(left)), true)
+    end
+    return false
+  end
+  F.iv.apage, F.iv.acc_at = p, os.clock()
+  F.iv_send('inventory.setAccessoryPage', tostring(p))
+  return true
+end
+
+-- The wheel over a grid turns its pages.
+function F.iv_wheel(x, y, w, h, key, pages, acc)
+  local wheel = tonumber(imgui.GetIO().MouseWheel) or 0
+  if wheel == 0 or pages <= 1 or F.iv.drag then return end
+  local m = imgui.GetMousePos()
+  if m.x < x or m.x >= x + w or m.y < y or m.y >= y + h then return end
+  local iv = F.iv
+  local p = math.max(1, math.min(pages, (iv[key] or 1) + (wheel < 0 and 1 or -1)))
+  if p == iv[key] then return end
+  if acc then F.iv_acc_page(p) else iv[key] = p end
+end
+
+function F.iv_input(hover)
+  local iv = F.iv
+  if iv.menu then return end
+  local io = imgui.GetIO()
+  local m = imgui.GetMousePos()
+  -- An unavailable item takes no actions, as in the game.
+  if hover and hover.r and hover.r.na and (imgui.IsMouseClicked(0) or imgui.IsMouseClicked(1)) and not iv.sel then
+    return
+  end
+  if imgui.IsMouseClicked(1) and hover and hover.r then
+    F.iv_right(hover.type, hover.slot, m.x, m.y)
+    return
+  end
+  if imgui.IsMouseClicked(1) and not hover then
+    local inside = false
+    for _, rc in ipairs(iv.rects or {}) do
+      if m.x >= rc[1] and m.x < rc[1] + rc[3] and m.y >= rc[2] and m.y < rc[2] + rc[4] then inside = true end
+    end
+    if not inside then
+      iv.cam, iv.sel, iv.press, iv.drag = true, nil, nil, nil
+      return
+    end
+  end
+  -- An item is picked: a click on another cell, empty or not, moves it there (the server swaps
+  -- the two when the cell is taken). A click on the picked one, or past the cells, lets it go.
+  if imgui.IsMouseClicked(0) and iv.sel and not io.KeyCtrl then
+    local sel = iv.sel
+    iv.sel = nil
+    if hover and not (hover.type == sel.type and hover.slot == sel.slot) and not F.IV_SHOP[hover.type] then
+      F.iv_drop(sel, hover)
+    end
+    iv.press, iv.drag = nil, nil
+    return
+  end
+  if imgui.IsMouseClicked(0) and hover and hover.r then
+    if io.KeyCtrl and iv.side ~= 'shop' then F.iv_click(hover.type, hover.slot, true, hover.r)
+    else iv.press = {type = hover.type, slot = hover.slot, r = hover.r, x = m.x, y = m.y} end
+  end
+  -- At a stall nothing is dragged, as in the game.
+  if iv.press and not iv.drag and iv.side ~= 'shop' and not iv.pick_mode and imgui.IsMouseDown(0)
+    and (math.abs(m.x - iv.press.x) > 5 or math.abs(m.y - iv.press.y) > 5) then
+    iv.drag = iv.press
+    iv.drag.amount = math.max(1, math.floor(tonumber(iv.press.r and iv.press.r.amount) or 1))
+  end
+  -- As in the game: the wheel while dragging a stack takes one more or one fewer.
+  if iv.drag and iv.drag.r then
+    local wheel = tonumber(io.MouseWheel) or 0
+    local full = math.max(1, math.floor(tonumber(iv.drag.r.amount) or 1))
+    if wheel ~= 0 and full > 1 then
+      iv.drag.amount = math.max(1, math.min(full, (iv.drag.amount or full) + (wheel > 0 and 1 or -1)))
+    end
+  end
+  if imgui.IsMouseReleased(0) then
+    if iv.drag then
+      local gr = iv.guard_rect
+      if hover then F.iv_drop(iv.drag, hover, iv.drag.amount)
+      elseif gr and iv.side == 'guard' and m.x >= gr[1] and m.x < gr[1] + gr[3] and m.y >= gr[2] and m.y < gr[2] + gr[4] then
+        F.iv_feed(iv.drag, iv.drag.amount)
+      end
+    elseif iv.press then
+      F.iv_click(iv.press.type, iv.press.slot, false, iv.press.r)
+    end
+    iv.press, iv.drag = nil, nil
+  end
+end
+
+-- Drawn over everything: the menu of actions and the picture that follows the mouse.
+function F.iv_overlay()
+  local iv = F.iv
+  local fg = (imgui.GetForegroundDrawList and imgui.GetForegroundDrawList()) or imgui.GetWindowDrawList()
+  local k = cfg.scale or 1
+  local function txt(font, size, x, y, col, str)
+    if font then fg:AddTextFontPtr(font, size * k, imgui.ImVec2(x, y), col, str, nil, 0, nil)
+    else fg:AddText(imgui.ImVec2(x, y), col, str) end
+  end
+  local m = imgui.GetMousePos()
+  if iv.drag and iv.drag.r then
+    local sz = F.s(48)
+    local tex = F.lib_tex(F.item_pic_of(iv.drag.r.item))
+    if tex then fg:AddImage(tex, imgui.ImVec2(m.x - sz / 2, m.y - sz / 2), imgui.ImVec2(m.x + sz / 2, m.y + sz / 2)) end
+    local n = iv.drag.amount
+    if n and n > 1 then
+      local str = F.num_text(n)
+      local tw = F.text_w(font_main, str) * 0.875 + F.s(10)
+      F.round_rect(m.x + sz / 2 - tw, m.y + sz / 2 - F.s(16), tw, F.s(18), F.col('accent', 235), nil, 6, fg)
+      txt(font_main, 14, m.x + sz / 2 - tw + F.s(5), m.y + sz / 2 - F.s(15), F.col('ink'), str)
+    end
+  end
+  local mm = iv.menu
+  if not mm then return end
+  -- What the server allows, the dangerous last, apart.
+  local list, bad = {}, {}
+  for _, a in ipairs(F.IV_ACTIONS) do
+    if F.band(mm.bits, a[1]) ~= 0 then
+      if F.IV_DANGER[a[1]] then bad[#bad + 1] = a else list[#list + 1] = a end
+    end
+  end
+  local nrow = #list + #bad
+  if nrow == 0 then
+    iv.menu = nil
+    return
+  end
+  local io = imgui.GetIO()
+  local sw, sh = io.DisplaySize.x, io.DisplaySize.y
+  if sw < 100 then sw = 1366 end
+  if sh < 100 then sh = 768 end
+  local b = F.iv_block(mm.type)
+  local r = b and b.slots[mm.slot]
+  local head = r and F.item_label(r.item) or 'Действия'
+  -- Sizes of the menu itself, not of the window: it stays small whatever the inventory's size.
+  local u = F._iv_scale0 or cfg.scale or 1
+  local function px(v) return math.floor(v * u + 0.5) end
+  local fs = 14
+  local rh, pad, hh, ic = px(26), px(5), px(30), px(22)
+  local sepw = #bad > 0 and #list > 0 and px(9) or 0
+  local tw = 0
+  for _, a in ipairs(list) do tw = math.max(tw, F.text_w(font_main, a[2])) end
+  for _, a in ipairs(bad) do tw = math.max(tw, F.text_w(font_main, a[2])) end
+  tw = tw * (fs / 16) * (u / (cfg.scale or 1))
+  local w = math.floor(math.max(px(150), math.min(px(230), tw + ic + px(30))))
+  local h = pad + hh + px(4) + nrow * rh + sepw + pad
+  -- At the cursor, turned to fit the screen.
+  local x0, y0 = (mm.x or sw / 2) + px(6), (mm.y or sh / 2) + px(4)
+  if x0 + w > sw - 4 then x0 = (mm.x or sw / 2) - w - px(6) end
+  if y0 + h > sh - 4 then y0 = sh - h - 4 end
+  local x, y = math.floor(math.max(4, x0)), math.floor(math.max(4, y0))
+  local rad = px(8)
+  F.round_rect(x + 1, y + 3, w, h, F.rgba(0, 0, 0, 70), nil, rad + 2, fg)
+  F.round_rect(x, y, w, h, F.col('panel', 250), F.col('text', 38), rad, fg, 1)
+  -- The head: the item's picture and name, small, and a line under them.
+  local hx = x + pad + px(4)
+  local hy = y + pad
+  local isz = px(20)
+  local tex = r and F.lib_tex(F.item_pic_of(r.item))
+  if tex then
+    fg:AddImage(tex, imgui.ImVec2(hx, hy + (hh - isz) / 2), imgui.ImVec2(hx + isz, hy + (hh - isz) / 2 + isz))
+    hx = hx + isz + px(7)
+  end
+  local hk = (u / (cfg.scale or 1))
+  txt(font_bold, 14 * hk, hx, hy + (hh - px(14)) / 2 - 1, F.col('text', 235),
+    F.fit_text(font_bold, head, (x + w - pad - px(4) - hx) / (0.78 * hk)))
+  fg:AddLine(imgui.ImVec2(x + pad, y + pad + hh + px(1)), imgui.ImVec2(x + w - pad, y + pad + hh + px(1)), F.col('text', 26), 1)
+  local click = imgui.IsMouseClicked(0)
+  local inside = m.x >= x and m.x < x + w and m.y >= y and m.y < y + h
+  local ry = y + pad + hh + px(4)
+  local function row(a, danger)
+    local hv = m.x >= x + pad and m.x < x + w - pad and m.y >= ry and m.y < ry + rh
+    if hv then
+      F.round_rect(x + pad, ry + 1, w - pad * 2, rh - 2, danger and F.col('bad', 34) or F.col('accent', 38), nil, px(5), fg)
+      F.round_rect(x + pad, ry + px(5), px(2), rh - px(10), danger and F.col('bad') or F.col('accent'), nil, 1, fg)
+    end
+    local col = danger and F.col('bad', hv and 255 or 215) or F.col('text', hv and 255 or 210)
+    local g = F.faico(F.IV_ACT_ICON[a[1]] or 'ICON_FA_CIRCLE')
+    local tx = x + pad + px(10)
+    if g ~= '' then
+      txt(font_main, 13 * hk, tx, ry + (rh - px(13)) / 2, danger and col or F.col('accent_hi', hv and 255 or 190), g)
+    end
+    txt(font_main, fs * hk, tx + ic, ry + (rh - px(fs)) / 2 - 1, col, a[2])
+    ry = ry + rh
+    return hv and click
+  end
+  for _, a in ipairs(list) do
+    if row(a, false) then
+      F.iv_action(a[1])
+      return
+    end
+  end
+  if #bad > 0 then
+    if #list > 0 then
+      fg:AddLine(imgui.ImVec2(x + pad, ry + sepw / 2), imgui.ImVec2(x + w - pad, ry + sepw / 2), F.col('text', 22), 1)
+      ry = ry + sepw
+    end
+    for _, a in ipairs(bad) do
+      if row(a, true) then
+        F.iv_action(a[1])
+        return
+      end
+    end
+  end
+  if (click or imgui.IsMouseClicked(1)) and not inside then iv.menu = nil end
+end
+
+-- Is the left block (the character, a stall, the car, a warehouse) on screen: as switched, and
+-- always when it shows something the bag cannot do without.
+-- The server took a tab away (the car was sold, the trunk is far): the character is shown.
+function F.iv_side_fix()
+  local iv = F.iv
+  if iv.side == 'car' and F.band(iv.buttons or 0, 2) == 0 then iv.side = 'char' end
+  if iv.side == 'guard' and F.band(iv.buttons or 0, 4) == 0 then iv.side = 'char' end
+  if iv.side == 'wh' and (not iv.wh or not iv.blocks[iv.wh]) and os.clock() - (iv.wh_asked or 0) > 2 then
+    iv.side, iv.wh = 'char', nil
+  end
+end
+
+function F.iv_left_on()
+  return cfg.inv_left ~= 0 or F.iv.side == 'wh' or F.iv.side == 'shop' or F.iv.side == 'car' or F.iv.side == 'guard'
+end
+
+-- «Обзор» of another player, as the game's: what he wears (block 37, three in a row), his
+-- weapons and their improvements (38), his skin (41 when changed, else 40) and improvements (39),
+-- the picture of the skin at the right. It is only looked at: nothing is moved or asked.
+function F.iv_view(x, y, w, cell, gap, pad, hh, hov_ok)
+  local iv = F.iv
+  local function count(t, min)
+    local b = iv.blocks[t]
+    return math.max(min, (b and b.max or -1) + 1)
+  end
+  local ra = math.ceil(count(37, 9) / 3)
+  local rg = math.ceil(count(38, 6) / 3)
+  local ni = math.min(5, count(39, 2))
+  local sp = math.floor(F.s(14))
+  local h = hh + pad + ra * (cell + gap) + sp + rg * (cell + gap) + sp + cell + sp + math.floor(F.s(36)) + pad
+  F.iv_plate(x, y, w, h)
+  F.iv_head(x, y, w, hh, 'ОБЗОР', 'ICON_FA_USER')
+  local close = F.ghost_icon('##ivvx', x + w - pad - F.s(30), y + (hh - F.s(30)) / 2, 'ICON_FA_TIMES', 'Закрыть (Esc)')
+  local gx, gy = x + pad, y + hh + pad
+  F.iv_grid(37, gx, gy, 3, ra, 0, cell, gap, hov_ok, F.IV_ACC_PH)
+  local y2 = gy + ra * (cell + gap) + sp
+  F.iv_grid(38, gx, y2, 3, rg, 0, cell, gap, hov_ok)
+  local y3 = y2 + rg * (cell + gap) + sp
+  local ms = iv.blocks[41] and iv.blocks[41].slots[0]
+  local skin = ms or (iv.blocks[40] and iv.blocks[40].slots[0])
+  F.iv_grid(ms and 41 or 40, gx, y3, 1, 1, 0, cell, gap, hov_ok, {[0] = 'Скин'})
+  F.iv_grid(39, gx + cell + gap, y3, ni, 1, 0, cell, gap, hov_ok)
+  -- The picture of the skin next to the grids.
+  local sx = gx + 3 * cell + 2 * gap + sp
+  local sw = x + w - pad - sx
+  local ph = y3 - gy - sp
+  if sw > F.s(40) and ph > F.s(40) then
+    F.round_rect(sx, gy, sw, ph, F.col('side', 140), F.col('text', 18), F._iv_r or 14)
+    if skin then
+      local psz = math.min(sw, ph) - F.s(12)
+      F.lib_pic(F.item_pic_of(skin.item), sx + (sw - psz) / 2, gy + (ph - psz) / 2, psz)
+      local nm = F.fit_text(font_main, F.item_label(skin.item), (sw - F.s(16)) / 0.875)
+      F.round_rect(sx + F.s(6), gy + ph - F.s(24), sw - F.s(12), F.s(19), F.col('bg', 190), nil, 6)
+      F.text_at(font_main, 14, sx + (sw - F.text_w(font_main, nm) * 0.875) / 2, gy + ph - F.s(22), F.col('text', 220), nm)
+    end
+  end
+  imgui.SetCursorScreenPos(imgui.ImVec2(gx, y3 + cell + sp))
+  if F.button('Закрыть##ivvclose', (w - 2 * pad) / F.s(1), 36) then close = true end
+  iv.rects = {{x, y, w, h}}
+  return close
+end
+
+function F.draw_iv()
+  local iv = F.iv
+  if not iv.open then return end
+  local io = imgui.GetIO()
+  local sw, sh = io.DisplaySize.x, io.DisplaySize.y
+  if sw < 100 then sw = 1366 end
+  if sh < 100 then sh = 768 end
+  -- The window has its own size on top of the menu's; the menu's is kept aside in case
+  -- drawing breaks halfway, and the main loop puts it back.
+  local menu_scale = F._iv_scale0 or cfg.scale or 1
+  F._iv_scale0 = menu_scale
+  cfg.scale = menu_scale * math.max(0.7, math.min(1.5, tonumber(cfg.inv_scale) or 1))
+  F.iv_pal_push()
+  local cols, rows = F.iv_cols(), F.iv_rows()
+  local scroll = cfg.inv_scroll == 1
+  local cell = math.floor(F.s(math.max(44, math.min(84, tonumber(cfg.inv_cell) or 62))))
+  local gap = math.floor(F.s(8))
+  local pad = math.floor(F.s(16))
+  local hh = math.floor(F.s(48))
+  local sbar = scroll and math.floor(F.s(10)) or 0
+  local gw = cols * cell + (cols - 1) * gap
+  local pw = gw + sbar + pad * 2
+  local tabw = math.floor(F.s(52))
+  local pgap = math.floor(F.s(14))
+  local fhh = imgui.GetFrameHeight()
+  local sfh = cfg.inv_search ~= 0 and math.floor(fhh + F.s(12)) or 0
+  local gh = rows * cell + (rows - 1) * gap
+  local foot = scroll and 0 or math.floor(F.s(36))
+  local right_h = math.floor(hh + pad + sfh + gh + foot + pad)
+  local mh = math.floor(F.s(34))
+  local left_h = math.floor(hh + pad + 3 * cell + 2 * gap + F.s(30) + mh + (cfg.inv_menu ~= 0 and (F.s(14) + #F.IV_MENU * (mh + F.s(6))) or 0) + pad)
+  F.iv_side_fix()
+  local left_on = F.iv_left_on()
+  -- A stall, the car and a warehouse need room for their cells: not lower than the bag.
+  if iv.side ~= 'char' then left_h = math.max(left_h, right_h) end
+  -- Two blocks, each where the player put it. The bag: inv_x, inv_y. The left one: inv_lx,
+  -- inv_ly, and next to the bag until it is moved.
+  local rx, ry = tonumber(cfg.inv_x) or -1, tonumber(cfg.inv_y) or -1
+  if rx < 0 or ry < 0 then
+    local total = pw + (left_on and (pw + pgap + tabw) or tabw)
+    rx = (sw - total) / 2 + total - pw
+    ry = (sh - math.max(right_h, left_on and left_h or 0)) / 2
+  end
+  rx = math.floor(math.max(tabw, math.min(sw - pw, rx)))
+  ry = math.floor(math.max(0, math.min(sh - right_h, ry)))
+  local lx, ly = tonumber(cfg.inv_lx) or -1, tonumber(cfg.inv_ly) or -1
+  if lx < 0 or ly < 0 then lx, ly = rx - pgap - pw, ry end
+  lx = math.floor(math.max(tabw, math.min(sw - pw, lx)))
+  ly = math.floor(math.max(0, math.min(sh - left_h, ly)))
+  -- One rounding and one see-through for the whole window: panels, heads, cells, tabs.
+  local alpha = math.max(0.5, math.min(1, tonumber(cfg.inv_alpha) or 0.97))
+  local rad = math.max(0, math.min(24, tonumber(cfg.inv_round) or 16))
+  F._iv_r, F._iv_a, F._iv_cr, F._iv_ca = rad, math.floor(248 * alpha), math.min(10, math.floor(rad * 0.65)), alpha
+  local WF = imgui.WindowFlags
+  -- One see-through window over the whole screen holds both blocks. Windows of the amount and
+  -- of the server stay over it when it is clicked.
+  local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse + WF.NoCollapse + WF.NoSavedSettings + WF.NoMove
+    + (WF.NoBringToFrontOnFocus or 0)
+  imgui.SetNextWindowPos(imgui.ImVec2(0, 0), imgui.Cond.Always)
+  imgui.SetNextWindowSize(imgui.ImVec2(sw, sh), imgui.Cond.Always)
+  if not iv.drawn and imgui.SetNextWindowFocus then imgui.SetNextWindowFocus() end
+  F.style_push(1)
+  F.use_font(font_main)
+  imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(0, 0))
+  imgui.PushStyleVarFloat(imgui.StyleVar.FrameRounding, math.min(8, rad))
+  imgui.Begin('fhelp-inv', nil, flags)
+  if imgui.SetWindowFontScale then imgui.SetWindowFontScale(cfg.scale or 1) end
+  if cfg.inv_dim == 1 then
+    imgui.GetWindowDrawList():AddRectFilled(imgui.ImVec2(0, 0), imgui.ImVec2(sw, sh), F.rgba(0, 0, 0, 110))
+  end
+  local base_ok = not iv.menu and not F.qty and not iv.cam
+  local hov_ok = base_ok and imgui.IsWindowHovered()
+  -- Where the panels are: a right click past them is the camera's.
+  iv.rects = {{rx, ry, pw, right_h}}
+  if left_on then
+    iv.rects[2] = {lx - tabw, ly, pw + tabw, left_h}
+  else
+    iv.rects[2] = {rx - tabw, ry, tabw, right_h}
+  end
+  local xb = rx + pw - pad - F.s(30)
+  local gbx = xb - F.s(34)
+  local lbx = gbx - F.s(34)
+  -- Each block moves by its own head.
+  local function drag(id, ax, ay, aw, kx, ky, bx, by, bh)
+    imgui.SetCursorScreenPos(imgui.ImVec2(ax, ay))
+    imgui.InvisibleButton(id, imgui.ImVec2(math.max(1, aw), hh))
+    if imgui.IsItemActive() and imgui.IsMouseDragging(0) then
+      local md = io.MouseDelta
+      cfg[kx] = math.floor(math.max(tabw, math.min(sw - pw, bx + md.x)))
+      cfg[ky] = math.floor(math.max(0, math.min(sh - bh, by + md.y)))
+      F._iv_moved = true
+    end
+  end
+  local hover
+  local close_click, game_click
+  if iv.view_mode then
+    close_click = F.iv_view(rx, ry, pw, cell, gap, pad, hh, hov_ok)
+  else
+  if left_on then
+    F.iv_plate(lx, ly, pw, left_h)
+    drag('##ivdragl', lx, ly, pw, 'inv_lx', 'inv_ly', lx, ly, left_h)
+  end
+  F.iv_plate(rx, ry, pw, right_h)
+  drag('##ivdragr', rx, ry, lbx - F.s(34) - rx - 4, 'inv_x', 'inv_y', rx, ry, right_h)
+  if F._iv_moved and not imgui.IsMouseDown(0) then
+    F._iv_moved = nil
+    dirty = true
+  end
+  -- The tabs stand by the left block, or by the bag when the left one is off.
+  if left_on then
+    F.iv_side_tabs(lx - tabw, ly + F.s(10), tabw)
+    hover = F.iv_left(lx, ly, pw, left_h, cell, gap, pad, hh, hov_ok, base_ok)
+  else
+    F.iv_side_tabs(rx - tabw, ry + F.s(10), tabw)
+  end
+  -- The bag: search, then the grid by pages or as one smooth list.
+  F.iv_head(rx, ry, pw, hh, 'ИНВЕНТАРЬ', 'ICON_FA_SUITCASE')
+  local hy = ry + (hh - F.s(30)) / 2
+  if F.ghost_icon('##ivleft', lbx, hy, 'ICON_FA_USER', cfg.inv_left ~= 0 and 'Скрыть блок персонажа' or 'Показать блок персонажа') then
+    cfg.inv_left = cfg.inv_left ~= 0 and 0 or 1
+    if cfg.inv_left == 0 then iv.side = 'char' end
+    dirty = true
+  end
+  game_click = F.ghost_icon('##ivgame', gbx, hy, 'ICON_FA_WINDOW_RESTORE', iv.preview and 'Это пример' or 'Открыть окно игры')
+  if F.ghost_icon('##ivsort', lbx - F.s(34), hy, 'ICON_FA_SORT_AMOUNT_DOWN', 'Сортировать инвентарь (как кнопка игры)') and not iv.preview then
+    F.iv_send('inventory.sort')
+  end
+  close_click = F.ghost_icon('##ivx', xb, hy, 'ICON_FA_TIMES', 'Закрыть (Esc)')
+  local gx = rx + pad
+  if cfg.inv_search ~= 0 then
+    imgui.SetCursorScreenPos(imgui.ImVec2(gx, ry + hh + pad))
+    F.field('##ivq', 'Поиск', ui.iv_q, 40, gw + sbar, 'iv_q')
+  end
+  local gy = ry + hh + pad + sfh
+  local bag = iv.blocks[1]
+  if scroll then
+    hover = F.iv_scroll('##ivbag', 1, gx, gy, cols, rows, cell, gap, base_ok) or hover
+  else
+    local per = cols * rows
+    local pages = math.max(1, math.ceil(F.iv_cells(bag, true) / per))
+    iv.page = math.max(1, math.min(pages, iv.page or 1))
+    hover = F.iv_grid(1, gx, gy, cols, rows, (iv.page - 1) * per, cell, gap, hov_ok) or hover
+    F.iv_wheel(gx, gy, gw, gh, 'page', pages)
+    local py = gy + gh + F.s(18)
+    local pk = F.iv_dots('##ivpd', gx, py, gw, pages, iv.page)
+    if pk then iv.page = pk end
+    if pages > 1 then
+      if F.ghost_icon('##ivpu', gx, py - F.s(15), 'ICON_FA_CHEVRON_UP', 'Предыдущая страница') then iv.page = math.max(1, iv.page - 1) end
+      if F.ghost_icon('##ivpn', gx + gw - F.s(30), py - F.s(15), 'ICON_FA_CHEVRON_DOWN', 'Следующая страница') then iv.page = math.min(pages, iv.page + 1) end
+    end
+  end
+  if bag and not bag.full and not iv.preview then
+    F.text_at(font_main, 14, gx, ry + right_h + F.s(6), F.col('bad', 230),
+      F.fit_text(font_main, 'Список неполный: жду его от сервера. Если не придёт — перезайди на сервер.', pw / 0.875))
+  end
+  if not bag then
+    local msg = 'Список ячеек игра присылает при входе на сервер. Пока его нет — нажми значок окна игры в шапке.'
+    imgui.SetCursorScreenPos(imgui.ImVec2(gx + F.s(10), gy + gh / 2 - F.s(20)))
+    imgui.PushTextWrapPos(gx + gw - F.s(10))
+    imgui.TextColored(F.cvec('text', 0.7), '%s', msg)
+    imgui.PopTextWrapPos()
+  end
+  if base_ok then F.iv_input(hover) end
+  end
+  F.iv_overlay()
+  imgui.End()
+  imgui.PopStyleVar(2)
+  F.done_font(font_main)
+  F.style_pop()
+  F.iv_pal_pop()
+  cfg.scale = menu_scale
+  F._iv_scale0 = nil
+  F._iv_r, F._iv_a, F._iv_cr, F._iv_ca = nil, nil, nil, nil
+  iv.drawn = true
+  if close_click then F.iv_close(true)
+  elseif game_click and not iv.preview then F.iv_game() end
+end
+
+F.IV_LOOK = {'inv_scale', 'inv_cell', 'inv_alpha', 'inv_round', 'inv_cols', 'inv_rows', 'inv_scroll', 'inv_menu', 'inv_skin',
+  'inv_search', 'inv_badges', 'inv_tips', 'inv_dim', 'inv_x', 'inv_y', 'inv_left', 'inv_lx', 'inv_ly', 'inv_col', 'inv_bg', 'inv_acc'}
+
+-- A colour of the inventory: a swatch that opens the picker.
+function F.iv_color(id, label, key)
+  local buf = ui['ivc_' .. key]
+  if not buf then
+    buf = imgui.new.float[3](0, 0, 0)
+    ui['ivc_' .. key] = buf
+  end
+  local r, g, b = F.hex3(cfg[key])
+  buf[0], buf[1], buf[2] = r / 255, g / 255, b / 255
+  local ok, flags = pcall(function() return imgui.ColorEditFlags.NoInputs end)
+  if not ok or type(flags) ~= 'number' then flags = 0 end
+  if imgui.ColorEdit3(label .. '##' .. id, buf, flags) then
+    cfg[key] = F.hex_of(buf[0] * 255, buf[1] * 255, buf[2] * 255)
+    dirty = true
+  end
+end
+
+function F.iv_ui()
+  ui.inv_scale[0] = (tonumber(cfg.inv_scale) or 1) * 100
+  ui.inv_cell[0] = tonumber(cfg.inv_cell) or 62
+  ui.inv_alpha[0] = (tonumber(cfg.inv_alpha) or 0.97) * 100
+  ui.inv_round[0] = tonumber(cfg.inv_round) or 16
+  ui.inv_cols[0] = tonumber(cfg.inv_cols) or 6
+  ui.inv_rows[0] = tonumber(cfg.inv_rows) or 6
+end
+
+function F.iv_set_card()
+  F.card_begin('Своё окно инвентаря', 'Вместо окна игры: открывается сразу, без подвисаний', 'ICON_FA_BOX_OPEN')
+  F.chest_flag('invon', 'Своё окно инвентаря', 'inv_on', 'Когда сервер открывает инвентарь, вместо окна игры открывается окно fHelper')
+  F.hint('Раскладка как у игры: слева персонаж, охранники, лавка, транспорт или хранилище (вкладки сбоку), справа инвентарь. Клик выделяет предмет, второй клик по другой ячейке перекладывает его или меняет местами. Правый клик — действия от сервера. Перетаскивание перекладывает всю стопку, колесо во время перетаскивания убавляет или прибавляет количество. Ctrl+клик — быстро переложить. В лавке и хранилище клик покупает, продаёт, кладёт или забирает.')
+  F.hint('Охранники: выбор охранника кнопками внизу, его вещи, оружие и инвентарь, «Меню» и «Информация». Предмет, брошенный на карточку охранника, он использует.')
+  F.hint('Обмен, крафт, мастерская и зелья открываются в окне игры сами. Значок окна в шапке вернёт обычное окно в любой момент.')
+  F.hint('Ячейки раскладываются строго по номерам слотов от сервера. Полный список сервер присылает только при входе в игру, поэтому своё окно открывается, когда этот список есть; иначе — окно игры, пока не перезайдёшь. Скрипт следит за инвентарём всегда, даже когда своё окно выключено.')
+  if cfg.inv_on == 1 and not F.iv_exact() then F.hint_bad('Сейчас точного списка нет: перезайди на сервер, и окно заработает.') end
+  if cfg.inv_on ~= 1 then
+    F.card_end()
+    return
+  end
+  if not F._iv_ui then
+    F._iv_ui = true
+    F.iv_ui()
+  end
+  F.divider()
+  F.section_title('Вид')
+  if F.slider_row('invscale', 'Размер окна', ui.inv_scale, 70, 150, '%.0f%%') then
+    cfg.inv_scale = math.max(0.7, math.min(1.5, ui.inv_scale[0] / 100))
+    dirty = true
+  end
+  if F.slider_row('invcell', 'Размер ячеек', ui.inv_cell, 44, 84, '%.0f') then
+    cfg.inv_cell = math.floor(math.max(44, math.min(84, ui.inv_cell[0])))
+    dirty = true
+  end
+  if F.slider_row('invalpha', 'Непрозрачность фона', ui.inv_alpha, 50, 100, '%.0f%%') then
+    cfg.inv_alpha = math.max(0.5, math.min(1, ui.inv_alpha[0] / 100))
+    dirty = true
+  end
+  if F.slider_row('invround', 'Закругление краёв', ui.inv_round, 0, 24, '%.0f') then
+    cfg.inv_round = math.floor(math.max(0, math.min(24, ui.inv_round[0])))
+    dirty = true
+  end
+  F.divider()
+  F.section_title('Цвета')
+  local cpick = F.segment('invcol', {{0, 'Как у меню'}, {1, 'Свои'}}, cfg.inv_col or 0, math.min(F.s(320), F.inner_w()))
+  if cpick then
+    cfg.inv_col = cpick
+    dirty = true
+  end
+  if cfg.inv_col == 1 then
+    imgui.Spacing()
+    local p = imgui.GetCursorScreenPos()
+    local cw, ch, cg = F.s(104), F.s(44), 8
+    local per = math.max(1, math.floor((F.inner_w() + cg) / (cw + cg)))
+    for i, t in ipairs(F.THEMES) do
+      local x = p.x + ((i - 1) % per) * (cw + cg)
+      local y = p.y + math.floor((i - 1) / per) * (ch + cg)
+      local clicked, hovered = F.hotspot('##ivth' .. i, x, y, cw, ch)
+      local on = cfg.inv_bg == t[2] and cfg.inv_acc == t[3]
+      local br, bgg, bb = F.hex3(t[2])
+      local ar, ag, ab = F.hex3(t[3])
+      F.round_rect(x, y, cw, ch, F.rgba(br, bgg, bb, 255), on and F.rgba(ar, ag, ab, 255) or F.col('text', hovered and 60 or 24), 10)
+      F.round_rect(x + F.s(10), y + F.s(8), F.s(28), F.s(7), F.rgba(ar, ag, ab, 255), nil, 4)
+      F.text_at(font_main, 16, x + F.s(10), y + ch - F.s(22), F.rgba(246, 241, 230, on and 255 or 200), t[1])
+      if clicked then
+        cfg.inv_bg, cfg.inv_acc = t[2], t[3]
+        dirty = true
+      end
+    end
+    F.advance(p, F.inner_w(), math.ceil(#F.THEMES / per) * (ch + cg) - cg)
+    imgui.Spacing()
+    if imgui.ColorEdit3 then
+      F.iv_color('ivbg', 'Фон', 'inv_bg')
+      imgui.SameLine(0, F.s(24))
+      F.iv_color('ivacc', 'Шапки и кнопки', 'inv_acc')
+    end
+  end
+  F.divider()
+  F.section_title('Блоки')
+  F.chest_flag('invleft', 'Блок персонажа рядом с инвентарём', 'inv_left', 'Выключи — останется один инвентарь. Лавка, транспорт и хранилище всё равно откроются сами. В шапке инвентаря есть такой же переключатель')
+  F.hint('Блоки двигаются отдельно, каждый за свою шапку. Пока левый не сдвинут, он стоит рядом с инвентарём.')
+  if F.button('Поставить блоки рядом##invjoin', 220, 0) then
+    cfg.inv_lx, cfg.inv_ly = -1, -1
+    dirty = true
+  end
+  F.divider()
+  F.section_title('Сетка инвентаря')
+  if F.slider_row('invcols', 'Ячеек в ширину', ui.inv_cols, 4, 10, '%.0f') then
+    cfg.inv_cols = math.floor(math.max(4, math.min(10, ui.inv_cols[0] + 0.5)))
+    dirty = true
+  end
+  if F.slider_row('invrows', 'Ячеек в высоту', ui.inv_rows, 3, 10, '%.0f') then
+    cfg.inv_rows = math.floor(math.max(3, math.min(10, ui.inv_rows[0] + 0.5)))
+    dirty = true
+  end
+  imgui.TextUnformatted('Как листать')
+  local pick = F.segment('invscroll', {{0, 'Страницами, как в игре'}, {1, 'Плавной прокруткой'}}, cfg.inv_scroll or 0, math.min(F.s(460), F.inner_w()))
+  if pick then
+    cfg.inv_scroll = pick
+    dirty = true
+  end
+  if F.button('Как в игре: 6 × 6##invstd', 200, 0) then
+    cfg.inv_cols, cfg.inv_rows, cfg.inv_scroll = 6, 6, 0
+    F.iv_ui()
+    dirty = true
+  end
+  F.divider()
+  F.section_title('Что показывать')
+  F.chest_flag('invsearch', 'Поиск', 'inv_search')
+  F.chest_flag('invbadges', 'КД, количество, цены и заточка на ячейках', 'inv_badges', 'Таймер КД берётся из ячейки, а если его там нет — из таймеров «Сундуков»')
+  F.chest_flag('invtips', 'Подсказка при наведении', 'inv_tips')
+  F.chest_flag('invskin', 'Большой скин рядом с аксессуарами', 'inv_skin')
+  F.chest_flag('invmenu', 'Кнопки меню под персонажем', 'inv_menu', 'Меню, дом, транспорт, бизнес, семья и остальные, как в игре')
+  F.chest_flag('invdim', 'Затемнять экран за окном', 'inv_dim')
+  imgui.Spacing()
+  if F.button('Показать окно##invdemo', 190, 0, 'primary') then F.iv_preview() end
+  if imgui.IsItemHovered() then F.tip('С тем, что уже известно о твоих вещах. Ничего не отправляет на сервер') end
+  F.same_if_fit(F.s(190))
+  if F.button('Вернуть в центр##invpos', 190, 0) then
+    cfg.inv_x, cfg.inv_y, cfg.inv_lx, cfg.inv_ly = -1, -1, -1, -1
+    dirty = true
+  end
+  F.same_if_fit(F.s(170))
+  if F.button('Сбросить вид##invdef', 170, 0) then
+    for _, key in ipairs(F.IV_LOOK) do cfg[key] = F.CFG_DEF[key] end
+    F.iv_ui()
+    dirty = true
+  end
+  F.hint('Каждый блок двигается мышью за свою шапку, места запоминаются.')
+  F.card_end()
+end
+
+-- The guards' tab, as the game's: the guard's card (a dropped item is used on him), what he
+-- wears (2 x 2, block 30) and his weapon (block 32), his stats, «Меню» and «Информация», his bag
+-- (block 33), and the guards themselves to switch between at the bottom.
+function F.iv_guard_view(x, y, w, h, cell, gap, pad, hh, hov_ok)
+  local iv = F.iv
+  F.iv_head(x, y, w, hh, 'ОХРАННИКИ', 'ICON_FA_USER_SHIELD')
+  local gx, gy = x + pad, y + hh + pad
+  local iw = w - pad * 2
+  iv.guard_rect = nil
+  local g = F.iv_guard()
+  if not g then
+    F.text_at(font_main, 16, gx, gy + F.s(8), F.col('text', 130), F.fit_text(font_main, 'Охранники ещё не пришли от сервера', iw))
+    return nil
+  end
+  local hit
+  local m = imgui.GetMousePos()
+  -- The card.
+  local cw = math.floor(cell * 1.5)
+  local chh = cell * 2 + gap
+  local on_card = hov_ok and m.x >= gx and m.x < gx + cw and m.y >= gy and m.y < gy + chh
+  F.round_rect(gx, gy, cw, chh, F.col('accent', on_card and iv.drag and 70 or 36), F.col(on_card and iv.drag and 'accent_hi' or 'text', on_card and iv.drag and 255 or 30), F._iv_cr or 10)
+  iv.guard_rect = {gx, gy, cw, chh}
+  local glyph = F.faico('ICON_FA_USER_SHIELD')
+  if glyph ~= '' then F.text_at(font_main, 30, gx + (cw - F.s(26)) / 2, gy + F.s(30), F.col('text', 120), glyph) end
+  local q = F.trim(F.game_text(tostring(g.quality or '')))
+  if q ~= '' then F.text_at(font_main, 14, gx + F.s(6), gy + F.s(5), F.col('accent_hi'), F.fit_text(font_main, q, (cw - F.s(10)) / 0.875)) end
+  local lvl = tonumber(g.level)
+  if lvl then F.text_at(font_bold, 14, gx + F.s(6), gy + chh - F.s(38), F.col('text'), lvl .. ' уровень') end
+  local exp, maxe = tonumber(g.exp), tonumber(g.max_exp)
+  if exp and maxe then F.text_at(font_main, 14, gx + F.s(6), gy + chh - F.s(20), F.col('text', 170), F.num_text(exp) .. ' / ' .. F.num_text(maxe)) end
+  if tonumber(g.died) == 1 or g.died == true then
+    F.text_at(font_bold, 14, gx + F.s(6), gy + F.s(22), F.col('bad'), 'Погиб')
+  end
+  if on_card and not iv.drag then
+    local tip = F.game_text(tostring(g.name or 'Охранник'))
+    local rent = F.trim(F.game_text(tostring(g.rentText or '')))
+    if rent ~= '' then tip = tip .. '\n' .. rent end
+    F.tip(tip .. '\nПеретащи сюда предмет — охранник его использует')
+  end
+  -- What he wears and his weapon.
+  local ax = gx + cw + gap
+  hit = F.iv_grid(30, ax, gy, 2, 2, 0, cell, gap, hov_ok) or hit
+  local wx = ax + 2 * (cell + gap) + F.s(6)
+  local wsz = math.min(cell, gx + iw - wx)
+  if wsz > F.s(30) then
+    hit = F.iv_grid(32, wx, gy + (chh - wsz) / 2, 1, 1, 0, wsz, gap, hov_ok, {[0] = 'Оружие'}) or hit
+  end
+  -- Stats.
+  local sy = gy + chh + F.s(12)
+  local tw2 = (iw - F.s(8)) / 2
+  local th = math.floor(F.s(30))
+  for i, st in ipairs({{'Здоровье', g.health, 'ICON_FA_HEART'}, {'Защита', g.defence, 'ICON_FA_SHIELD_ALT'},
+      {'Сытость', g.satiety, 'ICON_FA_UTENSILS'}, {'Урон', g.damage, 'ICON_FA_FIST_RAISED'}}) do
+    local tx = gx + ((i - 1) % 2) * (tw2 + F.s(8))
+    local ty = sy + math.floor((i - 1) / 2) * (th + F.s(6))
+    F.round_rect(tx, ty, tw2, th, F.col('side', 150), nil, 8)
+    local ic = F.faico(st[3])
+    local lx = tx + F.s(10)
+    if ic ~= '' then
+      F.text_at(font_main, 14, lx, ty + (th - F.s(14)) / 2, F.col('accent_hi'), ic)
+      lx = lx + F.s(22)
+    end
+    F.text_at(font_main, 15, lx, ty + (th - F.s(15)) / 2 - 1, F.col('text', 170), st[1])
+    local v = st[2] ~= nil and tostring(st[2]) or '—'
+    F.text_at(font_bold, 16, tx + tw2 - F.s(10) - F.text_w(font_bold, v), ty + (th - F.s(16)) / 2 - 1, F.col('text'), v)
+  end
+  -- The game's two buttons.
+  local by = sy + 2 * (th + F.s(6)) + F.s(4)
+  local bw = (iw - F.s(8)) / 2
+  imgui.SetCursorScreenPos(imgui.ImVec2(gx, by))
+  if F.button('Меню##ivgmenu', bw / F.s(1), 32, 'primary') then F.iv_send('clickOnMenu', string.format('{"id": %d}', iv.gid)) end
+  imgui.SetCursorScreenPos(imgui.ImVec2(gx + bw + F.s(8), by))
+  if F.button('Информация##ivginfo', bw / F.s(1), 32) then F.iv_send('requestShowingInfo', string.format('{"id":%d}', iv.gid)) end
+  -- His bag, five in a row; the switch of guards stays at the bottom.
+  local iy = by + F.s(32) + F.s(12)
+  F.text_at(font_bold, 16, gx, iy, F.col('text'), 'ИНВЕНТАРЬ')
+  iy = iy + F.s(24)
+  local foot = math.floor(F.s(34)) + F.s(10)
+  local b = F.iv_block(33)
+  local n = math.max(5, tonumber(g.inventory_cells) or 0, (b and b.max or -1) + 1)
+  local cols = 5
+  local icell = math.floor((iw - (cols - 1) * gap) / cols)
+  local rows = math.ceil(n / cols)
+  local room = math.max(1, math.floor((y + h - pad - foot - iy + gap) / (icell + gap)))
+  local per = cols * math.min(rows, room)
+  local pages = math.max(1, math.ceil(n / per))
+  iv.gpage = math.max(1, math.min(pages, iv.gpage or 1))
+  hit = F.iv_grid(33, gx, iy, cols, math.min(rows, room), (iv.gpage - 1) * per, icell, gap, hov_ok) or hit
+  F.iv_wheel(gx, iy, iw, math.min(rows, room) * (icell + gap), 'gpage', pages)
+  -- The guards.
+  local list = iv.guards or {}
+  local fy = y + h - pad - math.floor(F.s(34))
+  local nb = math.max(1, #list)
+  local nw = (iw - (nb - 1) * F.s(8)) / nb
+  for i, gg in ipairs(list) do
+    imgui.SetCursorScreenPos(imgui.ImVec2(gx + (i - 1) * (nw + F.s(8)), fy))
+    local name = F.game_text(tostring(gg.name or ('Охранник ' .. i)))
+    local id = tonumber(gg.id)
+    if F.button(F.fit_text(font_main, name, nw - F.s(16)) .. '##ivgsel' .. i, nw / F.s(1), 34, id == iv.gid and 'primary' or nil) and id ~= iv.gid then
+      F.iv_guard_pick(id)
+      iv.gpage = 1
+    end
+  end
+  return hit
+end
+
 
 F.STORE_SECS = {{'inv', 'Инвентарь'}, {'cars', 'Машины'}}
 F.BAG_SECS = {{'items', 'Предметы'}, {'sum', 'Сводка'}, {'log', 'История'}, {'set', 'Настройки'}}
@@ -8065,12 +11921,18 @@ end
 function F.shop_out(text)
   F.qty_note_out(text)
   if text:find('inventoryClose', 1, true) or text:find('closeInventory', 1, true) then
+    if F.iv then
+      F.iv.game_mode = nil
+      pcall(F.iv_unlock)
+    end
     F.shop_pick = nil
     return
   end
   if cfg.bag_on == 1 and text:find('lickOnBlock', 1, true) then pcall(F.bag_click, text) end
   -- A slot is picked by a click, a right click, or the button of an action under it.
-  if text:find('lickOnBlock', 1, true) or text:find('clickOnButton', 1, true) then pcall(F.qty_click, text) end
+  if text:find('lickOnBlock', 1, true) or text:find('clickOnButton', 1, true) or text:find('moveItemForce', 1, true) then
+    pcall(F.qty_click, text)
+  end
   if cfg.shop_calc ~= 1 or not text:find('lickOnBlock', 1, true) then return end
   local slot = tonumber(text:match('"slot"%s*:%s*(%d+)'))
   local kind = F.SHOP_KIND[tonumber(text:match('"type"%s*:%s*(%d+)')) or 0]
@@ -8331,6 +12193,10 @@ end
 
 -- How many pieces: what is typed into the game's dialog, if it is a plain number.
 function F.shop_dialog_qty()
+  local q = F.qty
+  if q and (q.kind or 'qty') == 'qty' and not q.sample then
+    return tonumber(F.trim(F.buf_get(ui.qty)):match('^(%d%d?%d?%d?%d?%d?%d?)$')), true
+  end
   local ok, on = pcall(sampIsDialogActive)
   if not ok or not on then return nil, false end
   local fine, text = pcall(sampGetCurrentDialogEditboxText)
@@ -9235,6 +13101,7 @@ function F.proj_set(key)
   if key == cfg.proj or not F.PROJ[key] then return end
   if F.int_dirty then F.int_save() end
   pcall(F.bag_flush)
+  pcall(F.iv_flush)
   if cfg.vc_here == 1 then F.here_set(false) end
   cfg.proj = key
   cfg.money_real, cfg.alt_money_real = cfg.alt_money_real, cfg.money_real
@@ -9857,6 +13724,7 @@ function F.bak_flush()
   pcall(F.note_flush)
   if F.int_dirty then pcall(F.int_save) end
   pcall(F.bag_flush)
+  pcall(F.iv_flush)
   pcall(F.save_cfg)
 end
 
@@ -10105,7 +13973,7 @@ F.REP_SKIP = {vc_rate_last = true, vc_rate_buy_last = true, rep_seen = true, ope
   alt_money_real = true, alt_bank = true, alt_depo = true, loc2_money = true, loc2_bank = true, loc2_depo = true}
 F.REP_PARTS = {tick = 'фоновая работа', menu = 'меню', hud = 'панель FPS и пинга', toasts = 'уведомления',
   bar_want = 'плашка розыска', bar_shift = 'плашка смены', bar_time = 'плашка времени', bar_car = 'плашка машины', bar_calc = 'окошко расчёта у лавки',
-  calc = 'калькулятор и закрепы', events = 'разбор пакетов игры', qty = 'окно количества'}
+  calc = 'калькулятор и закрепы', events = 'разбор пакетов игры', qty = 'свои окна вместо игровых'}
 
 --@full{
 F.REP_UPD = {idle = 'ещё не проверялось', off = 'выключено', checking = 'идёт проверка', fail = 'нет связи с GitHub',
@@ -10856,7 +14724,7 @@ function F.rep_build(kind, why)
         x.mine and '  <- fHelper' or ''))
     end
   end
-  L('Настройки, влияющие на скорость: свой предел FPS ' .. (cfg.fps_free == 1 and 'снят' or 'как в игре')
+  L('Настройки, влияющие на скорость: ' .. ((tonumber(cfg.fps_cap) or 0) > 0 and ('стабильный FPS ' .. cfg.fps_cap) or ('предел FPS ' .. (cfg.fps_free == 1 and 'снят' or 'как в игре')))
     .. ', дальность прорисовки ' .. (cfg.draw_on == 1 and tostring(cfg.draw) or 'как в игре')
     .. ', предел памяти мира ' .. ((tonumber(cfg.mem_world) or 0) > 0 and (tostring(cfg.mem_world) .. ' МБ') or 'как в игре'))
 
@@ -11410,6 +15278,37 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.19', '17.11.2026', {
+    {'add', 'Экран: «Стабильный FPS» — свой точный предел кадров (30–75). Каждый кадр одной длины, процессор не крутится впустую и меньше греется, поэтому FPS не скачет. Экран → Графика', 'screen'},
+    {'add', 'Инвентарь: в меню предмета появилась «Упомянуть», как в окне игры: ссылка на предмет уходит в чат', 'screen'},
+    {'fix', 'Окно выбора сервера («Подключиться к Vice City / Вернуться на сервер») снова игровое: со своим окном выбор Vice City всё равно возвращал на родной сервер', 'screen'},
+    {'fix', 'Инвентарь рисуется быстрее: ширина подписей, цвета ячеек и таймеры сундуков больше не считаются заново каждый кадр для каждой ячейки', 'screen'},
+    {'fix', 'Хранилище: сбор ждёт ответа сервера до 12 секунд (сервер отдаёт предмет по 3–4 секунды), итог пишется в журнал один раз', 'screen'},
+    {'add', 'Инвентарь: меню действий по правому клику стало аккуратным — по размеру самой длинной строки, со значками, картинкой и названием предмета в шапке, тонкой рамкой; «Выкинуть» отдельно внизу; открывается у курсора и не уходит за край экрана', 'screen'},
+    {'add', 'Инвентарь: предмет, который сервер пометил недоступным (лавка, магазин, обмен), затемнён и с замком, как в игре, и не нажимается; при закрытии окна отметки снимаются, как у игры', 'screen'},
+    {'add', 'Хранилище предметов (/storage): своё окно со списком, кнопка «Забрать всё» и кнопки по видам предметов — забрать за раз все эликсиры одного вида и т. п. Подтверждения fHelper принимает сам, на любом другом окне (инвентарь полон и т. п.) останавливается и показывает его', 'screen'},
+    {'add', 'Инвентарь: «Обзор» другого игрока в своём окне — аксессуары, оружие с улучшениями, скин и улучшения, большая картинка скина; «Закрыть» и Esc закрывают обзор, как в игре', 'screen'},
+    {'fix', 'Вылеты игры примерно через 20 секунд после входа: чтение логов чата для «Доходов» запускало поток из другого, уже завершённого потока, и игра падала. Теперь оно идёт из основного потока скрипта и запускается один раз, а не при каждом старте', 'screen'},
+    {'add', 'Инвентарь: предметы стоят строго по слотам. Окно открывается только с точным списком ячеек этого входа (иначе показывается окно игры), а скрипт следит за инвентарём всегда, даже при выключенном окне', 'screen'},
+    {'add', 'Инвентарь: персонаж как в игре — на каждой странице образа 9 аксессуаров (с «Левый», «Правый», «Нож»), скин этой страницы и два улучшения; страницу переключает сервер, снаряжение — 6 оружейных слотов', 'screen'},
+    {'add', 'Инвентарь: полоска цвета качества на ячейке, класс и рейтинг качества в подсказке, таймеры как в игре («00:08:54», «2 дня»)', 'screen'},
+    {'add', 'Своё окно инвентаря вернулось: Экран → Кастомизация → Инвентарь, по умолчанию выключено. Слева персонаж, охранники, транспорт, багажник, склады и лавка, справа инвентарь с поиском, сортировкой и страницами', 'screen'},
+    {'add', 'Инвентарь: вкладка «Охранники» — карточка, вещи, оружие, здоровье, защита, сытость, урон, его инвентарь, «Меню», «Информация» и выбор охранника. Предмет, брошенный на карточку, охранник использует', 'screen'},
+    {'add', 'Инвентарь: перетаскивание переносит всю стопку, колесо во время перетаскивания меняет количество — как в игре. Форматы всех действий сверены с окном игры', 'screen'},
+    {'add', 'Инвентарь: у машины кнопка «Информация» и подробности топлива и двигателя по нажатию, у склада — деньги с кнопками «Положить» и «Снять», хранилища по 5 ячеек в ряд, как в игре', 'screen'},
+    {'add', 'Инвентарь: обмен, мастерская, крафт, зелья и магазин сами открываются окном игры', 'screen'},
+    {'add', 'Экран → Кастомизация: новый раздел. В нём «Свои окна» (перенесены сюда) и «Курсор»', 'screen'},
+    {'add', 'Курсор: три своих стиля — «Неон» (тёмное стекло с цветной каймой и свечением), «Капля» (округлая стрелка с тенью) и «Дротик» (острый наконечник в два тона) — и 7 цветов, в том числе цвет меню. Меняет курсор SA-MP в чате и во всех окнах; появляется после перезапуска игры, «Как в игре» возвращает прежний', 'screen'},
+    {'add', 'Свои окна: кроме окна количества fHelper рисует выбор из списка (поиск, стрелки, двойной клик, столбцы и цвета строк сервера), способ оплаты крупными кнопками, ввод суммы (понимает 500к и 1.5кк, показывает сумму целиком, кнопки «Максимум» и «Наличные»), передачу игроку (игроки рядом одним нажатием) и короткие подтверждения «Да / Нет»', 'screen'},
+    {'add', 'Свои окна запоминают ввод и выбор: количество, сумму, кому передавал (по нику — после перезахода подставится его новый ID) и последний пункт каждого меню. Хранится и после перезахода; выключается и очищается в Экран → Кастомизация → Свои окна', 'screen'},
+    {'add', 'GPS: в поиске навигатора видны места из всех разделов, а не только из открытого. Выбрал место — fHelper сам откроет его раздел и поставит метку. Кнопка «Загрузить все места» один раз проходит по разделам; работает, когда включён «Выбор из списка»', 'screen'},
+    {'add', 'Свои окна: кнопки можно поменять местами — главная слева, «Отмена» справа. Экран → Кастомизация → Свои окна → Вид окон', 'screen'},
+    {'add', 'Свои окна: окантовка строк, плиток оплаты, полей и игроков рядом стала чётче — выбранное видно сразу, под мышью и при нажатии подсвечивается, у кнопки Enter мягкое кольцо', 'screen'},
+    {'add', 'Свои окна: каждое включается отдельно в Экран → Кастомизация → Свои окна, по умолчанию всё выключено. Там же пример каждого окна и общий вид: размер, ширина, высота, закругление', 'screen'},
+    {'add', 'Свои окна: стрелка в шапке окна отдаёт такие окна обратно игре, список отданных — в настройках. Пароли, коды, чек пейдея и окна предметов всегда показывает игра, а окно, которое fHelper не узнал точно, остаётся игровым', 'screen'},
+    {'fix', 'Окно количества: предмет и кнопка «Всё» видны и тогда, когда предмет перетащили мышью, а не нажали'},
+    {'fix', 'Лавки: окошко расчёта видит число, набранное в своём окне количества'},
+  }},
   {'1.19.18', '16.11.2026', {
     {'add', 'Предметы: после обновления игры новые предметы помечены «Новое», а во вкладке «Новое» лежат все предметы этого обновления. Пометка гаснет через день после того, как открыл карточку предмета'},
     {'add', 'Доходы: fHelper находит в логах чата продажи, покупки, работу и расходы, которые пропустил, и добавляет их — один раз сам, а кнопка в Настройки → Данные ищет ещё раз. Уже записанное не повторяется, строки пейдея не трогаются'},
@@ -12109,6 +16008,15 @@ function F.cef_packet_run(bs)
   pcall(raknetBitStreamResetReadPointer, bs)
   if not ok or type(text) ~= 'string' then return end
   F._inv_json = nil
+  local fine0, err0 = pcall(F.iv_packet, text)
+  if not fine0 then F.feed_err('окно инвентаря', err0) end
+  -- The game's inventory is opened by the server: fHelper takes the command and shows its own.
+  local okt, took = pcall(F.iv_take, text)
+  if not okt then F.feed_err('окно инвентаря', took) end
+  if okt and took then
+    pcall(F.car_packet, text)
+    return false
+  end
   local fine, err = pcall(F.car_packet, text)
   if not fine then F.feed_err('машины', err) end
   fine, err = pcall(F.shop_packet, text)
@@ -12974,6 +16882,22 @@ end
 
 function F.led_fill(manual)
   if F.led_fill_run then return end
+  F._led_req = {manual = manual and true or false}
+end
+
+-- Called by the main loop only.
+function F.led_fill_tick(now)
+  if F._led_auto and now >= F._led_auto then
+    F._led_auto = nil
+    if not F._led_req then F._led_req = {manual = false} end
+  end
+  local req = F._led_req
+  if not req or F.led_fill_run then return end
+  F._led_req = nil
+  F.led_fill_start(req.manual)
+end
+
+function F.led_fill_start(manual)
   local dir = F.clog_dir()
   if not dir then
     if manual then F.notify('Логи чата не найдены', true) end
@@ -21174,6 +25098,19 @@ if imgui_ok then
   F.qty_frame = imgui.OnFrame(function() return F.qty ~= nil end, F.rep_wrap('qty', F.draw_qty))
   F.qty_frame.HideCursor = false
   F.qty_frame.LockPlayer = true
+  F.iv_frame = imgui.OnFrame(function()
+    -- The right button held past the panels: the cursor goes and the game turns the camera,
+    -- until the button is let go.
+    local iv = F.iv
+    if iv.cam then
+      local ok, down = pcall(isKeyDown, 0x02)
+      if not iv.open or not ok or not down then iv.cam = nil end
+    end
+    F.iv_frame.HideCursor = iv.cam and true or false
+    return iv.open and not F.iv_covered()
+  end, F.rep_wrap('inv', F.draw_iv))
+  F.iv_frame.HideCursor = false
+  F.iv_frame.LockPlayer = false
   F.lock_frame = imgui.OnFrame(function() return F.lock_on() end, function() end)
   F.lock_frame.HideCursor = false
   F.lock_frame.LockPlayer = true
@@ -21279,7 +25216,7 @@ end
 -- closed. fHelper's window of the amount answers the server, not the game, so the cursor
 -- would stay on the screen: it is put away here, unless something still needs it.
 function F.cursor_off()
-  if show or F.calc_focus or F.qty then return end
+  if show or F.calc_focus or F.qty or (F.iv and (F.iv.open or F.iv.game_mode)) then return end
   local okd, dlg = pcall(sampIsDialogActive)
   local okc, chat = pcall(sampIsChatInputActive)
   if (okd and dlg) or (okc and chat) then return end
@@ -21400,7 +25337,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 45
+F.BUILD = 46
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -21845,8 +25782,10 @@ function main()
   F.load_favs()
   F.load_notes()
   F.pay_load()
+  local okc, cur = pcall(F.cur_apply)
+  if not okc then F.log_line('Курсор: ' .. tostring(cur)) end
   -- A broken data file must not stop the whole menu from starting.
-  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.bag_load, F.itl_load, F.shop_load, F.want_load, F.shift_load}) do
+  for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.bag_load, F.iv_load, F.itl_load, F.shop_load, F.want_load, F.shift_load}) do
     local ok, err = pcall(fn)
     if not ok then F.log_line('Загрузка данных: ' .. tostring(err)) end
   end
@@ -21895,10 +25834,7 @@ function main()
   F.hook_chat()
   -- New ledger rules read the chat logs once, a little after the start.
   if (tonumber(cfg.led_fill) or 0) < F.LED_FILL_V then
-    lua_thread.create(function()
-      wait(F.FETCH_SYNC and 0 or 20000)
-      pcall(F.led_fill, false)
-    end)
+    F._led_auto = os.clock() + (F.FETCH_SYNC and 0 or 20)
   end
   if frame then
     frame.LockPlayer = show and cfg.lock == 1
@@ -21958,6 +25894,8 @@ function main()
     F.timed('машины', F.car_tick)
     F.guard('инвентарь', F.bag_tick)
     F.guard('окно количества', F.qty_tick)
+    F.guard('окно инвентаря', F.iv_tick)
+    F.guard('логи чата', F.led_fill_tick, now)
     F.guard('управление персонажем', F.ctl_tick)
     -- What fails here is caught, counted and written to the journal once: the report shows it.
     F.guard('память', F.mem_tick, now)
@@ -22020,6 +25958,7 @@ addEventHandler('onScriptTerminate', function(scr)
   end
   -- The game's own streaming limit comes back with the script gone.
   pcall(F.mem_world_apply, true)
+  pcall(F.cap_end)
   if F._restoring then
     pcall(F.lib_free)
     return
@@ -22030,6 +25969,7 @@ addEventHandler('onScriptTerminate', function(scr)
     F.note_flush()
     if F.int_dirty then F.int_save() end
     pcall(F.bag_flush)
+    pcall(F.iv_flush, true)
     if F._ctl_off then pcall(setPlayerControl, PLAYER_HANDLE, F._srv_ctl ~= false) end
     if F.shift then F.shift_save() end
     F.save_cfg()
@@ -22046,6 +25986,14 @@ addEventHandler('onWindowMessage', function(msg, wparam, lparam)
     if msg == 0x100 then F.qty_send(0) end
     return
   end
+  -- Esc in fHelper's inventory closes its menu of actions, then the inventory itself.
+  if F.iv and F.iv.open and not F.iv_covered() then
+    consumeWindowMessage(true, false)
+    if msg == 0x100 then
+      if F.iv.menu then F.iv.menu = nil else F.iv_close(true) end
+    end
+    return
+  end
   if not show and not modal and not capture and not F.calc_focus then return end
   -- Chat and server dialogs close on Esc by themselves.
   if F.typing() then return end
@@ -22058,9 +26006,16 @@ addEventHandler('onWindowMessage', function(msg, wparam, lparam)
 end)
 
 function onD3DPresent()
-  if cfg.draw_on ~= 1 then return end
   local paused, pause = pcall(isPauseMenuActive)
-  if paused and pause then return end
+  pause = paused and pause
+  if not pause then
+    local okc, err = pcall(F.cap_wait)
+    if not okc and not F._cap_err then
+      F._cap_err = true
+      F.log_line('Стабильный FPS: ' .. tostring(err))
+    end
+  end
+  if cfg.draw_on ~= 1 or pause then return end
   local d = tonumber(cfg.draw) or 0
   if d >= 300 then pcall(setFarClipDistance, d) end
 end
