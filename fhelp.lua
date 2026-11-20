@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.20'
+local VER = '1.19.21'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(47)
+script_version_number(48)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -9206,12 +9206,19 @@ function F.iv_packet(text)
     end
   end
   -- Windows fHelper's inventory does not do (trade, workshop, crafting, potions, a shop of the
-  -- server): the game gets its window back as soon as one of them is shown.
-  if F.iv.open and text:find('Visible', 1, true) then
+  -- server): the game gets its window back as soon as one of them is shown. The game's window
+  -- hears these only while it is built, so the packet is held back and comes to it again right
+  -- after the opening of the window, with what of the same kind came while fHelper's was open.
+  if F.iv.open and not F.iv.preview and text:find('Visible', 1, true) then
     local ev, val = text:match("event%.inventory%.(set%a+Visible)['\"]%s*,%s*`%s*%[?%s*([%w]+)")
     if ev and F.IV_FOREIGN_VIEW[ev] and (val == 'true' or val == '1') then
-      F.iv_game(ev)
+      if F.iv_game(ev, text) then return 'replay' end
       return
+    end
+    if ev then
+      local vis = F.iv.vis or {}
+      F.iv.vis = vis
+      if #vis < 12 then vis[#vis + 1] = text end
     end
   end
   -- «Обзор» of another player: the game shows it inside its inventory, fHelper as its own panel.
@@ -9237,6 +9244,7 @@ function F.iv_packet(text)
     else
       F.iv.lavka = os.clock()
       F.iv.shop_ctx = os.clock()
+      F.iv.sale_foreign = nil
       if F.iv.open then F.iv.side, F.iv.shop_on = 'shop', true end
     end
     return
@@ -9330,7 +9338,20 @@ function F.iv_merge(t, act, rows)
     if not iv.stab or not iv.blocks[iv.stab] then iv.stab = t end
   end
   if F.IV_SHOP[t] then iv.shop_ctx = now end
-  if (t == 1 or t == 13) and iv.shop_ctx then F.iv_sale_scan() end
+  -- The bag comes in several parts: it is looked at once all of it has come.
+  if (t == 1 or t == 13) and iv.shop_ctx then iv.sale_due = now + F.IV_SALE_WAIT end
+end
+
+F.IV_SALE_WAIT = 0.6
+-- A stall of another player greys out (almost) the whole bag: nothing of it can be put into
+-- someone else's stall. Only a bag with most of it still open is the player's own stall.
+F.IV_SALE_FOREIGN = 0.8
+
+function F.iv_sale_tick(force)
+  local iv = F.iv
+  if not iv.sale_due or (not force and os.clock() < iv.sale_due) then return end
+  iv.sale_due = nil
+  if iv.shop_ctx then F.iv_sale_scan() end
 end
 
 -- Items in the player's own stall. While a stall's window is open the server marks them in the
@@ -9358,6 +9379,18 @@ function F.iv_sale_scan()
   local bag, stall = iv.blocks[1], iv.blocks[13]
   if not bag or not stall or (iv.stab or 13) == 28 then return end
   iv.sale = iv.sale or {}
+  local all, shut = 0, 0
+  for _, r in pairs(bag.slots) do
+    all = all + 1
+    if r.na then shut = shut + 1 end
+  end
+  if all == 0 or shut / all >= F.IV_SALE_FOREIGN then
+    if not iv.sale_foreign then
+      iv.sale_foreign = true
+      pcall(F.iv_note, string.format('лавка: недоступно %d из %d — чужая лавка, отметки не ставлю', shut, all))
+    end
+    return
+  end
   local ids = {}
   for _, r in pairs(stall.slots) do ids[r.item] = true end
   local n = 0
@@ -9452,7 +9485,8 @@ function F.iv_save()
       end
     end
   end
-  for slot, e in pairs(F.iv.sale or {}) do row('S', slot, e.item, e.at or 0) end
+  -- 2: marks made since a stall of another player is told apart; older ones are dropped.
+  for slot, e in pairs(F.iv.sale or {}) do row('S', slot, e.item, e.at or 0, 2) end
   F.write_lines('fhelp_inv.txt', lines)
 end
 
@@ -9486,7 +9520,7 @@ function F.iv_load()
           qn = (c[11] or '') ~= '' and c[11] or nil, text = c[12] or ''}
         b.known[slot] = true
       end
-    elseif c[1] == 'S' and t and tonumber(c[3]) then
+    elseif c[1] == 'S' and t and tonumber(c[3]) and tonumber(c[5]) == 2 then
       local at = tonumber(c[4]) or 0
       if os.time() - at < F.IV_SALE_TTL then F.iv.sale = F.iv.sale or {}; F.iv.sale[t] = {item = tonumber(c[3]), at = at} end
     elseif c[1] == 'K' and t and F.iv.blocks[t] and tonumber(c[3]) then
@@ -9543,6 +9577,15 @@ function F.iv_take(text)
     return false
   end
   if cfg.inv_on ~= 1 or F._iv_off or iv.game_mode or not F.iv_frame or os.clock() < (F._iv_pass or 0) then return false end
+  -- The window comes together with a trade (or another window fHelper does not do): it is the game's.
+  for evn, val in text:gmatch("event%.inventory%.(set%a+Visible)['\"]%s*,%s*`%s*%[?%s*([%w]+)") do
+    if F.IV_FOREIGN_VIEW[evn] and (val == 'true' or val == '1') then
+      if iv.open and not iv.preview then F.iv_close(false) end
+      iv.game_mode = true
+      pcall(F.iv_note, 'окно игры сразу: ' .. evn)
+      return false
+    end
+  end
   if iv.open and not iv.preview then return true end
   local now = os.clock()
   local viewing = now - (iv.view_at or -100) < 2
@@ -9556,6 +9599,7 @@ function F.iv_take(text)
     return false
   end
   iv.open, iv.raw, iv.at, iv.drawn, iv.preview = true, text, now, false, nil
+  iv.vis = nil
   iv.view_mode = viewing or nil
   iv.shop_on, iv.stab, iv.spage = nil, nil, 1
   -- The car may be another one, sold or gone: what the server did not send for this opening
@@ -9652,20 +9696,28 @@ end
 
 -- The game gets its window back: the command fHelper took is given to it now. Until the
 -- inventory is closed it stays the game's.
-function F.iv_game(why)
+-- cur: the packet that made it so (a trade shown); it is held back and comes to the game after
+-- its window is built, else the window would not hear it. True when it was sent again.
+function F.iv_game(why, cur)
   local iv = F.iv
   local raw = iv.raw
+  local vis = iv.vis
+  iv.vis = nil
   F.ivst.games = F.ivst.games + 1
   pcall(F.iv_note, 'отдано окну игры: ' .. tostring(why or 'кнопка'))
   F.iv_close(false)
   iv.game_mode = true
-  if not raw then return end
+  if not raw then return false end
   F._iv_pass = os.clock() + 2
   local ok, err = pcall(F.cef_emul, raw)
   if not ok then
     F.log_line('Инвентарь: окно игры не открылось: ' .. tostring(err))
     F.notify('Окно игры не открылось: закрой инвентарь и открой снова', true)
+    return false
   end
+  for _, t in ipairs(vis or {}) do pcall(F.cef_emul, t) end
+  if cur then return (pcall(F.cef_emul, cur)) end
+  return false
 end
 
 -- ', "id": G' for a guard's cell, else nothing.
@@ -9888,6 +9940,7 @@ function F.iv_tick()
     F.log_line('Инвентарь: своё окно не нарисовалось, вернул игровое до перезапуска')
   end
   if iv.menu_wait and os.clock() - iv.menu_wait.at > 3 then iv.menu_wait = nil end
+  F.iv_sale_tick()
   if iv.dirty and os.clock() - (iv.saved or 0) > F.IV_SAVE_EVERY then F.iv_flush() end
 end
 
@@ -16062,7 +16115,11 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.21', '20.11.2026', {
+    {'fix', 'Инвентарь: трейд с игроком снова открывается. Своё окно инвентаря отдаёт место окну игры, и окно трейда приходит ему уже после открытия, а не теряется', 'screen'},
+  }},
   {'1.19.20', '19.11.2026', {
+    {'fix', 'Инвентарь: после чужой лавки твои предметы того же вида больше не помечаются «в лавке». Чужая лавка гасит почти весь инвентарь, и по ней отметки не ставятся; отметки ставятся, только когда пришёл весь список, а ошибочные старые сброшены', 'screen'},
     {'add', 'Рубка дерева: своё окно мини-игры. В окне игры пила нарисована с опозданием (шаг раз в 75 мс плюс анимация 100 мс), поэтому при отпускании она «проскакивала» дальше видимого. В своём окне метка стоит ровно там, где пила на самом деле, и отправляется то же место, что на экране, — в момент отпускания ЛКМ. Экран → Кастомизация → Рубка дерева', 'screen'},
     {'add', 'Рубка дерева: метка тонкая и яркая, со свечением и коротким следом от прошлого шага, в зелёной зоне она зелёная; под полосой лупа (участок у зоны крупно, отметка на каждый процент); после хода видно, на сколько не дошла или перешла черту и через сколько мс сервер запустил пилу; полоса напарника прячется, когда его нет. Размер окна и лупа — в настройках рубки', 'screen'},
     {'fix', 'Своё окно инвентаря легче: цвета ячеек считаются раз в кадр, подписи и их размеры — раз для предмета, а не в каждом кадре для каждой ячейки'},
@@ -17282,6 +17339,8 @@ function F.cef_packet_run(bs)
   if okl and mine then return false end
   local fine0, err0 = pcall(F.iv_packet, text)
   if not fine0 then F.feed_err('окно инвентаря', err0) end
+  -- Held back: it comes again right after the game's window, in its turn.
+  if fine0 and err0 == 'replay' then return false end
   -- The game's inventory is opened by the server: fHelper takes the command and shows its own.
   local okt, took = pcall(F.iv_take, text)
   if not okt then F.feed_err('окно инвентаря', took) end
@@ -26647,7 +26706,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 47
+F.BUILD = 48
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
