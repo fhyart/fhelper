@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.21'
+local VER = '1.19.22'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(48)
+script_version_number(49)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -2373,6 +2373,7 @@ function F.hook_chat()
     if not ok then F.feed_err('время', err) end
     ok, err = pcall(F.shop_dialog, title, text)
     pcall(F.bag_dialog, text)
+    pcall(F.iv_stall_dlg, id, style, title, text)
     if not ok then F.feed_err('лавки', err) end
     -- The game's window «Введите количество…» is drawn by fHelper instead: the game never sees it.
     local fine, mine = pcall(F.qty_show, id, style, title, b1, b2, text)
@@ -2380,8 +2381,9 @@ function F.hook_chat()
     if fine and mine then return false end
   end
   -- Any answer to a dialog (a button, Esc) closes it: the calc by the stall goes with it.
-  ev.onSendDialogResponse = function()
+  ev.onSendDialogResponse = function(id, button, list, input)
     pcall(F.shop_dialog_closed)
+    pcall(F.iv_stall_answer, id, button, list)
   end
 end
 
@@ -7161,7 +7163,9 @@ function F.qty_set_card()
     F._qty_ui = true
     F.qty_ui()
   end
-  F.card_begin('Вид окон', 'Один для всех своих окон', 'ICON_FA_SLIDERS_H')
+  -- The example follows the sliders while it is not being pulled.
+  if F.qty and F.qty.sample and not F._qty_rs and not F._qty_moved then F.qty.geo = nil end
+  F.card_begin('Вид окон', 'Размер и ширина — для окон, которые ещё не двигал. Место и размер каждого окна свои', 'ICON_FA_SLIDERS_H')
   if F.slider_row('qtyscale', 'Размер', ui.qty_scale, 70, 200, '%.0f%%') then
     cfg.qty_scale = math.max(0.7, math.min(2, ui.qty_scale[0] / 100))
     dirty = true
@@ -7189,15 +7193,20 @@ function F.qty_set_card()
   imgui.Spacing()
   if F.button('Вернуть в центр##qtypos', 190, 0) then
     cfg.qty_x, cfg.qty_y = -1, -1
+    F.dlg_geo_clear()
     dirty = true
   end
   F.same_if_fit(F.s(170))
   if F.button('Сбросить вид##qtydef', 170, 0) then
     for _, key in ipairs({'qty_scale', 'qty_w', 'qty_h', 'qty_alpha', 'qty_round', 'qty_x', 'qty_y', 'qty_item', 'qty_dim', 'qty_swap'}) do cfg[key] = F.CFG_DEF[key] end
+    F.dlg_geo_clear()
     F.qty_ui()
     dirty = true
   end
-  F.hint('Окно двигается мышью за шапку, ширина и высота меняются уголком справа внизу; всё запоминается. Список шире, если в нём несколько столбцов.')
+  local kept = #F.dlg_geo_all().list
+  F.hint('Окно двигается мышью за шапку, ширина и высота меняются уголком справа внизу. Каждое окно (по виду и названию) запоминает своё место и размер отдельно, другие окна от этого не сбиваются.'
+    .. (kept > 0 and ('  Запомнено окон: ' .. kept .. '. «Вернуть в центр» и «Сбросить вид» забывают их.') or '')
+    .. ' Список шире, если в нём несколько столбцов.')
   F.card_end()
   F.dlg_skip_card()
 end
@@ -8827,10 +8836,89 @@ end
 -- the field, the buttons and the square follow the window's corner.
 F.QTY_MIN_H = 160
 
-function F.qty_box(sw, sh, nat, minw)
-  local ww = math.floor(F.s(math.max(300, math.min(900, math.max(minw or 0, tonumber(cfg.qty_w) or 420)))))
+-- Every window of its own keeps where it was left and its size: its kind and its title make it
+-- one. A window not moved yet takes the look set for all of them; the example uses that look.
+F.DLG_GEO_MAX = 200
+
+function F.dlg_geo_all()
+  if not F._dlg_geo then
+    local all = {list = {}, by = {}}
+    for _, line in ipairs(F.read_lines('fhelp_dlg_geo.txt')) do
+      local kind, tkey, x, y, w, h = line:match('^([^|]*)|([^|]*)|(%-?%d+)|(%-?%d+)|(%d+)|(%d+)$')
+      if kind then
+        local g = {key = kind .. '|' .. tkey, x = tonumber(x), y = tonumber(y), w = tonumber(w), h = tonumber(h)}
+        if not all.by[g.key] then
+          all.by[g.key] = g
+          all.list[#all.list + 1] = g
+        end
+      end
+    end
+    F._dlg_geo = all
+  end
+  return F._dlg_geo
+end
+
+function F.dlg_geo_key(q)
+  local tkey = tostring(q.tkey or F.lower_fast(q.title or '')):gsub('[\r\n|]', ' ')
+  return (q.kind or 'qty') .. '|' .. tkey
+end
+
+function F.dlg_geo(q)
+  if q.sample then
+    return {sample = true, x = tonumber(cfg.qty_x) or -1, y = tonumber(cfg.qty_y) or -1,
+      w = tonumber(cfg.qty_w) or 420, h = tonumber(cfg.qty_h) or 0}
+  end
+  local key = F.dlg_geo_key(q)
+  local g = F.dlg_geo_all().by[key]
+  if g then return g end
+  return {key = key, new = true, x = tonumber(cfg.qty_x) or -1, y = tonumber(cfg.qty_y) or -1,
+    w = tonumber(cfg.qty_w) or 420, h = tonumber(cfg.qty_h) or 0}
+end
+
+function F.dlg_geo_save()
+  local out = {}
+  for _, g in ipairs(F.dlg_geo_all().list) do
+    out[#out + 1] = string.format('%s|%d|%d|%d|%d', g.key, math.floor(g.x), math.floor(g.y), math.floor(g.w), math.floor(g.h))
+  end
+  F.write_lines('fhelp_dlg_geo.txt', out)
+end
+
+-- Moved or resized: kept. The example's goes to the look of all windows, as the sliders.
+function F.dlg_geo_keep(g)
+  if g.sample then
+    cfg.qty_x, cfg.qty_y, cfg.qty_w, cfg.qty_h = g.x, g.y, g.w, g.h
+    if ui.qty_w then ui.qty_w[0], ui.qty_h[0] = cfg.qty_w, cfg.qty_h end
+    dirty = true
+    return
+  end
+  local all = F.dlg_geo_all()
+  g.new = nil
+  all.by[g.key] = g
+  for i, e in ipairs(all.list) do
+    if e == g then
+      table.remove(all.list, i)
+      break
+    end
+  end
+  all.list[#all.list + 1] = g
+  while #all.list > F.DLG_GEO_MAX do
+    local old = table.remove(all.list, 1)
+    all.by[old.key] = nil
+  end
+  F.dlg_geo_save()
+end
+
+function F.dlg_geo_clear()
+  F._dlg_geo = {list = {}, by = {}}
+  F.write_lines('fhelp_dlg_geo.txt', {})
+  if F.qty then F.qty.geo = nil end
+end
+
+function F.qty_box(sw, sh, nat, minw, g)
+  g = g or {w = tonumber(cfg.qty_w) or 420, h = tonumber(cfg.qty_h) or 0}
+  local ww = math.floor(F.s(math.max(300, math.min(900, math.max(minw or 0, tonumber(g.w) or 420)))))
   ww = math.max(math.floor(F.s(200)), math.min(ww, sw - 8))
-  local want = tonumber(cfg.qty_h) or 0
+  local want = tonumber(g.h) or 0
   want = want > 0 and math.floor(F.s(math.max(F.QTY_MIN_H, math.min(700, want)))) or 0
   local wh = math.min(math.max(nat, want), sh - 8)
   return ww, wh, math.max(0, wh - nat)
@@ -8839,6 +8927,7 @@ end
 function F.draw_qty()
   local q = F.qty
   if not q then return end
+  F._seen_qty = os.clock()
   local io = imgui.GetIO()
   local sw, sh = io.DisplaySize.x, io.DisplaySize.y
   if sw < 100 then sw = 1366 end
@@ -8861,10 +8950,15 @@ function F.draw_qty()
   -- The height is the content's, measured at the end of the last frame; a height set in the
   -- settings or by the corner adds room under the server's text.
   local nat = q.nat or math.floor(F.s(250))
-  local ww, wh, fill = F.qty_box(sw, sh, nat, F.dlg_minw(q))
+  local geo = q.geo
+  if not geo then
+    geo = F.dlg_geo(q)
+    q.geo = geo
+  end
+  local ww, wh, fill = F.qty_box(sw, sh, nat, F.dlg_minw(q), geo)
   local WF = imgui.WindowFlags
   local flags = WF.NoTitleBar + WF.NoResize + WF.NoScrollbar + WF.NoScrollWithMouse + WF.NoCollapse + WF.NoSavedSettings + WF.NoMove
-  local x, y = tonumber(cfg.qty_x) or -1, tonumber(cfg.qty_y) or -1
+  local x, y = tonumber(geo.x) or -1, tonumber(geo.y) or -1
   if x < 0 then x = (sw - ww) / 2 end
   if y < 0 then y = sh * 0.45 - wh / 2 end
   x = math.max(0, math.min(sw - ww, x))
@@ -8899,12 +8993,12 @@ function F.draw_qty()
   imgui.InvisibleButton('##qtydrag', imgui.ImVec2(math.max(1, ww - pad - F.s(icons)), hh))
   if imgui.IsItemActive() and imgui.IsMouseDragging(0) then
     local md = io.MouseDelta
-    cfg.qty_x = math.floor(math.max(0, math.min(sw - ww, x + md.x)))
-    cfg.qty_y = math.floor(math.max(0, math.min(sh - wh, y + md.y)))
+    geo.x = math.floor(math.max(0, math.min(sw - ww, x + md.x)))
+    geo.y = math.floor(math.max(0, math.min(sh - wh, y + md.y)))
     F._qty_moved = true
   elseif F._qty_moved and not imgui.IsItemActive() and not F._qty_rs then
     F._qty_moved = nil
-    dirty = true
+    F.dlg_geo_keep(geo)
   end
   -- Head, as the menu's: the accent square, the title and what this window is.
   local ls = math.floor(F.s(32))
@@ -9001,7 +9095,7 @@ function F.draw_qty()
   if not empty then F.dlg_halo(math.min(rad * 0.5, bh / 2)) end
   F.advance(p, w, bh + pad)
   q.nat = math.ceil(p.y + bh + pad - wp.y - fill)
-  F.qty_grip(q, wp, ww, wh, sw, sh)
+  F.qty_grip(q, wp, ww, wh, sw, sh, geo)
   imgui.End()
   imgui.PopStyleVar(4)
   F.done_font(font_main)
@@ -9024,7 +9118,8 @@ end
 
 -- The corner at the bottom right: pulled, it sets the width and the height. They are kept in
 -- design pixels, as the sliders in the settings show them.
-function F.qty_grip(q, wp, ww, wh, sw, sh)
+function F.qty_grip(q, wp, ww, wh, sw, sh, g)
+  g = g or q.geo or F.dlg_geo(q)
   local gs = math.floor(F.s(14))
   local gx, gy = wp.x + ww - gs - 1, wp.y + wh - gs - 1
   imgui.SetCursorScreenPos(imgui.ImVec2(gx, gy))
@@ -9037,16 +9132,15 @@ function F.qty_grip(q, wp, ww, wh, sw, sh)
     local r = F._qty_rs
     r.w = math.max(300, math.min(900, r.w + md.x / sc, (sw - wp.x) / sc))
     r.h = math.max(F.QTY_MIN_H, math.min(700, r.h + md.y / sc, (sh - wp.y) / sc))
-    cfg.qty_w, cfg.qty_h = math.floor(r.w), math.floor(r.h)
-    if q.nat and r.h * sc <= q.nat then cfg.qty_h = 0 end
+    g.w, g.h = math.floor(r.w), math.floor(r.h)
+    if q.nat and r.h * sc <= q.nat then g.h = 0 end
     -- The corner moves the window too when it is centred: it is pinned where it is.
-    if (tonumber(cfg.qty_x) or -1) < 0 or (tonumber(cfg.qty_y) or -1) < 0 then
-      cfg.qty_x, cfg.qty_y = math.floor(wp.x), math.floor(wp.y)
+    if (tonumber(g.x) or -1) < 0 or (tonumber(g.y) or -1) < 0 then
+      g.x, g.y = math.floor(wp.x), math.floor(wp.y)
     end
-    if ui.qty_w then ui.qty_w[0], ui.qty_h[0] = cfg.qty_w, cfg.qty_h end
   elseif F._qty_rs then
     F._qty_rs = nil
-    dirty = true
+    F.dlg_geo_keep(g)
   end
   local col = F.col(held and 'accent' or 'text', (hot or held) and 230 or 90)
   local dl = imgui.GetWindowDrawList()
@@ -9430,12 +9524,37 @@ function F.iv_sale_clear(why)
   F.log_line('Инвентарь: отметки «в лавке» сняты — ' .. tostring(why))
 end
 
+-- The menu of the player's own stall («Лавка №N»: «Прекратить …»): the line picked there ends
+-- the trading, and nothing of the bag is in the stall any more.
+function F.iv_stall_dlg(id, style, title, text)
+  F._stall_dlg = nil
+  local t = F.game_text(title or '')
+  if not t:find('Лавка', 1, true) then return end
+  local lines = {}
+  for line in (F.game_text(text or '') .. '\n'):gmatch('(.-)\r?\n') do lines[#lines + 1] = line end
+  -- A list with a header row counts its items from the second line.
+  F._stall_dlg = {id = id, lines = lines, head = style == 5 and 1 or 0}
+end
+
+function F.iv_stall_answer(id, button, list)
+  local d = F._stall_dlg
+  F._stall_dlg = nil
+  if not d or d.id ~= id or button ~= 1 then return end
+  local line = d.lines[(tonumber(list) or -1) + 1 + d.head]
+  if not line then return end
+  local low = F.lower_fast(line)
+  if low:find('прекрат', 1, true) or low:find('закрыть лавк', 1, true) or low:find('снять лавк', 1, true) then
+    F.iv_sale_clear('лавка снята')
+  end
+end
+
 -- The chat says a stall is closed: nothing of the bag is in it any more.
 function F.iv_chat(text)
   if not next(F.iv.sale or {}) then return end
   local low = F.lower_fast(F.game_text(text))
   if not low:find('лавк', 1, true) then return end
-  if low:find('закры', 1, true) or low:find('истек', 1, true) or low:find('истёк', 1, true) or low:find('освобод', 1, true) then
+  if low:find('закры', 1, true) or low:find('истек', 1, true) or low:find('истёк', 1, true) or low:find('освобод', 1, true)
+    or low:find('прекрат', 1, true) or low:find('снял', 1, true) or low:find('убрал', 1, true) then
     F.iv_sale_clear('лавка закрыта')
   end
 end
@@ -9587,6 +9706,7 @@ function F.iv_take(text)
     end
   end
   if iv.open and not iv.preview then return true end
+  if iv.hold then return true end
   local now = os.clock()
   local viewing = now - (iv.view_at or -100) < 2
   if not viewing and not F.iv_exact() then
@@ -9598,6 +9718,67 @@ function F.iv_take(text)
     end
     return false
   end
+  -- A moment of waiting first: a trade (or a workshop, a crafting) comes right after the window,
+  -- and then the game gets it all untouched, in the order it came.
+  if (F.IV_HOLD or 0) > 0 then
+    iv.hold = {raw = text, at = now, q = {}, viewing = viewing}
+    return true
+  end
+  return F.iv_open_now(text, viewing)
+end
+
+F.IV_HOLD = 0.3
+
+-- A packet that came while the opening is held: kept for later. A window fHelper does not do,
+-- or another view, ends the waiting at once.
+function F.iv_hold_add(text)
+  local h = F.iv.hold
+  h.q[#h.q + 1] = text
+  local shown = false
+  for evn, val in text:gmatch("event%.inventory%.(set%a+Visible)['\"]%s*,%s*`%s*%[?%s*([%w]+)") do
+    shown = true
+    if F.IV_FOREIGN_VIEW[evn] and (val == 'true' or val == '1') then h.foreign = evn end
+  end
+  -- What of the kind came: given to the game with the window, if it is given back later.
+  if shown and not h.foreign then
+    h.vis = h.vis or {}
+    if #h.vis < 12 then h.vis[#h.vis + 1] = text end
+  end
+  if text:find('event.setActiveView', 1, true) then
+    local view = text:match('`%s*%[%s*"([^"]+)"')
+    if view ~= 'Inventory' then h.foreign = h.foreign or ('вид ' .. tostring(view)) end
+  end
+  if h.foreign then
+    F._iv_gave = text
+    F.iv_hold_end()
+  elseif #h.q > 300 then
+    F.iv_hold_end()
+  end
+end
+
+function F.iv_hold_end()
+  local iv = F.iv
+  local h = iv.hold
+  if not h then return end
+  iv.hold = nil
+  if h.foreign then
+    iv.game_mode = true
+    F._iv_pass = os.clock() + 2
+    F.ivst.games = F.ivst.games + 1
+    pcall(F.iv_note, 'окно игры не тронуто: ' .. tostring(h.foreign))
+    pcall(F.cef_emul, h.raw)
+    -- The game heard none of these without its window: now it does, in the order they came.
+    for _, t in ipairs(h.q) do pcall(F.cef_emul, t) end
+    return
+  end
+  -- fHelper's own window: what came meanwhile is already read, nothing is sent again.
+  F.iv_open_now(h.raw, h.viewing)
+  if h.vis then F.iv.vis = h.vis end
+end
+
+function F.iv_open_now(text, viewing)
+  local iv = F.iv
+  local now = os.clock()
   iv.open, iv.raw, iv.at, iv.drawn, iv.preview = true, text, now, false, nil
   iv.vis = nil
   iv.view_mode = viewing or nil
@@ -9933,6 +10114,7 @@ function F.iv_tick()
   end
   if F._iv_pal0 then F.iv_pal_pop() end
   local iv = F.iv
+  if iv.hold and os.clock() - iv.hold.at >= F.IV_HOLD then F.iv_hold_end() end
   if iv.open and not iv.drawn and not F.iv_covered() and os.clock() - iv.at > F.IV_WAIT then
     F._iv_off = true
     F.iv_game('своё не нарисовалось')
@@ -9942,6 +10124,7 @@ function F.iv_tick()
   if iv.menu_wait and os.clock() - iv.menu_wait.at > 3 then iv.menu_wait = nil end
   F.iv_sale_tick()
   if iv.dirty and os.clock() - (iv.saved or 0) > F.IV_SAVE_EVERY then F.iv_flush() end
+  pcall(F.tw_tick)
 end
 
 function F.iv_count(b)
@@ -11195,6 +11378,7 @@ end
 function F.draw_iv()
   local iv = F.iv
   if not iv.open then return end
+  F._seen_iv = os.clock()
   local io = imgui.GetIO()
   local sw, sh = io.DisplaySize.x, io.DisplaySize.y
   if sw < 100 then sw = 1366 end
@@ -16115,7 +16299,16 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.22', '20.11.2026', {
+    {'fix', 'Esc больше не застревает: fHelper забирает его себе, только когда его окно (инвентарь, своё окно, рубка) действительно на экране', 'screen'},
+    {'fix', 'Часы игры («Ваш онлайн», «Закрыть Esc»): если через секунду после Esc меню игры не открылось, fHelper закрывает часы так же, как кнопка «Закрыть», и убирает их с экрана', 'screen'},
+    {'fix', 'Инвентарь: в машине снова есть кнопки транспорта и багажника — пока своё окно ждёт долю секунды перед открытием, всё, что присылает сервер, читается как обычно', 'screen'},
+    {'new', 'Свои окна: каждое окно (по виду и названию) запоминает своё место и размер отдельно. Сдвинул или растянул одно — остальные не сбиваются', 'screen'},
+  }},
   {'1.19.21', '20.11.2026', {
+    {'fix', 'Инвентарь: после «Прекратить торговлю» в меню своей лавки отметки «в лавке» сразу снимаются, а не висят до конца суток', 'screen'},
+    {'fix', 'Инвентарь: трейд с игроком fHelper больше не трогает. Своё окно открывается через долю секунды, и если за это время пришёл трейд, всё целиком и по порядку отдаётся окну игры: мышка, клики и имя игрока на месте', 'screen'},
+    {'fix', 'Часы игры («Ваш онлайн», «Закрыть Esc») больше не висят: если Esc до них не дошёл, fHelper закрывает их так же, как кнопка «Закрыть». События игры, пришедшие в одном пакете с инвентарём или рубкой, тоже доходят до игры', 'screen'},
     {'fix', 'Инвентарь: трейд с игроком снова открывается. Своё окно инвентаря отдаёт место окну игры, и окно трейда приходит ему уже после открытия, а не теряется', 'screen'},
   }},
   {'1.19.20', '19.11.2026', {
@@ -17146,6 +17339,7 @@ end
 function F.draw_lg()
   local lg = F.lg
   if not lg then return end
+  F._seen_lg = os.clock()
   local io = imgui.GetIO()
   local sw, sh = io.DisplaySize.x, io.DisplaySize.y
   if sw < 100 then sw = 1366 end
@@ -17329,14 +17523,96 @@ function F.cef_packet(bs)
   return res
 end
 
+-- The game's clock with «Закрыть Esc» (time widget): shown while the server's info has components.
+-- The game closes it on Esc by telling the server; when that Esc does not reach the game's
+-- window, fHelper tells the server the same, once.
+F.TW_WAIT = 1.0
+
+function F.tw_packet(text)
+  if not text:find('setTimeWidget', 1, true) then return end
+  local info = text:match("setTimeWidgetInfo['\"]%s*,%s*`(.-)`")
+  if info then
+    F.tw_open = info:find('"components"%s*:%s*%[%s*[^%]%s]') ~= nil or nil
+  elseif text:find('setTimeWidgetHide', 1, true) then
+    local v = text:match("setTimeWidgetHide['\"]%s*,%s*`(.-)`") or ''
+    F.tw_open = v:find('"components"%s*:%s*%[%s*[^%]%s]') ~= nil or nil
+  end
+  if not F.tw_open then F.tw_esc = nil end
+end
+
+F.TW_HIDE = "window.executeEvent('event.arizonahud.setTimeWidgetHide', `[{}]`);"
+
+-- Esc went to the game and its menu did not open a moment later: the clock (which keeps the
+-- menu shut while it is shown) is closed as by its button, and taken off the game's screen.
+function F.tw_tick()
+  local at = F.tw_esc
+  if not at or os.clock() - at < F.TW_WAIT then return end
+  F.tw_esc = nil
+  local ok, pause = pcall(isPauseMenuActive)
+  if ok and pause then return end
+  local was = F.tw_open
+  if was then pcall(F.cef_send, 'hud.timer.close') end
+  F.tw_open = nil
+  pcall(F.cef_emul, F.TW_HIDE)
+  if was and not F._tw_logged then
+    F._tw_logged = true
+    F.log_line('Часы игры не закрылись по Esc: закрыты так же, как кнопкой «Закрыть»')
+  end
+end
+
+-- Esc with the clock shown: once a session, what had it, to learn why it stays.
+function F.tw_esc_note(now)
+  F._tw_notes = (F._tw_notes or 0) + 1
+  if F._tw_notes > 3 then return end
+  local iv, lg = F.iv or {}, F.lg
+  F.log_line(string.format('Esc при часах игры: меню %s, окно %s (видно %.1f с назад), инвентарь %s (видно %.1f с назад), рубка %s, ожидание %s',
+    tostring(show), tostring(F.qty ~= nil), now - (F._seen_qty or -100), tostring(iv.open), now - (F._seen_iv or -100),
+    tostring(lg ~= nil and lg.open), tostring(iv.hold ~= nil)))
+end
+
+-- A packet held back for fHelper may carry other events of the game: those still go to it.
+function F.cef_rest(text, mine)
+  local rest, n = {}, 0
+  for st in text:gmatch("window%.executeEvent%(%s*'[^']*'%s*,%s*`.-`%s*%);") do
+    n = n + 1
+    if not st:find(mine, 1, true) then rest[#rest + 1] = st end
+  end
+  if n < 2 then return 0 end
+  for _, st in ipairs(rest) do pcall(F.cef_emul, st) end
+  return #rest
+end
+
 function F.cef_packet_run(bs)
   local ok, text = pcall(F.cef_text, bs)
   pcall(raknetBitStreamResetReadPointer, bs)
   if not ok or type(text) ~= 'string' then return end
   F._inv_json = nil
+  -- The inventory's opening is held: what comes meanwhile waits too, to keep the order.
+  -- Should the main loop stall, the waiting still ends here.
+  if F.iv.hold and os.clock() - F.iv.hold.at > 1 then pcall(F.iv_hold_end) end
+  -- What comes meanwhile goes on as always (fHelper reads it: the car, the trunk, the lists),
+  -- and is noted: should a trade come, the game gets the window and all of it again, in order.
+  if F.iv.hold then
+    local okh, errh = pcall(F.iv_hold_add, text)
+    if not okh then
+      F.feed_err('окно инвентаря', errh)
+      if F.iv.hold then F.iv.hold.foreign = F.iv.hold.foreign or 'ошибка' end
+      pcall(F.iv_hold_end)
+      F.iv.hold = nil
+    end
+    -- Given to the game: this one came again with the rest, in its turn.
+    if F._iv_gave == text then
+      F._iv_gave = nil
+      return false
+    end
+  end
+  pcall(F.tw_packet, text)
   local okl, mine = pcall(F.lg_packet, text)
   if not okl then F.feed_err('рубка', mine) end
-  if okl and mine then return false end
+  if okl and mine then
+    pcall(F.cef_rest, text, 'umbering')
+    return false
+  end
   local fine0, err0 = pcall(F.iv_packet, text)
   if not fine0 then F.feed_err('окно инвентаря', err0) end
   -- Held back: it comes again right after the game's window, in its turn.
@@ -17346,6 +17622,7 @@ function F.cef_packet_run(bs)
   if not okt then F.feed_err('окно инвентаря', took) end
   if okt and took then
     pcall(F.car_packet, text)
+    pcall(F.cef_rest, text, 'event.setActiveView')
     return false
   end
   local fine, err = pcall(F.car_packet, text)
@@ -26706,7 +26983,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 48
+F.BUILD = 49
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -27351,27 +27628,40 @@ addEventHandler('onWindowMessage', function(msg, wparam, lparam)
   -- The wood cutting: the moment the left button is let go, as Windows tells it.
   if msg == 0x202 and F.lg and F.lg.open then F._lg_up_at = os.clock() end
   if wparam ~= 0x1B or (msg ~= 0x100 and msg ~= 0x101) then return end
+  -- Esc is fHelper's only while its window is really on the screen: a window that is not drawn
+  -- (gone with a reconnect, hidden by the game) must not keep Esc from the game and its clock.
+  local now = os.clock()
+  local function seen(at, opened) return now - (at or -100) < 0.5 or now - (opened or -100) < 0.5 end
+  if msg == 0x100 and F.tw_open then pcall(F.tw_esc_note, now) end
   -- Esc in fHelper's wood cutting leaves it, as in the game's window.
-  if F.lg and F.lg.open then
+  if F.lg and F.lg.open and seen(F._seen_lg, F.lg.at) then
     consumeWindowMessage(true, false)
     if msg == 0x100 then pcall(F.lg_exit) end
     return
   end
   -- Esc in fHelper's window of the amount is «Отмена», as in the game's own.
-  if F.qty then
+  if F.qty and seen(F._seen_qty, F.qty.at) then
     consumeWindowMessage(true, false)
     if msg == 0x100 then F.qty_send(0) end
     return
   end
   -- Esc in fHelper's inventory closes its menu of actions, then the inventory itself.
-  if F.iv and F.iv.open and not F.iv_covered() then
+  if F.iv and F.iv.open and not F.iv_covered() and seen(F._seen_iv, F.iv.at) then
     consumeWindowMessage(true, false)
     if msg == 0x100 then
       if F.iv.menu then F.iv.menu = nil else F.iv_close(true) end
     end
     return
   end
-  if not show and not modal and not capture and not F.calc_focus then return end
+  if not show and not modal and not capture and not F.calc_focus then
+    -- Esc for the game's clock: if the game misses it, fHelper closes the clock a moment later.
+    -- Not only when fHelper saw the clock come: Esc that did not open the game's menu is enough.
+    if msg == 0x100 then
+      local ok, chat = pcall(sampIsChatInputActive)
+      if not (ok and chat) then F.tw_esc = now end
+    end
+    return
+  end
   -- Chat and server dialogs close on Esc by themselves.
   if F.typing() then return end
   consumeWindowMessage(true, false)
