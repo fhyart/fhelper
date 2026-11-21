@@ -2,11 +2,11 @@
 -- /fhelp opens the menu, /fhelpreload reloads it if the window sticks.
 -- UTF-8 file. ImGui gets these strings as UTF-8. Chat is converted to CP1251.
 
-local VER = '1.19.22'
+local VER = '1.19.23'
 script_name('fHelper')
 script_author('fhyart')
 script_version(VER)
-script_version_number(49)
+script_version_number(50)
 script_description('fHelper. Команда /fhelp')
 script_properties('work-in-pause')
 
@@ -5032,180 +5032,15 @@ function F.apply_limiter(force)
   end
 end
 
--- Cursor. The pointer of SA-MP (in the chat, in the server's windows and in fHelper's) is
--- mouse.png in the game folder: 32x32, its point in the top left corner. SA-MP reads it once, when
--- the game starts, so a new one shows after the next start. fHelper draws its pointers here by
--- code and writes one there. The game's own file is kept the first time in
--- config\fhelp_mouse_orig.png, and «Как в игре» puts it back.
+-- Cursor. fHelper no longer changes the pointer of SA-MP (mouse.png in the game folder). One it
+-- wrote there before is replaced by the game's own, kept in config\fhelp_mouse_orig.png.
 F.CUR_MARK = 'fHelper cursor'
-F.CUR_STYLES = {
-  {1, 'Неон', 'Тёмное стекло с цветной каймой и мягким свечением'},
-  {2, 'Капля', 'Округлая стрелка без хвоста, светлая кайма и тень'},
-  {3, 'Дротик', 'Тонкий острый наконечник в два тона'},
-}
-F.CUR_COLS = {
-  {0, 'Как в меню'}, {1, 'Белый', {244, 246, 250}}, {2, 'Лёд', {96, 196, 255}}, {3, 'Мята', {80, 226, 168}},
-  {4, 'Роза', {255, 112, 184}}, {5, 'Золото', {255, 196, 72}}, {6, 'Лаванда', {168, 136, 255}},
-}
-F.CUR_SHAPES = {
-  {{0.6, 0.6}, {0.6, 20.5}, {5.4, 16.1}, {8.7, 23.6}, {12.2, 22.1}, {8.9, 14.8}, {15.4, 14.8}},
-  {{2, 2}, {2, 17}, {5.8, 13.3}, {12.6, 13}},
-  {{0.6, 0.6}, {19, 7.6}, {9.6, 9.6}, {7.6, 19}},
-}
-
-function F.cur_rgb(col)
-  local c = F.CUR_COLS[(tonumber(col) or 0) + 1]
-  if c and c[3] then return c[3][1], c[3][2], c[3][3] end
-  local acc = math.floor(tonumber(cfg.ui_acc) or F.LOOK_DEF.ui_acc)
-  return math.floor(acc / 65536) % 256, math.floor(acc / 256) % 256, acc % 256
-end
-
--- The distance from a point to the edge of a polygon, below zero inside.
-function F.cur_sd(poly, x, y)
-  local d, inside, j = 1e9, false, #poly
-  for i = 1, #poly do
-    local ax, ay, bx, by = poly[j][1], poly[j][2], poly[i][1], poly[i][2]
-    local ex, ey, wx, wy = bx - ax, by - ay, x - ax, y - ay
-    local t = (wx * ex + wy * ey) / (ex * ex + ey * ey)
-    if t < 0 then t = 0 elseif t > 1 then t = 1 end
-    local dx, dy = wx - ex * t, wy - ey * t
-    if dx * dx + dy * dy < d then d = dx * dx + dy * dy end
-    if (ay > y) ~= (by > y) and x < ax + (y - ay) * ex / ey then inside = not inside end
-    j = i
-  end
-  d = math.sqrt(d)
-  return inside and -d or d
-end
-
-local function cur_c(v)
-  if v < 0 then return 0 elseif v > 1 then return 1 end
-  return v
-end
-
--- 32x32 pixels {r, g, b, a}, row by row. Each layer lies over the ones before it; the edges
--- are smooth because a pixel half inside the shape is half covered.
-function F.cur_pixels(style, col)
-  local poly = F.CUR_SHAPES[style]
-  if not poly then return nil end
-  local cr, cg, cb = F.cur_rgb(col)
-  local out = {}
-  for y = 0, 31 do
-    for x = 0, 31 do
-      local px, py = x + 0.5, y + 0.5
-      local r, g, b, a = 0, 0, 0, 0
-      local function lay(lr, lg, lb, la)
-        if la <= 0 then return end
-        if la > 1 then la = 1 end
-        r = lr / 255 * la + r * (1 - la)
-        g = lg / 255 * la + g * (1 - la)
-        b = lb / 255 * la + b * (1 - la)
-        a = la + a * (1 - la)
-      end
-      local sd = F.cur_sd(poly, px, py)
-      if style == 1 then
-        if sd > 0 then lay(cr, cg, cb, 0.55 * math.exp(-sd / 1.7)) end
-        lay(cr, cg, cb, cur_c(0.5 - sd))
-        local k = 0.22 * cur_c(1 - (px + py) / 34)
-        lay(16 + cr * k, 18 + cg * k, 26 + cb * k, 0.94 * cur_c(0.5 - (sd + 1.5)))
-      elseif style == 2 then
-        sd = sd - 1.3
-        local so = F.cur_sd(poly, px - 1.2, py - 1.8) - 1.3
-        lay(0, 0, 0, 0.42 * cur_c((2.6 - so) / 3.6))
-        lay(255, 255, 255, cur_c(0.5 - sd))
-        local k = 0.38 * (1 - cur_c((py - 2) / 15))
-        lay(cr + (255 - cr) * k, cg + (255 - cg) * k, cb + (255 - cb) * k, cur_c(0.5 - (sd + 1.4)))
-      else
-        local so = F.cur_sd(poly, px - 1, py - 1.4)
-        lay(0, 0, 0, 0.35 * cur_c((2 - so) / 3))
-        lay(20, 20, 28, cur_c(0.5 - sd))
-        local f = 0.7 + 0.3 * cur_c(px - py + 0.5)
-        lay(cr * f, cg * f, cb * f, cur_c(0.5 - (sd + 1.1)))
-      end
-      local q = {0, 0, 0, 0}
-      if a > 0.002 then
-        q[1] = math.floor(math.min(255, r / a * 255) + 0.5)
-        q[2] = math.floor(math.min(255, g / a * 255) + 0.5)
-        q[3] = math.floor(math.min(255, b / a * 255) + 0.5)
-        q[4] = math.floor(math.min(255, a * 255) + 0.5)
-      end
-      out[#out + 1] = q
-    end
-  end
-  return out
-end
-
--- A PNG of RGBA pixels, uncompressed inside (the file stays a few kilobytes).
-function F.png_encode(w, h, px, note)
-  local bit = F.bitlib()
-  if not bit then return nil end
-  if not F._crc_t then
-    local t = {}
-    for n = 0, 255 do
-      local c = n
-      for _ = 1, 8 do
-        if bit.band(c, 1) ~= 0 then c = bit.bxor(0xEDB88320, bit.rshift(c, 1)) else c = bit.rshift(c, 1) end
-      end
-      t[n] = c
-    end
-    F._crc_t = t
-  end
-  local T = F._crc_t
-  local function u32(v)
-    return string.char(bit.band(bit.rshift(v, 24), 255), bit.band(bit.rshift(v, 16), 255), bit.band(bit.rshift(v, 8), 255), bit.band(v, 255))
-  end
-  local function chunk(kind, data)
-    local body = kind .. data
-    local c = bit.bnot(0)
-    for i = 1, #body do c = bit.bxor(T[bit.band(bit.bxor(c, body:byte(i)), 255)], bit.rshift(c, 8)) end
-    return u32(#data) .. body .. u32(bit.bnot(c))
-  end
-  local rows, i = {}, 1
-  for _ = 1, h do
-    local row = {'\0'}
-    for _ = 1, w do
-      local p = px[i]
-      row[#row + 1] = string.char(p[1], p[2], p[3], p[4])
-      i = i + 1
-    end
-    rows[#rows + 1] = table.concat(row)
-  end
-  local raw = table.concat(rows)
-  local z, pos, n = {'\120\1'}, 1, #raw
-  repeat
-    local len = math.min(65535, n - pos + 1)
-    z[#z + 1] = string.char(pos + len > n and 1 or 0, len % 256, math.floor(len / 256), (65535 - len) % 256, math.floor((65535 - len) / 256))
-    z[#z + 1] = raw:sub(pos, pos + len - 1)
-    pos = pos + len
-  until pos > n
-  local s1, s2 = 1, 0
-  for k = 1, n do
-    s1 = (s1 + raw:byte(k)) % 65521
-    s2 = (s2 + s1) % 65521
-  end
-  z[#z + 1] = u32(s2 * 65536 + s1)
-  return '\137PNG\r\n\26\n' .. chunk('IHDR', u32(w) .. u32(h) .. '\8\6\0\0\0')
-    .. (note and chunk('tEXt', 'Software\0' .. note) or '') .. chunk('IDAT', table.concat(z)) .. chunk('IEND', '')
-end
-
-function F.cur_png(style, col)
-  F._cur_png = F._cur_png or {}
-  local key = style .. '|' .. col .. '|' .. tostring(cfg.ui_acc)
-  if F._cur_png[key] == nil then
-    local px = F.cur_pixels(style, col)
-    F._cur_png[key] = px and F.png_encode(32, 32, px, F.CUR_MARK) or false
-  end
-  return F._cur_png[key] or nil
-end
 
 function F.cur_game_path()
   if type(getGameDirectory) ~= 'function' then return nil end
   local ok, dir = pcall(getGameDirectory)
   if not ok or type(dir) ~= 'string' or dir == '' then return nil end
   return dir .. '\\mouse.png'
-end
-
-function F.cur_orig_path()
-  return F.cfg_dir() .. '\\fhelp_mouse_orig.png'
 end
 
 function F.cur_read(path)
@@ -5216,143 +5051,30 @@ function F.cur_read(path)
   return data
 end
 
-function F.cur_write(path, data)
-  local f = path and io.open(path, 'wb')
-  if not f then return false end
-  local ok = f:write(data)
-  f:close()
-  return ok and true or false
-end
-
-function F.cur_ours(data)
-  return data and data:find(F.CUR_MARK, 1, true) ~= nil
-end
-
--- The game's own pointer: the copy, or the file in the game folder while it is still the game's.
-function F.cur_orig()
-  local now = F.cur_read(F.cur_game_path())
-  if now and not F.cur_ours(now) then return now end
-  return F.cur_read(F.cur_orig_path())
-end
-
--- Puts the chosen pointer into the game folder. 'same', 'done' or why it could not.
-function F.cur_apply()
+-- 'same' when the pointer is the game's, 'done', or why it could not.
+function F.cur_restore()
   local path = F.cur_game_path()
   if not path then return 'nogame' end
-  local style = math.floor(tonumber(cfg.cur_style) or 0)
   local now = F.cur_read(path)
-  if style == 0 then
-    if not F.cur_ours(now) then return 'same' end
-    local orig = F.cur_read(F.cur_orig_path())
-    if not orig then return 'noorig' end
-    return F.cur_write(path, orig) and 'done' or 'fail'
-  end
-  local png = F.cur_png(style, math.floor(tonumber(cfg.cur_col) or 0))
-  if not png then return 'fail' end
-  if now == png then return 'same' end
-  -- The launcher may have put the game's pointer back: the copy follows the game's latest one.
-  if now and not F.cur_ours(now) and not F.cur_write(F.cur_orig_path(), now) then return 'fail' end
-  return F.cur_write(path, png) and 'done' or 'fail'
-end
-
-function F.cur_set(style, col)
-  cfg.cur_style, cfg.cur_col = style, col
-  dirty = true
-  local ok, res = pcall(F.cur_apply)
-  if not ok then
-    F.log_line('Курсор: ' .. tostring(res))
-    res = 'fail'
-  end
-  if res == 'done' then
-    F._cur_wait = true
-    F.notify(style == 0 and 'Курсор игры вернётся после перезапуска игры' or 'Новый курсор появится после перезапуска игры', true)
-  elseif res == 'noorig' then
-    F.notify('Нет копии курсора игры: верни mouse.png в папку игры вручную', true)
-  elseif res == 'nogame' or res == 'fail' then
-    F.notify('Не получилось записать mouse.png в папку игры', true)
-  end
-end
-
-function F.cur_tex(style, col)
-  F._cur_tex = F._cur_tex or {}
-  local key = style .. '|' .. col .. '|' .. tostring(cfg.ui_acc)
-  local e = F._cur_tex[key]
-  if e == nil then
-    local png
-    if style == 0 then png = F.cur_orig() else png = F.cur_png(style, col) end
-    local ok, tex = false, nil
-    if png then ok, tex = pcall(imgui.CreateTextureFromFileInMemory, png, #png) end
-    e = (ok and tex) or false
-    F._cur_tex[key] = e
-  end
-  return e or nil
-end
-
-function F.cursor_card()
-  F.card_begin('Курсор', 'Свой указатель мыши вместо стрелки игры', 'ICON_FA_MOUSE_POINTER')
-  local cur = math.floor(tonumber(cfg.cur_style) or 0)
-  local col = math.floor(tonumber(cfg.cur_col) or 0)
-  local list = {{0, 'Как в игре'}}
-  for _, it in ipairs(F.CUR_STYLES) do list[#list + 1] = it end
-  local p = imgui.GetCursorScreenPos()
-  local w = F.inner_w()
-  local gap = F.s(10)
-  local tw = (w - gap * (#list - 1)) / #list
-  local th = F.s(112)
-  local dl = imgui.GetWindowDrawList()
-  local pick
-  for i, it in ipairs(list) do
-    local x = p.x + (i - 1) * (tw + gap)
-    local hit, hov = F.hotspot('##curst' .. it[1], x, p.y, tw, th)
-    local sel = it[1] == cur
-    local rad = F.s(10)
-    F.round_rect(x, p.y, tw, th, F.col(hov and 'hover' or 'panel'), nil, rad, dl)
-    if sel then
-      F.round_rect(x, p.y, tw, th, F.col('accent', 28), F.col('accent', 210), rad, dl, 2)
-    else
-      F.round_rect(x, p.y, tw, th, nil, F.col('text', hov and 52 or 28), rad, dl, 1)
-    end
-    local sz = math.min(F.s(66), tw - F.s(16))
-    local bx, by = x + (tw - sz) / 2, p.y + F.s(10)
-    local tex = F.cur_tex(it[1], col)
-    -- The pointer fills the top left 24 pixels of its 32: those are shown.
-    if tex then dl:AddImage(tex, imgui.ImVec2(bx, by), imgui.ImVec2(bx + sz, by + sz), imgui.ImVec2(0, 0), imgui.ImVec2(0.75, 0.75)) end
-    local name = F.fit_text(font_main, it[2], tw - F.s(12))
-    F.text_at(font_main, 15, x + (tw - F.text_w(font_main, name)) / 2, p.y + th - F.s(28), F.col('text', sel and 255 or 190), name)
-    if hit then pick = it[1] end
-    if hov and it[3] then F.tip(it[3]) end
-  end
-  F.advance(p, w, th)
-  if pick and pick ~= cur then
-    F.cur_set(pick, col)
-    cur = pick
-  end
-  if cur > 0 then
-    imgui.Spacing()
-    imgui.TextUnformatted('Цвет')
-    local cols = {}
-    for _, c in ipairs(F.CUR_COLS) do cols[#cols + 1] = {c[1], c[2]} end
-    local pc = F.pill_row('##curcol', cols, col)
-    if pc and pc ~= col then F.cur_set(cur, pc) end
-  end
-  imgui.Spacing()
-  if F._cur_wait then F.hint('Сохранено. Перезапусти игру — курсор меняется только при её запуске.', F.cvec('accent')) end
-  F.hint('Это курсор SA-MP: он виден в чате, в окнах сервера и в окнах fHelper. Игра читает его из файла mouse.png один раз при запуске.')
-  F.hint('Курсор игры сохранён в config\\fhelp_mouse_orig.png; «Как в игре» возвращает его. Если лаунчер вернёт свой курсор, fHelper при запуске поставит выбранный снова.')
-  F.card_end()
+  if not now or not now:find(F.CUR_MARK, 1, true) then return 'same' end
+  local orig = F.cur_read(F.cfg_dir() .. '\\fhelp_mouse_orig.png')
+  if not orig or orig:find(F.CUR_MARK, 1, true) then return 'noorig' end
+  local f = io.open(path, 'wb')
+  if not f then return 'fail' end
+  local ok = f:write(orig)
+  f:close()
+  if not ok then return 'fail' end
+  F.log_line('Курсор: в папку игры возвращён её собственный mouse.png, он появится после перезапуска игры')
+  return 'done'
 end
 
 F.SCREEN_SECS = {{'hud', 'Плашка FPS'}, {'time', 'Время'}, {'gfx', 'Графика'}, {'custom', 'Кастомизация'}}
-F.CUSTOM_SECS = {{'qty', 'Свои окна'}, {'inv', 'Инвентарь'}, {'wood', 'Рубка дерева'}, {'cursor', 'Курсор'}}
+F.CUSTOM_SECS = {{'qty', 'Свои окна'}, {'inv', 'Инвентарь'}, {'wood', 'Рубка дерева'}}
 
 function F.draw_custom()
   local sec = F.sections('screencustom', F.CUSTOM_SECS)
   if sec == 'inv' then
     F.iv_set_card()
-    return
-  end
-  if sec == 'cursor' then
-    F.cursor_card()
     return
   end
   if sec == 'wood' then
@@ -9181,6 +8903,12 @@ F.IV_ACTIONS = {
   {524288, 'Передать'}, {4194304, 'Рейтинг'}, {2097152, 'Завершить аренду'}, {8388608, 'Активировать'},
   {16777216, 'Деактивировать'}, {33554432, 'Скопировать'},
 }
+function F.iv_act_name(bit)
+  for _, a in ipairs(F.IV_ACTIONS) do
+    if a[1] == bit then return a[2] end
+  end
+  return tostring(bit)
+end
 F.IV_DANGER = {[4] = true}
 F.IV_ACT_ICON = {
   [1] = 'ICON_FA_HAND_POINTER', [2] = 'ICON_FA_TSHIRT', [64] = 'ICON_FA_BOX_OPEN', [4] = 'ICON_FA_TRASH_ALT',
@@ -9772,7 +9500,8 @@ function F.iv_hold_end()
     return
   end
   -- fHelper's own window: what came meanwhile is already read, nothing is sent again.
-  F.iv_open_now(h.raw, h.viewing)
+  -- «Обзор» of another player said so after the window came: it is that view.
+  F.iv_open_now(h.raw, h.viewing or (iv.view_at or -100) >= h.at)
   if h.vis then F.iv.vis = h.vis end
 end
 
@@ -9917,6 +9646,7 @@ function F.iv_menu_got(t, slot, bits)
   pcall(F.iv_note, 'меню: блок ' .. tostring(t) .. ', ячейка ' .. tostring(slot) .. ', биты ' .. tostring(bits))
   local w = F.iv.menu_wait
   F.iv.menu_wait = nil
+  pcall(F.iv_car_note, string.format('меню предмета: блок %s, ячейка %s, кнопки %s', tostring(t), tostring(slot), tostring(bits)))
   if not F.iv.open then return end
   F.iv.menu = {type = t, slot = slot or (w and w.slot) or 0, bits = bits, x = w and w.x, y = w and w.y}
 end
@@ -9939,6 +9669,7 @@ function F.iv_action(bit)
     end
     return
   end
+  pcall(F.iv_car_note, string.format('нажато «%s»: блок %d, ячейка %d', F.iv_act_name(bit), m.type, m.slot))
   -- With the guards' tab open the game names the guard in every action, as here.
   if F.iv.side == 'guard' and F.iv.gid then
     F.iv_send('clickOnButton', string.format('{"type": %d,"slot": %d, "action": %d, "id": %d}', m.type, m.slot, bit, F.iv.gid))
@@ -9971,6 +9702,7 @@ function F.iv_drop(from, to, amount)
     if amt then out = out .. ',"amount":' .. math.max(1, math.floor(amt)) end
     return out .. '}'
   end
+  pcall(F.iv_car_note, string.format('перенос из блока %d, ячейки %d в блок %d, ячейку %d', from.type, from.slot, to.type, to.slot))
   F.iv_send('inventory.moveItem', '{"from":' .. cell(from, amount) .. ',"to":' .. cell(to) .. '}')
 end
 
@@ -11131,6 +10863,26 @@ function F.iv_wheel(x, y, w, h, key, pages, acc)
   if acc then F.iv_acc_page(p) else iv[key] = p end
 end
 
+-- In a car: what the item's clicks got, a few times a session, to learn what stops them there.
+function F.iv_in_car()
+  local ok, inside = pcall(isCharInAnyCar, PLAYER_PED)
+  return ok and inside and true or false
+end
+
+function F.iv_car_note(text)
+  if not F.iv_in_car() then return end
+  F._iv_car_notes = (F._iv_car_notes or 0) + 1
+  if F._iv_car_notes > 8 then return end
+  F.log_line('Инвентарь в машине: ' .. text)
+end
+
+function F.iv_refuse_note(hover)
+  local r = hover.r
+  local why = r.na and 'сервер пометил его недоступным' or 'на нём отметка лавки'
+  pcall(F.iv_note, 'клик не прошёл: блок ' .. tostring(hover.type) .. ', ячейка ' .. tostring(hover.slot) .. ', ' .. why)
+  F.iv_car_note(string.format('клик по «%s» (блок %s, ячейка %s) не прошёл: %s', F.item_label(r.item), tostring(hover.type), tostring(hover.slot), why))
+end
+
 function F.iv_input(hover)
   local iv = F.iv
   if iv.menu then return end
@@ -11138,6 +10890,7 @@ function F.iv_input(hover)
   local m = imgui.GetMousePos()
   -- An unavailable item takes no actions, as in the game.
   if hover and hover.r and (hover.r.na or F.iv_sale_of(hover.type, hover.slot, hover.r)) and (imgui.IsMouseClicked(0) or imgui.IsMouseClicked(1)) and not iv.sel then
+    pcall(F.iv_refuse_note, hover)
     return
   end
   if imgui.IsMouseClicked(1) and hover and hover.r then
@@ -16299,6 +16052,11 @@ end
 -- Update notes. New entries go on top.
 
 F.PATCH = {
+  {'1.19.23', '21.11.2026', {
+    {'del', 'Смена курсора: курсор теперь всегда как в игре. Если раньше был выбран свой, fHelper вернёт курсор игры, он появится после перезапуска игры', 'screen'},
+    {'fix', 'Осмотр другого игрока снова открывается своей панелью: после недавней правки инвентаря fHelper открывал вместо неё обычный инвентарь', 'screen'},
+    {'fix', 'PAYDAY игры больше не висит: если через секунду после Esc меню игры не открылось, fHelper убирает PAYDAY с экрана, как и часы. В журнал пишется, когда сервер сам его убрал', 'screen'},
+  }},
   {'1.19.22', '20.11.2026', {
     {'fix', 'Esc больше не застревает: fHelper забирает его себе, только когда его окно (инвентарь, своё окно, рубка) действительно на экране', 'screen'},
     {'fix', 'Часы игры («Ваш онлайн», «Закрыть Esc»): если через секунду после Esc меню игры не открылось, fHelper закрывает часы так же, как кнопка «Закрыть», и убирает их с экрана', 'screen'},
@@ -17520,7 +17278,19 @@ function F.cef_packet(bs)
   local t0 = F.rep_clock()
   local res = F.cef_packet_run(bs)
   F.rep_part('events', F.rep_clock() - t0)
+  -- The game's HUD (clock, PAYDAY) must never be lost here: should fHelper hold back a packet
+  -- with it, that is written down.
+  if res == false then pcall(F.hud_drop_note, bs) end
   return res
+end
+
+function F.hud_drop_note(bs)
+  local ok, text = pcall(F.cef_text, bs)
+  pcall(raknetBitStreamResetReadPointer, bs)
+  if not ok or type(text) ~= 'string' or not text:find('arizonahud', 1, true) then return end
+  F._hud_drops = (F._hud_drops or 0) + 1
+  if F._hud_drops > 5 then return end
+  F.log_line('fHelper задержал пакет с событием HUD игры: ' .. F.utf_cut(text:gsub('[\r\n]+', ' '), 160))
 end
 
 -- The game's clock with «Закрыть Esc» (time widget): shown while the server's info has components.
@@ -17528,7 +17298,27 @@ end
 -- window, fHelper tells the server the same, once.
 F.TW_WAIT = 1.0
 
+-- PAYDAY of the game: shown while its info has «law», taken off only by the server.
+F.PD_HIDE = "window.executeEvent('event.arizonahud.setPaydayInfo', `[{}]`);"
+
+function F.pd_packet(text)
+  local v = text:match("setPaydayInfo['\"]%s*,%s*`(.-)`")
+  if not v then return end
+  local on = v:find('"law"%s*:%s*{') ~= nil
+  local now = os.clock()
+  if on and not F.pd_open then
+    F.pd_open, F.pd_at = true, now
+  elseif not on and F.pd_open then
+    F.pd_open = nil
+    F._pd_notes = (F._pd_notes or 0) + 1
+    if F._pd_notes <= 3 then
+      F.log_line(string.format('PAYDAY игры убран сервером через %.0f с', now - (F.pd_at or now)))
+    end
+  end
+end
+
 function F.tw_packet(text)
+  if text:find('setPaydayInfo', 1, true) then pcall(F.pd_packet, text) end
   if not text:find('setTimeWidget', 1, true) then return end
   local info = text:match("setTimeWidgetInfo['\"]%s*,%s*`(.-)`")
   if info then
@@ -17554,6 +17344,15 @@ function F.tw_tick()
   if was then pcall(F.cef_send, 'hud.timer.close') end
   F.tw_open = nil
   pcall(F.cef_emul, F.TW_HIDE)
+  -- PAYDAY keeps the menu shut the same way and has no button: off the screen too.
+  if F.pd_open then
+    F._pd_esc = (F._pd_esc or 0) + 1
+    if F._pd_esc <= 3 then
+      F.log_line(string.format('PAYDAY игры висел %.0f с: убран по Esc', os.clock() - (F.pd_at or os.clock())))
+    end
+  end
+  F.pd_open = nil
+  pcall(F.cef_emul, F.PD_HIDE)
   if was and not F._tw_logged then
     F._tw_logged = true
     F.log_line('Часы игры не закрылись по Esc: закрыты так же, как кнопкой «Закрыть»')
@@ -26983,7 +26782,7 @@ function F.read_hotkey()
   F.fire_binds()
 end
 
-F.BUILD = 49
+F.BUILD = 50
 
 --@full{
 -- Updates. This whole region is left out of the build for the launcher (tools/release.py):
@@ -27428,7 +27227,7 @@ function main()
   F.load_favs()
   F.load_notes()
   F.pay_load()
-  local okc, cur = pcall(F.cur_apply)
+  local okc, cur = pcall(F.cur_restore)
   if not okc then F.log_line('Курсор: ' .. tostring(cur)) end
   -- A broken data file must not stop the whole menu from starting.
   for _, fn in ipairs({F.led_load, F.int_load, F.calc_load, F.craft_load, F.pin_load, F.car_load, F.bag_load, F.iv_load, F.itl_load, F.shop_load, F.want_load, F.shift_load}) do
